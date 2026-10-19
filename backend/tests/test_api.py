@@ -61,7 +61,7 @@ def test_health_and_config(client):
     cfg = client.get("/api/config").json()
     assert set(cfg["capabilities"]) == {"text", "image", "multi_image", "concepts", "retexture", "depth"}
     assert {s["id"] for s in cfg["styles"]} >= {"auto", "lowpoly", "voxel", "sculpture"}
-    assert set(cfg["export_formats"]) == {"glb", "obj", "stl", "3mf", "ply"}
+    assert set(cfg["export_formats"]) >= {"glb", "obj", "stl", "3mf", "ply", "3mf_color", "stl_colors"}
 
 
 def test_text_job_produces_valid_glb(client):
