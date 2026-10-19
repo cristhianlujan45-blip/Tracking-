@@ -6,7 +6,7 @@
   <title>Modelo 3D — Forja3D</title>
   <script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
   <style>
-    :root { color-scheme: dark; --bg: #0e0f13; --panel: #161820; --border: #2a2e3a; --text: #e8eaf0; --muted: #8a90a2; --accent: #7c5cff; }
+    :root { color-scheme: dark; --bg: #080a17; --panel: #151a36; --border: rgba(160,175,255,.26); --text: #f1f2ff; --muted: #8e93bd; --accent: #ff4f9a; }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     html, body { height: 100%; margin: 0; }
@@ -15,7 +15,7 @@
     header h1 { flex: 1; margin: 0; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .brand { color: var(--muted); text-decoration: none; font-weight: 700; }
     .brand span { color: var(--accent); }
-    model-viewer { flex: 1; width: 100%; background: radial-gradient(circle at 50% 40%, #222634, #0e0f13 70%); --poster-color: transparent; }
+    model-viewer { flex: 1; width: 100%; background: linear-gradient(180deg, #1a1f45, #0d1028 60%, #06070f); --poster-color: transparent; }
     .btn { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 7px 12px; border-radius: 9px; text-decoration: none; font-size: 13px; cursor: pointer; }
     .ar { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--accent); border: 0; color: white; padding: 10px 18px; border-radius: 99px; font-weight: 600; }
     .msg { margin: auto; color: var(--muted); padding: 20px; text-align: center; }
@@ -26,7 +26,7 @@
 </head>
 <body>
   <header>
-    <a class="brand" href="/"><span>◆</span> Forja3D</a>
+    <a class="brand" href="/"><span>鍛</span> Forja3D</a>
     <h1 id="title"></h1>
     <a class="btn" id="download" download hidden>⬇ GLB</a>
   </header>

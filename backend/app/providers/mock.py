@@ -20,10 +20,12 @@ from .base import GenerationRequest, GenerationResult, InputImage, ProgressCallb
 
 KEYWORDS = {
     "quadruped": ("perro", "dog", "gato", "cat", "caballo", "horse", "lobo", "wolf", "zorro", "fox", "vaca", "cow",
-                  "tigre", "tiger", "león", "leon", "lion", "cachorro", "puppy", "oveja", "sheep", "ciervo", "deer"),
+                  "tigre", "tiger", "león", "leon", "lion", "cachorro", "puppy", "oveja", "sheep", "ciervo", "deer",
+                  "kitsune", "shiba"),
     "humanoid": ("personaje", "character", "humano", "human", "persona", "robot", "guerrero", "warrior", "soldado",
                  "chica", "chico", "hombre", "mujer", "caballero", "knight", "mago", "wizard", "astronauta",
-                 "astronaut", "héroe", "heroe", "hero", "ninja", "zombi", "zombie", "elfo", "elf"),
+                 "astronaut", "héroe", "heroe", "hero", "ninja", "zombi", "zombie", "elfo", "elf",
+                 "guerrera", "samurái", "samurai", "heroína", "heroina", "maga", "princesa", "princess"),
     "tree": ("tree", "árbol", "arbol", "pino", "pine"),
     "mushroom": ("mushroom", "hongo", "seta", "champiñón", "champinon"),
     "snowman": ("snowman", "muñeco de nieve", "muneco de nieve"),

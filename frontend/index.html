@@ -3,40 +3,51 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Forja3D — Generador 3D con IA</title>
+  <title>Forja3D — 鍛冶場 3D con IA</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='10' fill='%23e8382f'/%3E%3Ctext x='32' y='46' font-size='38' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='900'%3E%E9%8D%9B%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="fonts/fonts.css" />
   <link rel="stylesheet" href="styles.css" />
   <script type="importmap">
     {
       "imports": {
-        "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+        "three": "./vendor/three/build/three.module.js",
+        "three/addons/": "./vendor/three/examples/jsm/"
       }
     }
   </script>
 </head>
 <body>
+  <div class="backdrop" aria-hidden="true"><div class="glow g1"></div><div class="glow g2"></div><div class="kanji-wall">鍛冶場</div></div>
+  <div class="petals" id="petals" aria-hidden="true"></div>
+
   <header class="topbar">
-    <div class="brand"><span class="logo">◆</span> Forja3D</div>
-    <div class="provider" id="provider">conectando…</div>
+    <a class="brand" href="/" title="Forja3D">
+      <span class="hanko">鍛</span>
+      <span class="wordmark"><b>FORJA<i>3D</i></b><small>フォルジャ · AI 3D 鍛冶場</small></span>
+    </a>
+    <div class="top-tags" aria-hidden="true"><span>テキスト → 3D</span><span>画像 → 3D</span><span>骨格</span><span>印刷</span></div>
+    <button class="provider" id="provider" type="button" title="Motor de IA — clic para cambiar">conectando…</button>
+    <button class="gear" id="btnSettings" type="button" title="Ajustes"><span class="jp">設定</span>Ajustes</button>
   </header>
 
   <main class="layout">
     <!-- ============ CREATE ============ -->
     <aside class="panel create">
+      <h2 class="sec"><span class="jp">生成</span>Crear <em>新しいモデル</em></h2>
       <div class="tabs" role="tablist">
-        <button class="tab active" data-mode="text" role="tab">Texto</button>
-        <button class="tab" data-mode="image" role="tab">Imagen</button>
-        <button class="tab" data-mode="multi" role="tab" data-cap="multi_image">Multi-vista</button>
-        <button class="tab" data-mode="scene" role="tab">Escena / relieve</button>
-        <button class="tab" data-mode="text3d" role="tab">Texto 3D</button>
-        <button class="tab" data-mode="upload" role="tab">Subir</button>
+        <button class="tab active" data-mode="text" role="tab"><span class="jp">テキスト</span>Texto</button>
+        <button class="tab" data-mode="image" role="tab"><span class="jp">画像</span>Imagen</button>
+        <button class="tab" data-mode="multi" role="tab" data-cap="multi_image"><span class="jp">多視点</span>Multi-vista</button>
+        <button class="tab" data-mode="scene" role="tab"><span class="jp">風景</span>Escena</button>
+        <button class="tab" data-mode="text3d" role="tab"><span class="jp">文字</span>Texto 3D</button>
+        <button class="tab" data-mode="upload" role="tab"><span class="jp">取込</span>Subir</button>
       </div>
 
       <form id="form" autocomplete="off">
         <section class="mode" data-for="text">
-          <label for="prompt">Describe tu objeto</label>
+          <label for="prompt">Describe tu objeto o personaje</label>
           <textarea id="prompt" rows="4" maxlength="500"
-            placeholder="Ej.: un cofre del tesoro de madera con remaches dorados"></textarea>
+            placeholder="Ej.: una guerrera samurái con armadura roja y katana, estilo anime"></textarea>
           <div class="chips" id="examples"></div>
         </section>
 
@@ -45,7 +56,7 @@
           <label class="dropzone" id="dropImage">
             <input type="file" accept="image/png,image/jpeg,image/webp" hidden />
             <img alt="" hidden />
-            <span class="hint">Arrastra una imagen o haz clic<br /><small>PNG, JPG o WEBP · fondo limpio funciona mejor</small></span>
+            <span class="hint"><span class="big">画像</span>Arrastra una imagen o haz clic<br /><small>PNG, JPG o WEBP · fondo limpio funciona mejor</small></span>
           </label>
           <label for="imagePrompt">Descripción (opcional)</label>
           <input id="imagePrompt" type="text" maxlength="500" placeholder="Ayuda a nombrar y guiar el modelo" />
@@ -66,7 +77,7 @@
           <label class="dropzone" id="dropScene">
             <input type="file" accept="image/png,image/jpeg,image/webp" hidden />
             <img alt="" hidden />
-            <span class="hint">Arrastra una foto (paisaje, habitación, retrato…)<br /><small>PNG, JPG o WEBP</small></span>
+            <span class="hint"><span class="big">風景</span>Arrastra una foto (paisaje, habitación, retrato…)<br /><small>PNG, JPG o WEBP</small></span>
           </label>
           <div class="range">
             <label for="sceneRes">Detalle <b id="sceneResValue"></b></label>
@@ -102,7 +113,7 @@
             <input type="range" id="textDepth" min="0.05" max="1" step="0.05" value="0.25" />
           </div>
           <div class="row">
-            <div><label for="textColor">Color letras</label><input type="color" id="textColor" value="#7c5cff" /></div>
+            <div><label for="textColor">Color letras</label><input type="color" id="textColor" value="#ff4f9a" /></div>
             <div id="plateColorRow" hidden><label for="plateColor">Color base</label><input type="color" id="plateColor" value="#f0f0f0" /></div>
           </div>
         </section>
@@ -111,12 +122,18 @@
           <label>Tu modelo 3D</label>
           <label class="dropzone" id="dropModel">
             <input type="file" accept=".glb,.gltf,.obj,.stl,.ply,.off,.3mf" hidden />
-            <span class="hint">Arrastra un archivo 3D o haz clic<br /><small>GLB, OBJ, STL, PLY, OFF o 3MF</small></span>
+            <span class="hint"><span class="big">取込</span>Arrastra un archivo 3D o haz clic<br /><small>GLB, OBJ, STL, PLY, OFF o 3MF</small></span>
           </label>
-          <p class="muted small">Úsalo para ver, convertir, remallar, retexturizar o preparar para impresión.</p>
+          <p class="muted small">Úsalo para ver, convertir, remallar, retexturizar, riggear o preparar para impresión.</p>
         </section>
 
         <section class="gen-options" data-for="text image multi">
+          <div id="engineRow">
+            <label for="engine">Motor de IA</label>
+            <select id="engine"></select>
+            <p class="muted small" id="engineHint"></p>
+          </div>
+
           <div data-for="text image">
             <label>Estilo</label>
             <div class="styles" id="styles"></div>
@@ -126,9 +143,9 @@
             <div>
               <label for="quality">Calidad</label>
               <select id="quality">
-                <option value="draft">Borrador</option>
-                <option value="standard" selected>Estándar</option>
-                <option value="high">Alta (HD)</option>
+                <option value="draft">Borrador · rápido</option>
+                <option value="standard" selected>Estándar · PBR</option>
+                <option value="high">Full HD · 4K</option>
               </select>
             </div>
             <div>
@@ -150,14 +167,14 @@
         </section>
 
         <div class="actions">
-          <button type="button" class="secondary" id="btnConcepts" data-for="text" data-cap="concepts">✦ Ver conceptos</button>
+          <button type="button" class="secondary" id="btnConcepts" data-for="text" data-cap="concepts">✦ Conceptos</button>
           <button type="submit" class="primary" id="submit">Generar modelo 3D</button>
         </div>
         <p class="error" id="formError" hidden></p>
 
         <section class="concepts" id="concepts" hidden>
           <div class="concepts-head">
-            <label>Elige un concepto</label>
+            <h3 class="sec small"><span class="jp">概念</span>Elige un concepto</h3>
             <button type="button" class="link" id="btnConceptsMore">↻ Otros</button>
           </div>
           <div class="concept-grid" id="conceptGrid"></div>
@@ -172,28 +189,36 @@
         <div class="viewer-wrap">
           <canvas id="viewer"></canvas>
           <div class="viewer-empty" id="viewerEmpty">Genera o selecciona un modelo para verlo aquí</div>
-          <div class="viewer-loading" id="viewerLoading" hidden><div class="spinner"></div><div id="viewerProgress"></div></div>
+          <div class="viewer-loading" id="viewerLoading" hidden>
+            <svg class="enso" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="46" /></svg>
+            <div class="enso-label">生成中</div>
+            <div id="viewerProgress"></div>
+          </div>
           <div class="viewer-hud">
             <div class="segmented" id="viewModes" title="Modo de vista">
               <button class="on" data-view="textured">Textura</button><button data-view="clay">Arcilla</button><button data-view="normals">Normales</button><button data-view="wireframe">Malla</button>
             </div>
-            <select id="lighting" title="Iluminación">
-              <option value="studio">Estudio</option>
-              <option value="outdoor">Exterior</option>
-              <option value="night">Noche</option>
+            <select id="lighting" title="Iluminación y fondo">
+              <option value="studio">鍛 Estudio</option>
+              <option value="tokyo">夜 Neón Tokio</option>
+              <option value="sunset">火 Atardecer</option>
+              <option value="sakura">桜 Sakura</option>
+              <option value="outdoor">空 Exterior</option>
+              <option value="night">月 Noche</option>
             </select>
           </div>
           <div class="rig-editor-bar" id="rigEditorBar" hidden>
-            <span class="grow">Arrastra los puntos a las articulaciones (vista frontal; rueda = zoom)</span>
-            <label class="check"><input type="checkbox" id="markerSym" checked /> Simetría</label>
+            <span class="grow" id="markerHelp">Arrastra los puntos a las articulaciones (vista frontal; rueda = zoom)</span>
+            <label class="check" id="markerSymRow"><input type="checkbox" id="markerSym" checked /> Simetría</label>
             <button class="tool" id="btnRotateModel" title="Girar 90° si el personaje no mira al frente">⟲ 90°</button>
             <button class="tool" id="btnResetMarkers">Auto</button>
             <button class="tool" id="btnCancelMarkers">Cancelar</button>
             <button class="primary" id="btnApplyMarkers">✔ Crear rig</button>
           </div>
           <div class="anim-bar" id="animBar" hidden>
+            <span class="jp-tag">動き</span>
             <select id="animClip"></select>
-            <button class="tool" id="btnAnimPlay">⏸</button>
+            <button class="tool" id="btnAnimPlay">❚❚</button>
           </div>
         </div>
         <div class="toolbar">
@@ -201,17 +226,17 @@
           <button class="tool" id="btnRotate" aria-pressed="true" title="Rotación automática">⟳</button>
           <button class="tool" id="btnGrid" aria-pressed="true" title="Rejilla">#</button>
           <button class="tool" id="btnReset" title="Encuadrar">⌖</button>
-          <button class="tool" id="btnShot" title="Captura PNG">📷</button>
-          <button class="tool" id="btnVideo" title="Vídeo 360° (WebM)">🎬 360°</button>
+          <button class="tool" id="btnShot" title="Captura PNG">◉ PNG</button>
+          <button class="tool" id="btnVideo" title="Vídeo 360° (WebM)">▶ 360°</button>
         </div>
         <div class="stats" id="stats"></div>
       </div>
 
       <div class="panel gallery">
         <div class="gallery-head">
-          <h2>Mis modelos</h2>
+          <h2 class="sec"><span class="jp">ギャラリー</span>Mis modelos</h2>
           <div class="segmented small" id="filters">
-            <button class="on" data-f="all">Todos</button><button data-f="fav">★</button><button data-f="gen">IA</button><button data-f="tools">Editados</button><button data-f="rig" title="Personajes con rig">🦴</button><button data-f="active">En curso</button>
+            <button class="on" data-f="all">Todos</button><button data-f="fav" title="Favoritos">★</button><button data-f="gen">IA</button><button data-f="tools">Editados</button><button data-f="rig" title="Personajes con rig">骨格</button><button data-f="active">En curso</button>
           </div>
           <input id="search" type="search" placeholder="Buscar…" />
         </div>
@@ -222,7 +247,10 @@
 
     <!-- ============ TOOLS ============ -->
     <aside class="panel tools" id="tools">
-      <p class="muted" id="toolsEmpty">Selecciona un modelo para editarlo, exportarlo o compartirlo.</p>
+      <div class="tools-empty" id="toolsEmpty">
+        <div class="big-jp">道具</div>
+        <p>Selecciona un modelo para editarlo, riggearlo, exportarlo o imprimirlo.</p>
+      </div>
       <div id="toolsBody" hidden>
         <div class="tools-head">
           <h2 id="toolTitle"></h2>
@@ -232,28 +260,40 @@
         <div class="meta-list" id="toolMeta"></div>
 
         <details open data-need="generative">
-          <summary>Generación</summary>
+          <summary><span class="jp">精錬</span>Generación</summary>
           <div class="btn-row">
-            <button class="secondary" id="btnRefine" title="Misma entrada y semilla en calidad alta">⇪ Refinar HD</button>
+            <button class="secondary" id="btnRefine" title="Misma entrada y semilla en calidad Full HD">⇪ Refinar HD</button>
             <button class="secondary" id="btnVariations" title="Nuevas semillas">⧉ 3 variaciones</button>
           </div>
           <button class="link" id="btnRemix">↺ Cargar parámetros en el formulario</button>
         </details>
 
         <details open id="rigSection">
-          <summary>🦴 Rigging y animación</summary>
-          <p class="muted small" id="rigHint">Personajes humanoides de pie (pose A o T), mirando al frente. Esqueleto estándar compatible con Mixamo, Unity, Unreal y Blender.</p>
+          <summary><span class="jp">骨格</span>Rigging y animación</summary>
+          <label>Tipo de cuerpo</label>
+          <div class="segmented wide-seg" id="rigTemplate">
+            <button type="button" class="on" data-t="auto">Auto</button><button type="button" data-t="humanoid">人 Humano</button><button type="button" data-t="quadruped">獣 4 patas</button>
+          </div>
+          <p class="muted small" id="rigHint">Personajes de pie (pose A o T) o animales de cuatro patas. Esqueleto estándar compatible con Mixamo, Unity, Unreal y Blender.</p>
           <label>Animaciones</label>
           <div class="anim-grid" id="animList"></div>
+          <div id="libBox">
+            <label>Biblioteca mocap <b id="libCount"></b></label>
+            <div class="row lib-filter">
+              <input id="libSearch" type="search" placeholder="Buscar movimiento…" />
+              <select id="libCat"><option value="">Todas</option></select>
+            </div>
+            <div class="lib-list" id="libList"></div>
+          </div>
           <div id="mocapBox">
-            <label for="bvhFiles">Mocap BVH (opcional)</label>
+            <label for="bvhFiles">Tu mocap BVH (opcional)</label>
             <input type="file" id="bvhFiles" accept=".bvh" multiple />
             <div class="anim-grid" id="bvhKeep"></div>
             <label class="check"><input type="checkbox" id="inPlace" checked /> En el sitio (sin desplazamiento)</label>
           </div>
           <div class="btn-row">
             <button class="primary" id="btnAutoRig" title="Esqueleto y pesos automáticos">⚡ Auto-rig</button>
-            <button class="secondary" id="btnMarkers" title="Coloca tú las articulaciones, como en Mixamo">🎯 Marcadores</button>
+            <button class="secondary" id="btnMarkers" title="Coloca tú las articulaciones, como en Mixamo">◎ Marcadores</button>
           </div>
           <div class="rig-view" id="rigView" hidden>
             <label class="check"><input type="checkbox" id="showBones" /> Ver huesos</label>
@@ -261,16 +301,43 @@
           </div>
         </details>
 
+        <details open id="enhanceSection">
+          <summary><span class="jp">質感</span>Texturas Full HD</summary>
+          <p class="muted small" id="enhanceHint">Amplía las texturas con IA (Real-ESRGAN) y genera mapas PBR (normal, rugosidad, oclusión).</p>
+          <div class="row">
+            <div class="segmented wide-seg" id="enhanceTarget">
+              <button type="button" data-v="2k">2K</button><button type="button" class="on" data-v="4k">4K</button><button type="button" data-v="8k">8K</button>
+            </div>
+            <label class="check"><input type="checkbox" id="enhancePbr" checked /> PBR</label>
+          </div>
+          <button class="primary wide" id="btnEnhance">✦ Mejorar texturas</button>
+        </details>
+
+        <details data-cap="retexture">
+          <summary><span class="jp">色</span>Retexturizado IA</summary>
+          <textarea id="retexPrompt" rows="2" maxlength="500" placeholder="Ej.: armadura lacada roja con detalles dorados, estilo anime"></textarea>
+          <div class="row">
+            <select id="retexStyle"></select>
+            <select id="retexRes" title="Resolución de la textura">
+              <option value="2k">2K</option>
+              <option value="4k" selected>4K</option>
+              <option value="8k">8K</option>
+            </select>
+          </div>
+          <button class="secondary wide" id="btnRetexture">Retexturizar</button>
+        </details>
+
         <details open>
-          <summary>Remallado y estilo</summary>
+          <summary><span class="jp">メッシュ</span>Remallado y estilo</summary>
           <select id="remeshMode">
             <option value="decimate">Reducir polígonos</option>
+            <option value="quads">Quads limpios (para animar / esculpir)</option>
             <option value="lowpoly">Low-poly facetado</option>
             <option value="voxel">Vóxeles</option>
             <option value="smooth">Suavizar</option>
           </select>
           <div class="range" id="facesRow">
-            <label for="remeshFaces">Triángulos objetivo <b id="facesValue"></b></label>
+            <label for="remeshFaces">Caras objetivo <b id="facesValue"></b></label>
             <input type="range" id="remeshFaces" min="2.3" max="5.3" step="0.05" value="3.7" />
           </div>
           <div class="range" id="resRow" hidden>
@@ -280,18 +347,11 @@
           <button class="secondary wide" id="btnRemesh">Aplicar</button>
         </details>
 
-        <details data-cap="retexture">
-          <summary>Texturizado IA</summary>
-          <textarea id="retexPrompt" rows="2" maxlength="500" placeholder="Ej.: madera envejecida con rayas doradas"></textarea>
-          <select id="retexStyle"></select>
-          <button class="secondary wide" id="btnRetexture">Retexturizar</button>
-        </details>
-
         <details>
-          <summary>Impresión 3D</summary>
+          <summary><span class="jp">印刷</span>Impresión 3D</summary>
           <div id="printReport" class="report muted">Analizando…</div>
           <div class="btn-row">
-            <button class="secondary" id="btnRepair">🩹 Reparar</button>
+            <button class="secondary" id="btnRepair">✚ Reparar</button>
           </div>
           <div class="row">
             <select id="splitMode">
@@ -304,7 +364,7 @@
         </details>
 
         <details open>
-          <summary>Exportar</summary>
+          <summary><span class="jp">書出</span>Exportar</summary>
           <select id="exportFormat"></select>
           <div class="row">
             <select id="exportFit" title="Qué medida fijar">
@@ -315,30 +375,76 @@
             </select>
             <input id="exportHeight" type="number" min="1" max="10000" placeholder="mm" title="Medida final en milímetros" />
           </div>
+          <div class="range" id="exportColorsRow" hidden>
+            <label for="exportColors">Colores / filamentos <b id="exportColorsValue"></b></label>
+            <input type="range" id="exportColors" min="2" max="8" step="1" value="4" />
+          </div>
           <p class="muted small" id="exportHint"></p>
           <a class="primary wide" id="btnExport" download>⬇ Descargar</a>
-          <a class="link" id="btnBlender" href="/api/integrations/blender" download>🧩 Complemento para Blender (importar con un clic)</a>
+          <a class="link" id="btnBlender" href="/api/integrations/blender" download>◆ Complemento para Blender (importar con un clic)</a>
         </details>
 
         <details id="historySection">
-          <summary>Historial de versiones</summary>
+          <summary><span class="jp">履歴</span>Historial de versiones</summary>
           <ul class="history" id="history"></ul>
         </details>
 
         <details>
-          <summary>Compartir</summary>
+          <summary><span class="jp">共有</span>Compartir</summary>
           <div class="btn-row">
-            <button class="secondary" id="btnCopyLink">🔗 Copiar enlace</button>
+            <button class="secondary" id="btnCopyLink">⧉ Copiar enlace</button>
             <a class="secondary" id="btnOpenShare" target="_blank" rel="noopener">↗ Abrir (AR)</a>
           </div>
           <label for="embedCode">Insertar en tu web</label>
           <textarea id="embedCode" rows="3" readonly></textarea>
         </details>
 
-        <button class="danger wide" id="btnDelete">Eliminar modelo</button>
+        <button class="danger wide" id="btnDelete">削除 Eliminar modelo</button>
       </div>
     </aside>
   </main>
+
+  <!-- ============ SETTINGS ============ -->
+  <dialog class="settings" id="settingsDlg">
+    <form method="dialog" id="settingsForm" autocomplete="off">
+      <header>
+        <h2 class="sec"><span class="jp">設定</span>Ajustes</h2>
+        <button class="icon" id="btnCloseSettings" value="close" title="Cerrar">✕</button>
+      </header>
+      <div class="welcome" id="welcome" hidden>
+        <div class="welcome-jp">ようこそ</div>
+        <p><b>¡Bienvenido a Forja3D!</b> Elige el motor de IA. Puedes cambiarlo cuando quieras desde <b>設定 Ajustes</b>.</p>
+      </div>
+      <p class="muted small" id="settingsLocked" hidden>Los ajustes están bloqueados en este servidor.</p>
+      <label>Motor de IA</label>
+      <div class="prov-cards" id="provCards">
+        <button type="button" data-p="fal"><span class="jp">雷</span><b>Nube (fal.ai)</b><small>Máxima calidad: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy. Necesita clave.</small></button>
+        <button type="button" data-p="local"><span class="jp">力</span><b>Mi GPU</b><small>Gratis y privado en tu NVIDIA RTX con el servidor IA local.</small></button>
+        <button type="button" data-p="mock"><span class="jp">夢</span><b>Demo</b><small>Sin IA: formas de prueba para conocer la app.</small></button>
+      </div>
+      <div id="falGroup" hidden>
+        <label for="falKey">Clave de fal.ai</label>
+        <input id="falKey" type="password" placeholder="Pega tu clave (fal.ai/dashboard/keys)" />
+        <label for="falEngine">Motor 3D por defecto</label>
+        <select id="falEngine"></select>
+        <p class="muted small" id="falEngineHint"></p>
+      </div>
+      <div id="localGroup" hidden>
+        <label for="workerUrl">Dirección del servidor IA local</label>
+        <input id="workerUrl" type="text" placeholder="http://127.0.0.1:8001" />
+        <label for="workerToken">Token (opcional)</label>
+        <input id="workerToken" type="password" placeholder="Sólo si lo configuraste" />
+        <p class="muted small">Instálalo con <code>scripts/windows/instalar.ps1 -Worker</code> y déjalo abierto.</p>
+      </div>
+      <label for="blenderPath">Blender (para FBX y .blend)</label>
+      <input id="blenderPath" type="text" placeholder="Detección automática" />
+      <p class="muted small" id="blenderStatus"></p>
+      <p class="error" id="settingsError" hidden></p>
+      <div class="dlg-actions">
+        <button type="button" class="primary" id="btnSaveSettings">保存 Guardar</button>
+      </div>
+    </form>
+  </dialog>
 
   <div class="toast" id="toast" hidden></div>
 

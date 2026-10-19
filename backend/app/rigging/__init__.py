@@ -147,8 +147,13 @@ def rig(glb: bytes, markers: dict | None = None, yaw: int | None = None, presets
         start += n
 
     library = presets_for(prep.template)
+    names = presets if presets is not None else default_presets(prep.template)
+    if template in (None, "auto"):  # the caller did not know the body type: drop clips made for the other one
+        names = [n for n in names if n in library or (prep.template == "humanoid" and n in mocap.catalogue())]
+        if presets and not names and not bvh:
+            names = default_presets(prep.template)
     clips: list[Clip] = []
-    for name in presets if presets is not None else default_presets(prep.template):
+    for name in names:
         if name in library:
             clips.append(preset_clip(skeleton, name))
         elif name in mocap.catalogue() and prep.template == "humanoid":

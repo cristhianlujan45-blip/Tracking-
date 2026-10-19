@@ -701,6 +701,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
     async def enhance(request: Request, job_id: str, body: EnhanceIn):
         """HD textures: AI upscaling (Real-ESRGAN) up to 2K/4K/8K plus PBR maps from the base colour."""
         parent, path = ready_model(request, job_id)
+        if parent["mode"] == "rig":
+            raise HTTPException(400, "Mejora las texturas del modelo original y después crea el rig")
         provider = request.app.state.provider
         upscaler = provider.upscale_image if "upscale" in provider.capabilities else None
         label = {"local": "IA local (Real-ESRGAN)", "fal": "IA en la nube (Real-ESRGAN)"}.get(provider.name, "IA")

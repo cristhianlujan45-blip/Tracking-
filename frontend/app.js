@@ -1,27 +1,30 @@
-import { initRig, renderRig } from "./rig.js";
+import { clipLabel, initRig, renderRig } from "./rig.js";
+import { initSettings } from "./settings.js";
 import { Viewer } from "./viewer.js";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
 const EXAMPLES = [
-  "un árbol de pino estilizado",
-  "un hongo rojo de cuento",
-  "un muñeco de nieve con bufanda azul",
-  "una roca volcánica",
-  "una dona glaseada rosa",
+  "una guerrera samurái con armadura roja",
+  "un zorro kitsune de nueve colas",
+  "un robot mecha compacto",
+  "un templo japonés con cerezos",
+  "una katana con funda lacada",
+  "un dragón chibi",
 ];
 const STYLE_ICONS = { auto: "✧", realistic: "◉", cartoon: "☺", handpainted: "✎", lowpoly: "◆", voxel: "▦", sculpture: "◍" };
 const MODE_LABEL = {
   text: "Texto", image: "Imagen", multi_image: "Multi-vista", upload: "Subido",
   remesh: "Remallado", retexture: "Retexturizado", repair: "Reparado", split: "Piezas",
   scene: "Escena", relief: "Relieve", lithophane: "Litofanía", text3d: "Texto 3D", rig: "Animado",
+  enhance: "Texturas HD",
 };
 const MODE_ICON = {
   text: "✎", image: "▣", multi_image: "▤", upload: "⇪", remesh: "◇", retexture: "✺", repair: "✚", split: "✂",
-  scene: "⛰", relief: "▨", lithophane: "◐", text3d: "A", rig: "🦴",
+  scene: "⛰", relief: "▨", lithophane: "◐", text3d: "A", rig: "骨", enhance: "✦",
 };
-const TOOL_MODES = ["remesh", "retexture", "repair", "split"];
+const TOOL_MODES = ["remesh", "retexture", "repair", "split", "enhance"];
 const FLAT_MODES = ["relief", "lithophane"]; // plaques: size them by the longest side, not the thickness
 const SCENE_INFO = {
   scene: ["Profundidad", "Malla 3D con la foto como textura. Ideal como fondo o entorno en Blender, Unity o Unreal."],
@@ -29,7 +32,7 @@ const SCENE_INFO = {
   lithophane: ["Grosor", "Placa fina: al iluminarla por detrás aparece la foto. Imprime en blanco, de pie, al 100 % de relleno."],
 };
 const STATUS_LABEL = { queued: "En cola", running: "Generando", succeeded: "", failed: "Error" };
-const QUALITY_LABEL = { draft: "Borrador", standard: "Estándar", high: "Alta" };
+const QUALITY_LABEL = { draft: "Borrador", standard: "Estándar", high: "Full HD" };
 const GENERATIVE = ["text", "image", "multi_image"];
 const FORMAT_INFO = {
   glb: ["GLB", "Universal: web, Unity, Unreal, Godot, Blender, Roblox."],
@@ -37,11 +40,14 @@ const FORMAT_INFO = {
   stl: ["STL", "Impresión 3D: Z hacia arriba, en milímetros, apoyado en la cama."],
   "3mf": ["3MF", "Impresión 3D moderna (Bambu Studio, PrusaSlicer, OrcaSlicer, Cura)."],
   ply: ["PLY", "Colores por vértice; útil para MeshLab y escaneo."],
+  "3mf_color": ["3MF multicolor (AMS / MMU)", "Un filamento por color, ya pintado: Bambu Studio, OrcaSlicer, PrusaSlicer."],
+  stl_colors: ["STL por color (.zip)", "Un STL por color para cualquier laminador (asigna un extrusor a cada pieza)."],
   fbx: ["FBX (Unity, Unreal, Maya, 3ds Max)", "Convertido con Blender; conserva esqueleto, pesos y animaciones."],
   blend: ["Blender (.blend)", "Archivo de Blender listo para abrir, con armadura y acciones."],
   usdz: ["USDZ (iPhone / Apple)", "AR Quick Look en iPhone/iPad. Se genera en tu navegador; conserva texturas, no colores por vértice."],
 };
 const CLIENT_FORMATS = ["usdz"];
+const COLOR_FORMATS = ["3mf_color", "stl_colors"];
 const SLOT_LABELS = ["Frente", "Lateral", "Espalda", "Otra vista"];
 
 const state = {
@@ -92,6 +98,8 @@ function toast(msg, isError = false) {
   const el = $("#toast");
   el.textContent = msg;
   el.classList.toggle("error", isError);
+  el.hidden = true;
+  void el.offsetWidth; // replay the pop-in animation
   el.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (el.hidden = true), 3500);
@@ -153,6 +161,13 @@ function buildForm() {
     $("#retexStyle").append(new Option(`Estilo: ${label}`, id));
   }
   for (const { id, label } of state.config.poses) $("#pose").append(new Option(label, id));
+  const engines = state.config.engines || [];
+  for (const e of engines) $("#engine").append(new Option(e.label, e.id));
+  $("#engine").value = state.config.default_engine || engines[0]?.id || "";
+  $("#engineRow").hidden = engines.length < 2;
+  const engineHint = () => ($("#engineHint").textContent = engines.find((e) => e.id === $("#engine").value)?.description || "");
+  $("#engine").addEventListener("change", engineHint);
+  engineHint();
   for (const f of [...state.config.export_formats, ...CLIENT_FORMATS]) {
     $("#exportFormat").append(new Option(FORMAT_INFO[f]?.[0] || f, f));
   }
@@ -167,6 +182,11 @@ function buildForm() {
   setupDropzone($("#dropImage"), { accept: isImage, onFile: (f) => ((state.imageFile = f), previewInto($("#dropImage"), f)) });
   setupDropzone($("#dropScene"), { accept: isImage, onFile: (f) => ((state.sceneFile = f), previewInto($("#dropScene"), f)) });
   segmented("#sceneKind", "kind", (kind) => ((state.sceneKind = kind), updateSceneUi()));
+  segmented("#enhanceTarget", "v", () => {});
+  state.enhanceHint = has("upscale")
+    ? "Amplía las texturas con IA (Real-ESRGAN) y genera mapas PBR: normal, rugosidad y oclusión."
+    : "Amplía las texturas (modo demo: reescalado de alta calidad sin IA) y genera mapas PBR: normal, rugosidad y oclusión.";
+  $("#enhanceHint").textContent = state.enhanceHint;
   segmented("#textStyle", "style", (style) => ((state.textStyle = style), ($("#plateColorRow").hidden = style === "letters")));
   ["sceneRes", "sceneStrength", "textDepth"].forEach((id) => $(`#${id}`).addEventListener("input", updateSceneUi));
   updateSceneUi();
@@ -245,6 +265,7 @@ function generationOptions() {
     symmetry: $("#symmetry").checked,
     pose: $("#pose").value,
     ...(seed ? { seed: Number(seed) } : {}),
+    ...($("#engineRow").hidden || !$("#engine").value ? {} : { engine: $("#engine").value }),
   };
 }
 
@@ -254,6 +275,7 @@ function imageForm(opts, prompt) {
   body.append("style", opts.style);
   body.append("variants", opts.variants);
   if (opts.seed !== undefined) body.append("seed", opts.seed);
+  if (opts.engine) body.append("engine", opts.engine);
   if (prompt) body.append("prompt", prompt);
   return body;
 }
@@ -486,7 +508,8 @@ async function showModel(job) {
     const dims = s.size ? ` · ${s.size.x.toFixed(2)} × ${s.size.y.toFixed(2)} × ${s.size.z.toFixed(2)} u` : "";
     $("#stats").textContent = `${s.triangles.toLocaleString()} triángulos · ${s.vertices.toLocaleString()} vértices · ${s.meshes} malla(s)${dims}`;
     $("#animBar").hidden = !s.animations.length;
-    $("#animClip").replaceChildren(...s.animations.map((n, i) => new Option(n, i)));
+    $("#animClip").replaceChildren(...s.animations.map((n, i) => new Option(clipLabel(n), i)));
+    updateEnhance();
     if (!job.thumbnail_url) setTimeout(() => uploadThumbnail(job.id), 700);
   } catch (err) {
     state.loadedModel = null;
@@ -527,7 +550,7 @@ $$("#viewModes button").forEach((b) =>
 );
 $("#lighting").addEventListener("change", (e) => viewer.setLighting(e.target.value));
 $("#animClip").addEventListener("change", (e) => viewer.playClip(Number(e.target.value)));
-$("#btnAnimPlay").addEventListener("click", () => ($("#btnAnimPlay").textContent = viewer.toggleAnimation() ? "⏸" : "▶"));
+$("#btnAnimPlay").addEventListener("click", () => ($("#btnAnimPlay").textContent = viewer.toggleAnimation() ? "❚❚" : "▶"));
 $("#btnShot").addEventListener("click", async () => {
   if (!viewer.model) return toast("Carga un modelo primero", true);
   downloadBlob(await viewer.snapshot(), `${slug(selectedJob()?.title)}.png`);
@@ -545,7 +568,7 @@ $("#btnVideo").addEventListener("click", async () => {
   } finally {
     btn.disabled = false;
     btn.classList.remove("recording");
-    btn.textContent = "🎬 360°";
+    btn.textContent = "▶ 360°";
   }
 });
 
@@ -560,8 +583,16 @@ function metaChips(job) {
     if (style && p.style !== "auto") chips.push(`<span>${style.label}</span>`);
     if (p.seed !== undefined) chips.push(`<span title="Semilla">🎲 ${p.seed}</span>`);
     if (p.refined) chips.push("<span>HD</span>");
+    const engine = (state.config.engines || []).find((e) => e.id === p.engine);
+    if (engine) chips.push(`<span title="Motor de IA">${escapeHtml(engine.label)}</span>`);
+  }
+  if (job.mode === "enhance") {
+    chips.push(`<span>${(p.target || "").toUpperCase()}${p.pbr ? " · PBR" : ""}</span>`);
+    if (p.method) chips.push(`<span>${escapeHtml(p.method)}</span>`);
+    if (p.sizes?.length) chips.push(`<span>${p.sizes.map((s) => s.join("×")).slice(0, 3).join(", ")} px</span>`);
   }
   if (job.mode === "remesh") chips.push(`<span>${p.mode}</span>`);
+  if (job.mode === "retexture" && p.resolution) chips.push(`<span>${p.resolution.toUpperCase()}</span>`);
   if (job.depth_url) chips.push(`<span><a href="${job.depth_url}" target="_blank" rel="noopener">mapa de profundidad</a>${p.depth_source === "ia" ? " · IA" : ""}</span>`);
   if (job.parent_id) {
     const parent = state.jobs.find((j) => j.id === job.parent_id);
@@ -599,6 +630,7 @@ function renderTools(job) {
   const ready = job.status === "succeeded";
   $("#tools").classList.toggle("disabled-tools", !ready);
   $$('#toolsBody details[data-need="generative"]').forEach((d) => (d.hidden = !GENERATIVE.includes(job.mode)));
+  $("#enhanceSection").hidden = job.mode === "rig";
   const flat = FLAT_MODES.includes(job.mode) || (job.mode === "text3d" && job.params?.style !== "letters");
   $("#exportFit").value = flat ? "max" : "height";
   updateExportLink();
@@ -662,16 +694,20 @@ function updateExportLink() {
   const fmt = $("#exportFormat").value;
   const size = Number($("#exportHeight").value);
   const fit = $("#exportFit").value;
-  const isPrint = fmt === "stl" || fmt === "3mf";
+  const isPrint = ["stl", "3mf", ...COLOR_FORMATS].includes(fmt);
+  const colorFmt = COLOR_FORMATS.includes(fmt);
+  $("#exportColorsRow").hidden = !colorFmt;
+  $("#exportColorsValue").textContent = $("#exportColors").value;
   const fitLabel = $("#exportFit").selectedOptions[0].textContent.toLowerCase();
   const rigNote = job.mode === "rig" && !["glb", "fbx", "blend"].includes(fmt) ? " (malla estática: sin esqueleto ni animaciones)" : "";
   $("#exportHint").textContent = FORMAT_INFO[fmt]?.[1] + rigNote + (isPrint && !size ? ` ${fitLabel[0].toUpperCase() + fitLabel.slice(1)} por defecto: 100 mm.` : "");
   const client = CLIENT_FORMATS.includes(fmt);
   $("#exportFit").disabled = $("#exportHeight").disabled = client;
-  $("#btnExport").href = client ? "#" : `/api/jobs/${job.id}/export?format=${fmt}${size > 0 ? `&size_mm=${size}&fit=${fit}` : `&fit=${fit}`}`;
+  $("#btnExport").href = client ? "#" : `/api/jobs/${job.id}/export?format=${fmt}${size > 0 ? `&size_mm=${size}&fit=${fit}` : `&fit=${fit}`}${colorFmt ? `&colors=${$("#exportColors").value}` : ""}`;
 }
 ["exportFormat", "exportFit"].forEach((id) => $(`#${id}`).addEventListener("change", updateExportLink));
 $("#exportHeight").addEventListener("input", updateExportLink);
+$("#exportColors").addEventListener("input", updateExportLink);
 $("#btnExport").addEventListener("click", async (e) => {
   if (!CLIENT_FORMATS.includes($("#exportFormat").value)) return;
   e.preventDefault();
@@ -687,7 +723,7 @@ $("#btnExport").addEventListener("click", async (e) => {
 const facesFromSlider = () => Math.round(10 ** Number($("#remeshFaces").value) / 100) * 100;
 function updateRemeshUi() {
   const mode = $("#remeshMode").value;
-  $("#facesRow").hidden = !["decimate", "lowpoly"].includes(mode);
+  $("#facesRow").hidden = !["decimate", "lowpoly", "quads"].includes(mode);
   $("#resRow").hidden = mode !== "voxel";
   $("#facesValue").textContent = facesFromSlider().toLocaleString();
   $("#resValue").textContent = `${$("#remeshRes").value}³`;
@@ -719,9 +755,19 @@ $("#btnRemesh").addEventListener("click", (e) =>
 $("#btnRetexture").addEventListener("click", (e) => {
   const prompt = $("#retexPrompt").value.trim();
   if (prompt.length < 3) return toast("Describe la textura (mín. 3 caracteres)", true);
-  derive(e.currentTarget, "retexture", { prompt, style: $("#retexStyle").value });
+  derive(e.currentTarget, "retexture", { prompt, style: $("#retexStyle").value, resolution: $("#retexRes").value });
 });
 $("#btnRepair").addEventListener("click", (e) => derive(e.currentTarget, "repair"));
+function updateEnhance() {
+  const ok = !viewer.model || viewer.hasTextures();
+  $("#btnEnhance").disabled = !ok;
+  $("#btnEnhance").title = ok ? "" : "Este modelo usa colores por vértice: retexturízalo con IA primero";
+  $("#enhanceHint").textContent = ok ? state.enhanceHint
+    : "Este modelo no tiene texturas (colores por vértice). Usa 「Retexturizado IA」 o un motor con PBR para obtener texturas HD.";
+}
+$("#btnEnhance").addEventListener("click", (e) =>
+  derive(e.currentTarget, "enhance", { target: $("#enhanceTarget .on").dataset.v, pbr: $("#enhancePbr").checked }),
+);
 $("#btnSplit").addEventListener("click", (e) =>
   derive(e.currentTarget, "split", { mode: $("#splitMode").value, parts: Number($("#splitParts").value) || 2 }),
 );
@@ -769,18 +815,41 @@ $("#btnCopyLink").addEventListener("click", async () => {
 
 // ================================================================ boot
 
+function sakura(count = 14) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const box = $("#petals");
+  for (let i = 0; i < count; i++) {
+    const petal = document.createElement("i");
+    petal.className = "petal";
+    const size = 0.6 + Math.random() * 0.8;
+    Object.assign(petal.style, {
+      left: `${Math.random() * 100}%`,
+      transform: `scale(${size})`,
+      animationDuration: `${12 + Math.random() * 14}s`,
+      animationDelay: `${-Math.random() * 24}s`,
+      opacity: String(0.25 + Math.random() * 0.4),
+    });
+    box.append(petal);
+  }
+}
+
 (async function boot() {
+  sakura();
+  const el = $("#provider");
   try {
     state.config = await api("/api/config");
-    const el = $("#provider");
     const gpu = state.config.provider_info?.gpu;
+    const engine = (state.config.engines || []).find((e) => e.id === state.config.default_engine);
     el.textContent =
-      state.config.provider === "mock" ? "Modo demo (sin IA)"
-      : state.config.provider === "local" ? (gpu ? `IA local · ${gpu}` : "IA local · worker sin conexión")
-      : `IA: ${state.config.provider}`;
+      state.config.provider === "mock" ? "Modo demo (sin IA) · configurar"
+      : state.config.provider === "local" ? (gpu ? `IA local · ${gpu}` : "IA local · servidor sin conexión")
+      : `IA nube · ${engine?.label || state.config.provider}`;
     el.classList.toggle("real", state.config.provider !== "mock");
+    el.classList.toggle("bad", !!state.config.provider_error || (state.config.provider === "local" && !gpu));
+    if (state.config.provider_error) el.title = `No se pudo iniciar el motor elegido: ${state.config.provider_error}`;
   } catch {
-    $("#provider").textContent = "sin conexión";
+    el.textContent = "sin conexión";
+    el.classList.add("bad");
   }
   buildForm();
   updateRemeshUi();
@@ -788,4 +857,5 @@ $("#btnCopyLink").addEventListener("click", async () => {
   await refreshJobs();
   const first = state.jobs.find((j) => j.status === "succeeded");
   if (first && !state.selected) selectJob(first.id);
+  initSettings({ api, toast });
 })();

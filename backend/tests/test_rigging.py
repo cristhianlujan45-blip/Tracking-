@@ -373,3 +373,14 @@ def test_rig_quadruped_api(client):
     again = wait_done(client, client.post(f"/api/jobs/{rigged['id']}/rig",
                                           json={"markers": edited, "animations": ["q_idle"]}).json()["id"])
     assert again["status"] == "succeeded", again["error"] and again["params"]["template"] == "quadruped"
+
+
+def test_auto_template_ignores_clips_for_the_other_body(client):
+    dog_job = wait_done(client, client.post("/api/jobs/text", json={"prompt": "un perro", "quality": "draft"}).json()[0]["id"])
+    rigged = wait_done(client, client.post(f"/api/jobs/{dog_job['id']}/rig",
+                                           json={"animations": ["idle", "walk", "cmu_16_15", "q_trot"]}).json()["id"])
+    assert rigged["status"] == "succeeded", rigged["error"]
+    assert rigged["params"]["template"] == "quadruped" and rigged["params"]["clips"] == ["q_trot"]
+    only_human = wait_done(client, client.post(f"/api/jobs/{dog_job['id']}/rig",
+                                               json={"animations": ["idle", "walk"]}).json()["id"])
+    assert only_human["status"] == "succeeded" and only_human["params"]["clips"]  # falls back to the gaits
