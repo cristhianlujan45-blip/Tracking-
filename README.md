@@ -22,6 +22,15 @@ Aplicación web propia para crear, editar y preparar modelos 3D con IA, al estil
 - **Remallado**: reducir polígonos (de 200 a 200k), low-poly facetado, vóxeles (8³–96³) o suavizado.
 - **Texturizado IA**: repintar un modelo existente desde texto.
 
+**Rigging y animación de personajes**
+- **Auto-rig con un clic** para humanoides en pose A o T: esqueleto de 27 huesos con nombres estándar (Mixamo, Unity Humanoid y retargeting de Unreal). Los pies quedan apoyados en el suelo.
+- **Marcadores ajustables** al estilo Mixamo (barbilla, hombros, codos, muñecas, ingle, rodillas, tobillos), con vista frontal, simetría y giro de 90° si el personaje no mira al frente.
+- **Pesos de piel por difusión de calor** (*bone heat*, el método de Pinocchio): codos, rodillas y hombros se doblan con transiciones suaves y como máximo 4 huesos por vértice.
+- **Biblioteca de 14 animaciones** que se adaptan a las proporciones y a la pose de reposo de cada personaje: reposo, caminar, correr, saltar, saludar, bailar, puñetazos, victoria, asentir, negar, mirar alrededor, sentado, T-pose y A-pose. Los pies se pegan al suelo automáticamente.
+- **Mocap BVH**: sube capturas de movimiento (CMU, Rokoko, Mixamo convertido en Blender…) y se adaptan a tu personaje, aunque el BVH esté en pose T y el personaje en pose A. Opción "en el sitio" o con desplazamiento.
+- Visor con **esqueleto** y **mapa de pesos por hueso** para revisar el rig.
+- Exportación **GLB con animaciones** y **FBX / .blend** (convertidos con Blender) para Unity, Unreal, Maya o 3ds Max. Validado con el validador oficial de Khronos y reimportado en Blender 5.0.
+
 **Impresión 3D**
 - Análisis: estanqueidad, normales, triángulos degenerados, piezas sueltas, volumen.
 - **Reparación automática**: tapa agujeros de cualquier tamaño y corrige normales.
@@ -44,36 +53,39 @@ Aplicación web propia para crear, editar y preparar modelos 3D con IA, al estil
 
 ### Comparación con Meshy
 
+Datos de Meshy según su web (octubre de 2026). "No figura" significa que la web no lo menciona.
+
 | | Forja3D | Meshy |
 |---|---|---|
 | Texto/imagen/multi-vista → 3D | ✅ | ✅ |
 | Elegir entre conceptos antes del 3D | ✅ | ✅ |
-| Estilos, simetría, pose, semilla | ✅ | ✅ |
-| Foto/escena → 3D, relieve y litofanía | ✅ | ❌ |
-| Texto 3D, placas y llaveros | ✅ | ✅ (generador de texto 3D) |
-| Remallado / low-poly / vóxel | ✅ local, sin coste | ✅ |
-| Retexturizado | ✅ demo y GPU local (`--texture`) · ❌ fal.ai | ✅ |
+| Auto-rig de humanoides | ✅ | ✅ (y cuadrúpedos) |
+| Corregir el rig con marcadores (estilo Mixamo) | ✅ | no figura |
+| Ver huesos y mapa de pesos antes de exportar | ✅ | no figura |
+| Biblioteca de animaciones | 14, adaptadas a cada personaje | 600+ |
+| Importar tu propio mocap BVH | ✅ | no figura |
+| Exportar GLB/FBX con animaciones | ✅ | ✅ |
+| Foto/escena → 3D, relieve y litofanía | ✅ | no figura |
+| Texto 3D, placas y llaveros | ✅ | ✅ |
+| Remallado / low-poly / vóxel | ✅ local | ✅ |
+| Retexturizado | ✅ demo y GPU local (`--texture`) | ✅ |
 | Análisis, reparación y división para impresión | ✅ | ✅ |
-| STL/3MF listos para slicer, a escala en mm | ✅ | ✅ |
-| Complemento de Blender (importar y enviar) | ✅ | ✅ |
-| Vídeo 360°, AR, iframe, USDZ | ✅ | parcial |
+| STL/3MF a escala en mm | ✅ | ✅ |
+| Complemento de Blender | ✅ | ✅ |
 | IA en tu propia GPU, sin coste por modelo | ✅ (8 GB bastan) | ❌ |
 | Autoalojado, sin suscripción, el código es tuyo | ✅ | ❌ |
-| Rigging y animación automáticos | ❌ | ✅ |
-| Topología en quads (para animar) | ❌ | ✅ |
-| Texturas PBR separadas (normal, rugosidad, metal) | ❌ | ✅ |
-| FBX, impresión multicolor (AMS), abrir en el slicer | ❌ | ✅ |
-| Cuentas, créditos, comunidad, app móvil | ❌ | ✅ |
+| Rig de cuadrúpedos y dedos | ❌ | ✅ cuadrúpedos |
+| Texturas PBR separadas, quads | ❌ | ✅ |
+| Impresión multicolor, cuentas, comunidad | ❌ | ✅ |
 
-### Qué falta para igualar a Meshy (en orden de prioridad)
+### Qué falta (en orden de prioridad)
 
-1. **Rigging y animación automáticos** (humanoides y cuadrúpedos). Es lo que más pesa para juegos y vídeo. Se puede hacer con modelos abiertos de auto-rigging (p. ej. UniRig) en tu GPU y una biblioteca de movimientos en formato BVH/FBX.
-2. **Remallado en quads** con [Instant Meshes](https://github.com/wjakob/instant-meshes) (CPU, código abierto): topología limpia para animar y esculpir en Blender.
-3. **Exportar FBX** usando Blender sin interfaz (`blender -b`) como conversor. Ya está comprobado que funciona como módulo de Python.
-4. **Impresión multicolor**: reducir los colores del modelo a 4–16 filamentos y exportar 3MF por colores (Bambu AMS, Prusa MMU). Añadir botones para abrir directamente en Bambu Studio u OrcaSlicer.
-5. **Texturas PBR** (normal, rugosidad, metal). Hunyuan3D-2.1 las genera, pero pide más de 8 GB de VRAM; en tu PC habría que generarlas en la nube.
-6. **Editor de imagen previo**: recorte, quitar fondo con vista previa, varias vistas generadas por IA a partir de una sola foto.
-7. **Producto**: cuentas, créditos, galería pública, API con claves y app móvil (PWA).
+1. **Rig de cuadrúpedos y de dedos.** La misma técnica (marcadores, pesos por calor y animaciones) se amplía con otra plantilla de esqueleto.
+2. **Más animaciones**: una biblioteca de mocap con licencia libre (p. ej. CMU) precargada; el importador BVH ya está hecho.
+3. **Remallado en quads** con Instant Meshes, para una topología limpia al animar o esculpir.
+4. **Impresión multicolor**: 3MF por colores (Bambu AMS, Prusa MMU) y abrir directamente en Bambu Studio u OrcaSlicer.
+5. **Texturas PBR** (normal, rugosidad, metal). Hunyuan3D-2.1 las genera, pero pide más de 8 GB de VRAM.
+6. **Producto**: cuentas, créditos, galería pública, API con claves y app móvil.
 
 ## Proveedores de IA
 
@@ -136,6 +148,9 @@ backend/app/
   jobs.py              ejecutor asíncrono con límite de concurrencia
   geometry.py          remallado, vóxeles, análisis, reparación, corte, exportación
   creations.py         escena 2.5D, relieve, litofanía, texto 3D
+  rigging/             skeleton.py (marcadores, esqueleto) · skinning.py (bone heat)
+                       animations.py (biblioteca + BVH) · gltf_writer.py (GLB con skin)
+  blender.py           conversión FBX/.blend con Blender en segundo plano
   styles.py            estilos y construcción de prompts
   db.py                SQLite con migraciones automáticas
   providers/           local.py (tu GPU) · fal.py (fal.ai) · mock.py (demo) · base.py
@@ -154,13 +169,17 @@ backend/app/
 | `POST` | `/api/jobs/text3d` | `{text, style: letters\|plate\|keychain, font, bold, depth, color, plate_color}` |
 | `GET` | `/api/jobs/{id}/depth` | mapa de profundidad usado (escenas y relieves) |
 | `GET` | `/api/integrations/blender` | complemento de Blender preconfigurado |
+| `GET` | `/api/rig/presets` | animaciones disponibles y marcadores |
+| `POST` | `/api/jobs/{id}/rig/markers` | `{yaw?, auto?}` → marcadores estimados (o los guardados) |
+| `POST` | `/api/jobs/{id}/rig` | `{markers?, yaw?, symmetric, animations, in_place}` → personaje con rig |
+| `POST` | `/api/jobs/{id}/animate` | multipart: `animations`, `bvh` (archivos), `keep_bvh`, `in_place` |
 | `GET` | `/api/jobs` · `/api/jobs/{id}` | listado / detalle |
 | `PATCH` | `/api/jobs/{id}` | `{name?, favorite?}` |
 | `DELETE` | `/api/jobs/{id}` | elimina trabajo y archivos |
 | `GET` | `/api/jobs/{id}/model.glb` · `/image` · `/thumbnail` | archivos |
 | `PUT` | `/api/jobs/{id}/thumbnail` | miniatura (cuerpo PNG/JPG/WEBP) |
 | `GET` | `/api/jobs/{id}/analysis` | informe de imprimibilidad |
-| `GET` | `/api/jobs/{id}/export?format=glb\|obj\|stl\|3mf\|ply&size_mm=&fit=height\|width\|depth\|max` | descarga convertida |
+| `GET` | `/api/jobs/{id}/export?format=glb\|obj\|stl\|3mf\|ply\|fbx\|blend&size_mm=&fit=height\|width\|depth\|max` | descarga convertida (FBX/.blend necesitan Blender) |
 | `POST` | `/api/jobs/{id}/remesh` | `{mode: decimate\|lowpoly\|voxel\|smooth, target_faces, resolution}` |
 | `POST` | `/api/jobs/{id}/retexture` | `{prompt, style, seed?}` |
 | `POST` | `/api/jobs/{id}/repair` | reparación para impresión |

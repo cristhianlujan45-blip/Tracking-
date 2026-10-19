@@ -46,6 +46,8 @@ class Settings:
     local_worker_token: str = field(default_factory=lambda: os.getenv("LOCAL_WORKER_TOKEN", ""))
     local_timeout_s: float = field(default_factory=lambda: float(os.getenv("LOCAL_TIMEOUT_S", "1800")))
 
+    blender_path: str = field(default_factory=lambda: os.getenv("BLENDER_PATH", ""))
+
     mock_step_delay: float = field(default_factory=lambda: float(os.getenv("MOCK_STEP_DELAY", "0.6")))
 
     @property

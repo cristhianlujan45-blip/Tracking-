@@ -1,3 +1,4 @@
+import { initRig, renderRig } from "./rig.js";
 import { Viewer } from "./viewer.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -14,11 +15,11 @@ const STYLE_ICONS = { auto: "✧", realistic: "◉", cartoon: "☺", handpainted
 const MODE_LABEL = {
   text: "Texto", image: "Imagen", multi_image: "Multi-vista", upload: "Subido",
   remesh: "Remallado", retexture: "Retexturizado", repair: "Reparado", split: "Piezas",
-  scene: "Escena", relief: "Relieve", lithophane: "Litofanía", text3d: "Texto 3D",
+  scene: "Escena", relief: "Relieve", lithophane: "Litofanía", text3d: "Texto 3D", rig: "Animado",
 };
 const MODE_ICON = {
   text: "✎", image: "▣", multi_image: "▤", upload: "⇪", remesh: "◇", retexture: "✺", repair: "✚", split: "✂",
-  scene: "⛰", relief: "▨", lithophane: "◐", text3d: "A",
+  scene: "⛰", relief: "▨", lithophane: "◐", text3d: "A", rig: "🦴",
 };
 const TOOL_MODES = ["remesh", "retexture", "repair", "split"];
 const FLAT_MODES = ["relief", "lithophane"]; // plaques: size them by the longest side, not the thickness
@@ -36,6 +37,8 @@ const FORMAT_INFO = {
   stl: ["STL", "Impresión 3D: Z hacia arriba, en milímetros, apoyado en la cama."],
   "3mf": ["3MF", "Impresión 3D moderna (Bambu Studio, PrusaSlicer, OrcaSlicer, Cura)."],
   ply: ["PLY", "Colores por vértice; útil para MeshLab y escaneo."],
+  fbx: ["FBX (Unity, Unreal, Maya, 3ds Max)", "Convertido con Blender; conserva esqueleto, pesos y animaciones."],
+  blend: ["Blender (.blend)", "Archivo de Blender listo para abrir, con armadura y acciones."],
   usdz: ["USDZ (iPhone / Apple)", "AR Quick Look en iPhone/iPad. Se genera en tu navegador; conserva texturas, no colores por vértice."],
 };
 const CLIENT_FORMATS = ["usdz"];
@@ -376,6 +379,7 @@ function matchesFilter(job) {
   if (f === "gen" && !GENERATIVE.includes(job.mode)) return false;
   if (f === "tools" && !TOOL_MODES.includes(job.mode)) return false;
   if (f === "active" && !["queued", "running"].includes(job.status)) return false;
+  if (f === "rig" && job.mode !== "rig") return false;
   return !state.search || job.title.toLowerCase().includes(state.search);
 }
 
@@ -576,7 +580,10 @@ function escapeHtml(s) {
 function renderTools(job) {
   $("#toolsEmpty").hidden = !!job;
   $("#toolsBody").hidden = !job;
-  if (!job) return (state.toolsKey = null);
+  if (!job) {
+    renderRig(null);
+    return (state.toolsKey = null);
+  }
 
   $("#toolTitle").textContent = job.title;
   $("#btnFav").textContent = job.favorite ? "★" : "☆";
@@ -595,6 +602,7 @@ function renderTools(job) {
   const flat = FLAT_MODES.includes(job.mode) || (job.mode === "text3d" && job.params?.style !== "letters");
   $("#exportFit").value = flat ? "max" : "height";
   updateExportLink();
+  renderRig(job);
   const share = `${location.origin}/share.html?id=${job.id}`;
   $("#btnOpenShare").href = share;
   $("#embedCode").value = `<iframe src="${share}&embed=1" width="640" height="480" style="border:0;border-radius:12px" allow="xr-spatial-tracking; fullscreen" loading="lazy"></iframe>`;
@@ -656,7 +664,8 @@ function updateExportLink() {
   const fit = $("#exportFit").value;
   const isPrint = fmt === "stl" || fmt === "3mf";
   const fitLabel = $("#exportFit").selectedOptions[0].textContent.toLowerCase();
-  $("#exportHint").textContent = FORMAT_INFO[fmt]?.[1] + (isPrint && !size ? ` ${fitLabel[0].toUpperCase() + fitLabel.slice(1)} por defecto: 100 mm.` : "");
+  const rigNote = job.mode === "rig" && !["glb", "fbx", "blend"].includes(fmt) ? " (malla estática: sin esqueleto ni animaciones)" : "";
+  $("#exportHint").textContent = FORMAT_INFO[fmt]?.[1] + rigNote + (isPrint && !size ? ` ${fitLabel[0].toUpperCase() + fitLabel.slice(1)} por defecto: 100 mm.` : "");
   const client = CLIENT_FORMATS.includes(fmt);
   $("#exportFit").disabled = $("#exportHeight").disabled = client;
   $("#btnExport").href = client ? "#" : `/api/jobs/${job.id}/export?format=${fmt}${size > 0 ? `&size_mm=${size}&fit=${fit}` : `&fit=${fit}`}`;
@@ -775,6 +784,7 @@ $("#btnCopyLink").addEventListener("click", async () => {
   }
   buildForm();
   updateRemeshUi();
+  await initRig({ api, viewer, toast, onCreated, selectedJob });
   await refreshJobs();
   const first = state.jobs.find((j) => j.status === "succeeded");
   if (first && !state.selected) selectJob(first.id);

@@ -21,11 +21,11 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from . import creations, geometry, pipelines
+from . import blender, creations, geometry, pipelines, rigging
 from .config import Settings, get_settings
 from .db import JobStore
 from .jobs import JobRunner
-from .providers import GenerationError, GenerationRequest, InputImage, Provider, build_provider
+from .providers import GenerationError, GenerationRequest, GenerationResult, InputImage, Provider, build_provider
 from .styles import POSES, STYLES
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
@@ -39,7 +39,7 @@ HEX_ID = re.compile(r"^[0-9a-f]{32}$")
 Quality = Literal["draft", "standard", "high"]
 Style = Literal[tuple(STYLES)]  # type: ignore[valid-type]
 Pose = Literal[tuple(POSES)]  # type: ignore[valid-type]
-ExportFormat = Literal[tuple(geometry.EXPORT_FORMATS)]  # type: ignore[valid-type]
+ExportFormat = Literal[tuple(geometry.EXPORT_FORMATS) + tuple(blender.FORMATS)]  # type: ignore[valid-type]
 
 MODE_LABELS = {
     "text": "Texto a 3D",
@@ -54,6 +54,7 @@ MODE_LABELS = {
     "relief": "Relieve",
     "lithophane": "Litofanía",
     "text3d": "Texto 3D",
+    "rig": "Personaje animado",
 }
 SCENE_KINDS = ("scene", "relief", "lithophane")
 HEX_COLOR = r"^#[0-9a-fA-F]{6}$"
@@ -127,6 +128,19 @@ def hex_rgb(value: str) -> tuple[int, int, int]:
     return tuple(int(value[i : i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
 
 
+class RigIn(BaseModel):
+    markers: dict[str, list[float]] | None = None
+    yaw: Literal[0, 90, 180, 270] | None = None
+    symmetric: bool = False
+    animations: list[str] = Field(default_factory=lambda: list(rigging.DEFAULT_PRESETS), max_length=20)
+    in_place: bool = True
+
+
+class MarkersIn(BaseModel):
+    yaw: Literal[0, 90, 180, 270] | None = None
+    auto: bool = False  # ignore a rigged character's saved markers and estimate again
+
+
 class JobOut(BaseModel):
     id: str
     mode: str
@@ -193,6 +207,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         if hasattr(app.state.provider, "start"):
             await app.state.provider.start()
         app.state.runner = JobRunner(store, settings.files_dir, settings.max_concurrent_jobs)
+        app.state.blender = blender.find_blender(settings.blender_path)
         yield
         await app.state.runner.shutdown()
         store.close()
@@ -307,7 +322,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             "capabilities": sorted(provider.capabilities),
             "styles": [{"id": k, "label": v[0]} for k, v in STYLES.items()],
             "poses": [{"id": k, "label": v[0]} for k, v in POSES.items()],
-            "export_formats": list(geometry.EXPORT_FORMATS),
+            "export_formats": list(geometry.EXPORT_FORMATS) + (list(blender.FORMATS) if app.state.blender else []),
+            "blender": bool(app.state.blender),
             "upload_types": sorted(geometry.UPLOAD_TYPES),
             "max_upload_mb": settings.max_upload_bytes // (1024 * 1024),
         }
@@ -553,14 +569,28 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         job, path = ready_model(request, job_id)
         if size_mm is None and height_mm is not None:
             size_mm, fit = height_mm, "height"
+        filename = slugify(job_title(job))
+        if format in blender.FORMATS:
+            if not request.app.state.blender:
+                raise HTTPException(400, "Para FBX/.blend instala Blender (o indica BLENDER_PATH en .env) y reinicia la app")
+            try:
+                data = await asyncio.to_thread(blender.convert, path.read_bytes(), format, request.app.state.blender)
+            except blender.BlenderError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            ext, media_type = blender.FORMATS[format]
+            return Response(data, media_type=media_type,
+                            headers={"Content-Disposition": f'attachment; filename="{filename}.{ext}"'})
+        if format == "glb" and job["mode"] == "rig":  # keep the skeleton and animations untouched
+            return Response(path.read_bytes(), media_type="model/gltf-binary",
+                            headers={"Content-Disposition": f'attachment; filename="{filename}.glb"'})
         try:
             data, ext, media_type = await asyncio.to_thread(
                 geometry.export, path.read_bytes(), format, size_mm, fit
             )
         except geometry.GeometryError as exc:
             raise HTTPException(422, str(exc)) from exc
-        filename = f"{slugify(job_title(job))}.{ext}"
-        return Response(data, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+        return Response(data, media_type=media_type,
+                        headers={"Content-Disposition": f'attachment; filename="{filename}.{ext}"'})
 
     # ------------------------------------------------------------ derived jobs (tools)
 
@@ -595,6 +625,125 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         params = {"style": body.style, "seed": seed}
         return create_derived_job(request, parent, "retexture", work, f"{job_title(parent)} · {req.prompt}",
                                   params, prompt=req.prompt)
+
+    # ------------------------------------------------------------ rigging & animation
+
+    @app.get("/api/rig/presets")
+    async def rig_presets():
+        return {
+            "presets": [{"id": k, "label": p.label, "duration": p.duration, "loop": p.loop, "tags": p.tags}
+                        for k, p in rigging.PRESETS.items()],
+            "default": rigging.DEFAULT_PRESETS,
+            "markers": [{"id": m, "label": rigging.MARKER_LABELS[m]} for m in rigging.MARKERS],
+        }
+
+    def rig_source(request: Request, job: dict) -> tuple[dict, Path]:
+        """Rigging always starts from the static model, also when re-rigging a rigged one."""
+        if job["mode"] == "rig":
+            source = request.app.state.store.get(job["params"].get("source_id", ""))
+            if not source or source["status"] != "succeeded":
+                raise HTTPException(409, "El modelo original de este personaje ya no existe")
+            return source, job_dir(source["id"]) / source["model_file"]
+        return ready_model(request, job["id"])
+
+    @app.post("/api/jobs/{job_id}/rig/markers")
+    async def rig_markers(request: Request, job_id: str, body: MarkersIn | None = None):
+        """Markers to edit. `view_yaw` is how much the model shown in the viewer must turn to match them
+        (a rigged model is already stored turned and centred)."""
+        job, _ = ready_model(request, job_id)
+        shown_yaw = job["params"].get("yaw", 0) if job["mode"] == "rig" else 0
+        fresh = body is not None and body.auto
+        if job["mode"] == "rig" and not fresh and (body is None or body.yaw is None or body.yaw == shown_yaw):
+            p = job["params"]
+            return {"yaw": p["yaw"], "markers": p["markers"], "source_id": p["source_id"], "view_yaw": 0}
+        source, path = rig_source(request, job)
+        try:
+            result = await asyncio.to_thread(rigging.auto_markers, path.read_bytes(), body.yaw if body else None)
+        except rigging.RigError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {**result, "source_id": source["id"], "view_yaw": (result["yaw"] - shown_yaw) % 360}
+
+    def submit_rig(request: Request, parent: dict, body: RigIn, bvh: list[tuple[str, str, bytes]],
+                   keep_bvh: list[str]) -> JobOut:
+        unknown = [a for a in body.animations if a not in rigging.PRESETS]
+        if unknown:
+            raise HTTPException(422, f"Animaciones desconocidas: {', '.join(unknown)}")
+        source, path = rig_source(request, parent)
+        markers = body.markers
+        if markers is not None:
+            missing = [m for m in rigging.MARKERS if m not in markers or len(markers[m]) < 2]
+            if missing:
+                raise HTTPException(422, f"Faltan marcadores: {', '.join(missing)}")
+            markers = {m: [float(markers[m][0]), float(markers[m][1])] for m in rigging.MARKERS}
+            if body.symmetric:
+                markers = rigging.mirror_markers(markers, "l")
+        job_id = uuid.uuid4().hex
+        job_dir(job_id).mkdir(parents=True)
+        bvh_files = []
+        for name, filename, data in bvh:  # (clip name, file name, bytes)
+            (job_dir(job_id) / filename).write_bytes(data)
+            bvh_files.append({"name": name, "file": filename})
+        for item in keep_bvh_items(parent, keep_bvh):
+            (job_dir(job_id) / item["file"]).write_bytes((job_dir(parent["id"]) / item["file"]).read_bytes())
+            bvh_files.append(item)
+        clips = [(item["name"], (job_dir(job_id) / item["file"]).read_text(encoding="utf-8", errors="replace"))
+                 for item in bvh_files]
+
+        async def work(on_progress):
+            await on_progress(10, "Colocando esqueleto y calculando pesos")
+            try:
+                result = await asyncio.to_thread(rigging.rig, path.read_bytes(), markers, body.yaw, body.animations,
+                                                 clips, body.in_place)
+            except rigging.RigError as exc:
+                raise geometry.GeometryError(str(exc)) from exc
+            request.app.state.store.update_params(job_id, {"markers": result.markers, "yaw": result.yaw,
+                                                           "clips": result.clips, "skeleton": result.skeleton})
+            return GenerationResult(model_glb=result.glb)
+
+        params = {"source_id": source["id"], "markers": markers, "yaw": body.yaw, "animations": body.animations,
+                  "bvh": bvh_files, "in_place": body.in_place, "symmetric": body.symmetric}
+        state = request.app.state
+        title = job_title(source)
+        job = state.store.create(id=job_id, mode="rig", prompt=source.get("prompt"), quality=source["quality"],
+                                 provider="local", params=params, parent_id=parent["id"], name=f"{title} · rig"[:120])
+        state.runner.submit(job_id, work)
+        return to_out(job)
+
+    def keep_bvh_items(parent: dict, names: list[str]) -> list[dict]:
+        if parent["mode"] != "rig":
+            return []
+        return [item for item in parent["params"].get("bvh", []) if item["name"] in names]
+
+    @app.post("/api/jobs/{job_id}/rig", response_model=JobOut, status_code=201)
+    async def rig_job(request: Request, job_id: str, body: RigIn):
+        parent, _ = ready_model(request, job_id)
+        keep = [b["name"] for b in parent["params"].get("bvh", [])] if parent["mode"] == "rig" else []
+        return submit_rig(request, parent, body, [], keep)
+
+    @app.post("/api/jobs/{job_id}/animate", response_model=JobOut, status_code=201)
+    async def animate_job(
+        request: Request,
+        job_id: str,
+        animations: str = Form(""),
+        keep_bvh: str = Form(""),
+        in_place: bool = Form(True),
+        bvh: list[UploadFile] | None = File(None),
+    ):
+        """Re-bake a rigged character with another set of clips and/or new BVH motion capture."""
+        parent, _ = ready_model(request, job_id)
+        if parent["mode"] != "rig":
+            raise HTTPException(400, "Primero crea el rig del personaje")
+        uploads = []
+        for i, upload in enumerate(bvh or []):
+            data = await upload.read(20 * 1024 * 1024 + 1)
+            if len(data) > 20 * 1024 * 1024:
+                raise HTTPException(413, "El BVH supera 20 MB")
+            stem = re.sub(r"[^\w\-]+", "_", (upload.filename or f"mocap{i}").rsplit(".", 1)[0])[:40] or f"mocap{i}"
+            uploads.append((stem, f"mocap_{i}_{stem}.bvh", data))
+        p = parent["params"]
+        body = RigIn(markers=p.get("markers"), yaw=p.get("yaw"), in_place=in_place,
+                     animations=[a for a in animations.split(",") if a])
+        return submit_rig(request, parent, body, uploads, [n for n in keep_bvh.split(",") if n])
 
     def generative_parent(request: Request, job_id: str) -> dict:
         parent = get_job_or_404(request, job_id)

@@ -183,6 +183,14 @@
               <option value="night">Noche</option>
             </select>
           </div>
+          <div class="rig-editor-bar" id="rigEditorBar" hidden>
+            <span class="grow">Arrastra los puntos a las articulaciones (vista frontal; rueda = zoom)</span>
+            <label class="check"><input type="checkbox" id="markerSym" checked /> Simetría</label>
+            <button class="tool" id="btnRotateModel" title="Girar 90° si el personaje no mira al frente">⟲ 90°</button>
+            <button class="tool" id="btnResetMarkers">Auto</button>
+            <button class="tool" id="btnCancelMarkers">Cancelar</button>
+            <button class="primary" id="btnApplyMarkers">✔ Crear rig</button>
+          </div>
           <div class="anim-bar" id="animBar" hidden>
             <select id="animClip"></select>
             <button class="tool" id="btnAnimPlay">⏸</button>
@@ -203,7 +211,7 @@
         <div class="gallery-head">
           <h2>Mis modelos</h2>
           <div class="segmented small" id="filters">
-            <button class="on" data-f="all">Todos</button><button data-f="fav">★</button><button data-f="gen">IA</button><button data-f="tools">Editados</button><button data-f="active">En curso</button>
+            <button class="on" data-f="all">Todos</button><button data-f="fav">★</button><button data-f="gen">IA</button><button data-f="tools">Editados</button><button data-f="rig" title="Personajes con rig">🦴</button><button data-f="active">En curso</button>
           </div>
           <input id="search" type="search" placeholder="Buscar…" />
         </div>
@@ -230,6 +238,27 @@
             <button class="secondary" id="btnVariations" title="Nuevas semillas">⧉ 3 variaciones</button>
           </div>
           <button class="link" id="btnRemix">↺ Cargar parámetros en el formulario</button>
+        </details>
+
+        <details open id="rigSection">
+          <summary>🦴 Rigging y animación</summary>
+          <p class="muted small" id="rigHint">Personajes humanoides de pie (pose A o T), mirando al frente. Esqueleto estándar compatible con Mixamo, Unity, Unreal y Blender.</p>
+          <label>Animaciones</label>
+          <div class="anim-grid" id="animList"></div>
+          <div id="mocapBox">
+            <label for="bvhFiles">Mocap BVH (opcional)</label>
+            <input type="file" id="bvhFiles" accept=".bvh" multiple />
+            <div class="anim-grid" id="bvhKeep"></div>
+            <label class="check"><input type="checkbox" id="inPlace" checked /> En el sitio (sin desplazamiento)</label>
+          </div>
+          <div class="btn-row">
+            <button class="primary" id="btnAutoRig" title="Esqueleto y pesos automáticos">⚡ Auto-rig</button>
+            <button class="secondary" id="btnMarkers" title="Coloca tú las articulaciones, como en Mixamo">🎯 Marcadores</button>
+          </div>
+          <div class="rig-view" id="rigView" hidden>
+            <label class="check"><input type="checkbox" id="showBones" /> Ver huesos</label>
+            <select id="weightBone" title="Ver la influencia de un hueso sobre la malla"><option value="">Pesos: ninguno</option></select>
+          </div>
         </details>
 
         <details open>

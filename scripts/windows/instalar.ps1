@@ -75,6 +75,15 @@ if ($Texture) {
     Pop-Location
 }
 
+Step "Buscando Blender (para exportar FBX y .blend)"
+$blender = Get-ChildItem "C:\Program Files\Blender Foundation\Blender*\blender.exe" -ErrorAction SilentlyContinue |
+    Sort-Object FullName | Select-Object -Last 1
+if ($blender) {
+    Write-Host "Blender encontrado: $($blender.FullName)" -ForegroundColor Green
+} else {
+    Write-Host "Blender no encontrado: la exportación FBX/.blend quedará desactivada. Instálalo desde blender.org (gratis) y reinicia la app." -ForegroundColor Yellow
+}
+
 Step "Configurando .env"
 $EnvFile = Join-Path $Root ".env"
 if (-not (Test-Path $EnvFile)) {

@@ -78,6 +78,17 @@ class JobStore:
             self._conn.execute(f"UPDATE jobs SET {assignments} WHERE id = ?", (*fields.values(), job_id))
             self._conn.commit()
 
+    def update_params(self, job_id: str, values: dict) -> None:
+        """Merge `values` into the job's JSON params."""
+        with self._lock:
+            row = self._conn.execute("SELECT params FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if row is None:
+                return
+            params = {**json.loads(row["params"] or "{}"), **values}
+            self._conn.execute("UPDATE jobs SET params = ?, updated_at = ? WHERE id = ?",
+                               (json.dumps(params), time.time(), job_id))
+            self._conn.commit()
+
     def get(self, job_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()

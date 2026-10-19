@@ -65,6 +65,7 @@ export class Viewer {
       this.model.rotation.y = this.turntable.rotation + t * Math.PI * 2;
     }
     this.controls.update();
+    if (this.editor) this._drawMarkers(); // follow zoom / pan
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -80,11 +81,7 @@ export class Viewer {
     const gltf = await this.loader.loadAsync(url);
     this.clear();
     this.model = gltf.scene;
-
-    // center on the origin and sit on the grid
-    const box = new THREE.Box3().setFromObject(this.model);
-    const center = box.getCenter(new THREE.Vector3());
-    this.model.position.sub(new THREE.Vector3(center.x, box.min.y, center.z));
+    this.place();
     this.model.traverse((o) => {
       if (!o.isMesh) return;
       o.userData.original = o.material;
@@ -103,8 +100,22 @@ export class Viewer {
     return this.stats();
   }
 
+  // centre on the origin and sit on the grid, after an optional turn about Y (degrees)
+  place(yawDegrees = 0) {
+    this.model.rotation.y = THREE.MathUtils.degToRad(yawDegrees);
+    this.model.position.set(0, 0, 0);
+    this.model.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(this.model);
+    const center = box.getCenter(new THREE.Vector3());
+    this.model.position.set(-center.x, -box.min.y, -center.z);
+    this.model.updateMatrixWorld(true);
+  }
+
   clear() {
     if (!this.model) return;
+    this.exitMarkerEditor();
+    this.setSkeletonVisible(false);
+    this.weightBone = null;
     this.mixer?.stopAllAction();
     this.mixer = null;
     this.action = null;
@@ -222,6 +233,185 @@ export class Viewer {
     }
     if (hideGrid) this.setGrid(gridWas);
     return new Promise((resolve) => out.toBlob(resolve, type, 0.88));
+  }
+
+  // ---------------------------------------------------------------- rig inspection
+
+  skinnedMeshes() {
+    const out = [];
+    this.model?.traverse((o) => o.isSkinnedMesh && out.push(o));
+    return out;
+  }
+
+  boneNames() {
+    const mesh = this.skinnedMeshes()[0];
+    return mesh ? mesh.skeleton.bones.map((b) => b.name).filter((n) => !n.endsWith("_End")) : [];
+  }
+
+  setSkeletonVisible(on) {
+    if (this.skeletonHelper) {
+      this.scene.remove(this.skeletonHelper);
+      this.skeletonHelper.dispose?.();
+      this.skeletonHelper = null;
+    }
+    if (on && this.model && this.skinnedMeshes().length) {
+      this.skeletonHelper = new THREE.SkeletonHelper(this.model);
+      this.skeletonHelper.material.depthTest = false;
+      this.skeletonHelper.material.linewidth = 2;
+      this.scene.add(this.skeletonHelper);
+    }
+  }
+
+  // Heat map (blue → red) of how strongly each vertex follows one bone; null restores the look.
+  setWeightBone(name) {
+    this.weightBone = name || null;
+    for (const mesh of this.skinnedMeshes()) {
+      const geo = mesh.geometry;
+      if (!name) {
+        if (geo.userData.originalColor !== undefined) {
+          if (geo.userData.originalColor) geo.setAttribute("color", geo.userData.originalColor);
+          else geo.deleteAttribute("color");
+          delete geo.userData.originalColor;
+        }
+        mesh.material = mesh.userData.weightMaterial ? mesh.userData.original : mesh.material;
+        delete mesh.userData.weightMaterial;
+        continue;
+      }
+      const boneIndex = mesh.skeleton.bones.findIndex((b) => b.name === name);
+      const idx = geo.attributes.skinIndex, w = geo.attributes.skinWeight;
+      const colors = new Float32Array(idx.count * 3);
+      const color = new THREE.Color();
+      for (let i = 0; i < idx.count; i++) {
+        let value = 0;
+        for (let k = 0; k < 4; k++) if (idx.getComponent(i, k) === boneIndex) value += w.getComponent(i, k);
+        color.setHSL((1 - value) * 0.66, 0.9, 0.35 + 0.2 * value);
+        colors.set([color.r, color.g, color.b], i * 3);
+      }
+      if (geo.userData.originalColor === undefined) geo.userData.originalColor = geo.attributes.color || null;
+      geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      if (!mesh.userData.weightMaterial) {
+        mesh.userData.weightMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
+      }
+      mesh.material = mesh.userData.weightMaterial;
+    }
+    if (!name) this.setViewMode(this.viewMode);
+  }
+
+  // ---------------------------------------------------------------- marker editor (front view)
+
+  enterMarkerEditor({ markers, labels, yaw = 0, symmetric = true, onChange }) {
+    this.exitMarkerEditor();
+    if (!this.model) return;
+    this.place(yaw);
+    const box = new THREE.Box3().setFromObject(this.model);
+    const size = box.getSize(new THREE.Vector3());
+    const h = size.y || 1;
+    this.editor = { markers: structuredClone(markers), symmetric, onChange, autoRotate: this.controls.autoRotate };
+    this.controls.autoRotate = false;
+    this.controls.enableRotate = false;
+    const dist = (Math.max(h, size.x) / (2 * Math.tan((this.camera.fov * Math.PI) / 360))) * 1.15;
+    this.camera.position.set(0, h / 2, dist + size.z);
+    this.controls.target.set(0, h / 2, 0);
+    this.controls.update();
+
+    const wrap = this.canvas.parentElement;
+    const layer = document.createElement("div");
+    layer.className = "marker-layer";
+    layer.innerHTML = '<svg class="marker-bones"></svg>';
+    wrap.append(layer);
+    this.editor.layer = layer;
+    this.editor.dots = {};
+    for (const [name, label] of Object.entries(labels)) {
+      const dot = document.createElement("div");
+      dot.className = `marker ${name.endsWith("_r") ? "right" : name.endsWith("_l") ? "left" : "center"}`;
+      dot.title = label;
+      dot.dataset.label = label;
+      dot.addEventListener("pointerdown", (e) => this._dragMarker(e, name));
+      layer.append(dot);
+      this.editor.dots[name] = dot;
+    }
+    this._drawMarkers();
+  }
+
+  exitMarkerEditor() {
+    if (!this.editor) return;
+    this.editor.layer.remove();
+    this.controls.enableRotate = true;
+    this.controls.autoRotate = this.editor.autoRotate;
+    this.editor = null;
+    if (this.model) {
+      this.place(0);
+      this.frame();
+    }
+  }
+
+  setMarkers(markers) {
+    if (!this.editor) return;
+    this.editor.markers = structuredClone(markers);
+    this._drawMarkers();
+  }
+
+  setMarkerSymmetry(on) {
+    if (this.editor) this.editor.symmetric = on;
+  }
+
+  _toScreen(x, y) {
+    const v = new THREE.Vector3(x, y, 0).project(this.camera);
+    const { clientWidth: w, clientHeight: h } = this.canvas;
+    return [((v.x + 1) / 2) * w, ((1 - v.y) / 2) * h];
+  }
+
+  _toWorld(clientX, clientY) {
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const hit = new THREE.Vector3();
+    return ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hit) ? hit : null;
+  }
+
+  _dragMarker(event, name) {
+    event.preventDefault();
+    const dot = this.editor.dots[name];
+    dot.setPointerCapture(event.pointerId);
+    const move = (e) => {
+      const p = this._toWorld(e.clientX, e.clientY);
+      if (!p || !this.editor) return;
+      const m = this.editor.markers;
+      const centre = name === "chin" || name === "groin";
+      m[name] = [centre ? 0 : +p.x.toFixed(4), +p.y.toFixed(4)];
+      if (this.editor.symmetric && !centre) {
+        const other = name.endsWith("_l") ? name.replace(/_l$/, "_r") : name.replace(/_r$/, "_l");
+        m[other] = [-m[name][0], m[name][1]];
+      }
+      this._drawMarkers();
+      this.editor.onChange?.(m);
+    };
+    const up = () => {
+      dot.removeEventListener("pointermove", move);
+      dot.removeEventListener("pointerup", up);
+    };
+    dot.addEventListener("pointermove", move);
+    dot.addEventListener("pointerup", up);
+  }
+
+  _drawMarkers() {
+    const ed = this.editor;
+    if (!ed) return;
+    const m = ed.markers;
+    const pt = (name) => this._toScreen(m[name][0], m[name][1]);
+    for (const [name, dot] of Object.entries(ed.dots)) {
+      const [x, y] = pt(name);
+      dot.style.transform = `translate(${x}px, ${y}px)`;
+    }
+    const mid = [(m.shoulder_l[0] + m.shoulder_r[0]) / 2, (m.shoulder_l[1] + m.shoulder_r[1]) / 2];
+    const segs = [["chin", mid], [mid, "groin"], ["shoulder_l", "shoulder_r"],
+      ["shoulder_l", "elbow_l"], ["elbow_l", "wrist_l"], ["shoulder_r", "elbow_r"], ["elbow_r", "wrist_r"],
+      ["groin", "knee_l"], ["knee_l", "ankle_l"], ["groin", "knee_r"], ["knee_r", "ankle_r"]];
+    const xy = (p) => (typeof p === "string" ? pt(p) : this._toScreen(p[0], p[1]));
+    ed.layer.querySelector("svg").innerHTML = segs
+      .map(([a, b]) => { const [x1, y1] = xy(a), [x2, y2] = xy(b); return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`; })
+      .join("");
   }
 
   // USDZ for Apple AR Quick Look, built in the browser from the loaded model.

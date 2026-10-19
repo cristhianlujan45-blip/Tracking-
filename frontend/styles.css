@@ -235,3 +235,30 @@ input[type="color"] { width: 100%; height: 38px; padding: 2px; background: var(-
 .history li.current { color: var(--accent); cursor: default; font-weight: 600; }
 .history li .lvl { color: var(--muted); font-family: ui-monospace, monospace; white-space: pre; }
 #btnBlender { display: block; margin-top: 4px; }
+
+/* ---------- rigging ---------- */
+.marker-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.marker-bones { position: absolute; inset: 0; width: 100%; height: 100%; }
+.marker-bones line { stroke: rgba(255, 255, 255, .55); stroke-width: 2; stroke-dasharray: 4 3; }
+.marker {
+  position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid white; background: var(--accent-2); cursor: grab; pointer-events: auto; touch-action: none;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, .35);
+}
+.marker.left { background: #ff8a3d; }
+.marker.right { background: #3da5ff; }
+.marker:active { cursor: grabbing; }
+.marker::after {
+  content: attr(data-label); position: absolute; left: 22px; top: -3px; font-size: 11px; white-space: nowrap;
+  color: white; background: rgba(14, 15, 19, .75); padding: 1px 6px; border-radius: 6px; pointer-events: none;
+}
+.rig-editor-bar {
+  position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  background: rgba(22, 24, 32, .92); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; z-index: 2;
+}
+.rig-editor-bar .grow { flex: 1; color: var(--muted); font-size: 12px; min-width: 160px; }
+.anim-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; margin: 6px 0; }
+.anim-grid label { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text); margin: 0; display: flex; gap: 6px; align-items: center; }
+.rig-view { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.rig-view select { flex: 1; min-width: 120px; }
+.marker.right::after { left: auto; right: 22px; }

@@ -19,6 +19,9 @@ from ..creations import pseudo_depth
 from .base import GenerationRequest, GenerationResult, InputImage, ProgressCallback
 
 KEYWORDS = {
+    "humanoid": ("personaje", "character", "humano", "human", "persona", "robot", "guerrero", "warrior", "soldado",
+                 "chica", "chico", "hombre", "mujer", "caballero", "knight", "mago", "wizard", "astronauta",
+                 "astronaut", "héroe", "heroe", "hero", "ninja", "zombi", "zombie", "elfo", "elf"),
     "tree": ("tree", "árbol", "arbol", "pino", "pine"),
     "mushroom": ("mushroom", "hongo", "seta", "champiñón", "champinon"),
     "snowman": ("snowman", "muñeco de nieve", "muneco de nieve"),
@@ -74,7 +77,50 @@ def _displace(mesh: trimesh.Trimesh, rng: np.random.Generator, amount: float) ->
     return mesh
 
 
+def _limb(p0, p1, radius: float) -> trimesh.Trimesh:
+    p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
+    axis = p1 - p0
+    capsule = trimesh.creation.capsule(height=float(np.linalg.norm(axis)), radius=radius, count=[16, 16])
+    capsule.apply_transform(trimesh.geometry.align_vectors([0, 0, 1], axis / np.linalg.norm(axis)))
+    capsule.apply_translation((p0 + p1) / 2)
+    return capsule
+
+
+def build_humanoid(rng: np.random.Generator, hue: np.ndarray, arm_angle: float = 45.0) -> trimesh.Trimesh:
+    """A-pose character facing +Z, ~1.8 units tall, fused into one surface like AI-generated meshes."""
+    skin, pants, shoes = (0.86, 0.68, 0.55), (0.22, 0.24, 0.32), (0.15, 0.12, 0.1)
+    a = np.radians(arm_angle)
+    parts = []
+    for side in (-1, 1):
+        hip, knee, ankle = (0.1 * side, 0.92, 0), (0.11 * side, 0.5, 0.01), (0.11 * side, 0.1, 0)
+        parts += [_part(_limb(hip, knee, 0.075), pants, rng), _part(_limb(knee, ankle, 0.058), pants, rng)]
+        foot = trimesh.creation.box((0.1, 0.07, 0.24))
+        parts.append(_part(foot, shoes, rng, (0.11 * side, 0.045, 0.06)))
+        shoulder = np.array([0.19 * side, 1.38, 0])
+        direction = np.array([np.sin(a) * side, -np.cos(a), 0])
+        elbow = shoulder + 0.29 * direction
+        wrist = elbow + 0.26 * direction
+        parts += [_part(_limb(shoulder, elbow, 0.052), hue, rng), _part(_limb(elbow, wrist, 0.043), hue, rng),
+                  _part(_limb(wrist, wrist + 0.1 * direction, 0.04), skin, rng)]
+    torso = _limb((0, 0.95, 0), (0, 1.33, 0), 0.16)
+    torso.apply_scale((1.12, 1, 0.72))
+    torso.apply_translation((0, 0.05 * 0, 0))
+    parts += [_part(torso, hue, rng), _part(_limb((0, 1.38, 0), (0, 1.52, 0), 0.055), skin, rng),
+              _part(trimesh.creation.icosphere(3, radius=0.115), skin, rng, (0, 1.63, 0.01))]
+    raw = trimesh.util.concatenate(parts)
+    # fuse the primitives into a single closed surface, like a real generated character
+    from .. import geometry
+
+    fused = geometry.voxelize(raw, 80)
+    fused.merge_vertices()
+    trimesh.smoothing.filter_taubin(fused, iterations=12)
+    fused.visual = trimesh.visual.ColorVisuals(fused, vertex_colors=geometry.transfer_colors(raw, fused))
+    return fused
+
+
 def build_shape(kind: str, rng: np.random.Generator, hue: np.ndarray) -> trimesh.Trimesh:
+    if kind == "humanoid":
+        return build_humanoid(rng, hue)
     if kind == "tree":
         parts = [_part(_y_up(trimesh.creation.cylinder(0.12, 0.6, sections=24)), (0.45, 0.28, 0.15), rng, (0, 0.3, 0))]
         for i, (r, h, y) in enumerate([(0.55, 0.7, 0.85), (0.42, 0.6, 1.2), (0.28, 0.5, 1.5)]):
@@ -139,7 +185,14 @@ def draw_concept(kind: str, hue: np.ndarray, rng: np.random.Generator, size: int
     dark = tuple(int(x * 255 * 0.6) for x in hue)
     s, j = size, lambda: int(rng.integers(-18, 18))
     d.ellipse((s * 0.2, s * 0.84, s * 0.8, s * 0.92), fill=(225, 225, 230))  # shadow
-    if kind == "tree":
+    if kind == "humanoid":
+        skin = (219, 173, 140)
+        d.ellipse((s * 0.44, s * 0.08, s * 0.56, s * 0.22), fill=skin)
+        d.rounded_rectangle((s * 0.4, s * 0.24, s * 0.6, s * 0.5), radius=18, fill=c)
+        for side in (-1, 1):
+            d.line([(s * (0.5 + 0.09 * side), s * 0.27), (s * (0.5 + 0.22 * side), s * 0.48)], fill=c, width=22)
+            d.line([(s * (0.5 + 0.05 * side), s * 0.5), (s * (0.5 + 0.06 * side), s * 0.84)], fill=(56, 60, 80), width=28)
+    elif kind == "tree":
         d.rectangle((s * 0.45, s * 0.65, s * 0.55, s * 0.87), fill=(115, 72, 40))
         for k, y in enumerate((0.62, 0.47, 0.32)):
             w = 0.3 - k * 0.06
