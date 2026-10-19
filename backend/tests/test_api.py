@@ -448,3 +448,44 @@ def test_enhance_textures_to_hd_with_pbr(client):
     plain = make_job(client, "una roca")  # vertex colours only
     failed = wait_done(client, client.post(f"/api/jobs/{plain['id']}/enhance", json={}).json()["id"])
     assert failed["status"] == "failed" and "texturas" in failed["error"]
+
+
+def test_quad_remesh_exports_real_quads(client):
+    parent = make_job(client, "un muñeco de nieve")
+    job = wait_done(client, client.post(f"/api/jobs/{parent['id']}/remesh",
+                                        json={"mode": "quads", "target_faces": 2000}).json()["id"])
+    assert job["status"] == "succeeded", job["error"]
+    data = client.get(f"/api/jobs/{job['id']}/export", params={"format": "obj"}).content
+    obj = zipfile.ZipFile(io.BytesIO(data)).read("model.obj").decode()
+    faces = [line.split()[1:] for line in obj.splitlines() if line.startswith("f ")]
+    assert faces and all(len(f) == 4 for f in faces)
+    assert 1000 < len(faces) < 4000
+
+
+def test_multicolor_print_exports(client):
+    import xml.etree.ElementTree as ET
+
+    job = make_job(client, "un muñeco de nieve")  # white body, orange nose, coloured scarf in demo mode
+    data = client.get(f"/api/jobs/{job['id']}/export", params={"format": "3mf_color", "colors": 3, "size_mm": 80}).content
+    zf = zipfile.ZipFile(io.BytesIO(data))
+    root = ET.fromstring(zf.read("3D/3dmodel.model"))
+    ns = {"m": "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"}
+    bases = root.findall(".//m:basematerials/m:base", ns)
+    tris = root.findall(".//m:triangle", ns)
+    assert 1 <= len(bases) <= 3 and len(tris) > 100
+    assert {t.get("paint_color") for t in tris} <= {"4", "8", "0C"}
+    zs = [float(v.get("z")) for v in root.findall(".//m:vertex", ns)]
+    assert max(zs) - min(zs) == pytest.approx(80, rel=1e-3)
+    # the plain 3MF still loads in trimesh as geometry
+    assert len(trimesh.load(io.BytesIO(data), file_type="3mf", force="mesh").faces) == len(tris)
+
+    parts = zipfile.ZipFile(io.BytesIO(client.get(f"/api/jobs/{job['id']}/export",
+                                                  params={"format": "stl_colors", "colors": 3}).content))
+    total = sum(len(trimesh.load(io.BytesIO(parts.read(n)), file_type="stl").faces) for n in parts.namelist())
+    assert total == len(tris) and all(n.startswith("color_") for n in parts.namelist())
+
+
+def test_paint_code_encoding():
+    from app.geometry import _paint_code
+
+    assert [_paint_code(i) for i in range(6)] == ["4", "8", "0C", "1C", "2C", "3C"]

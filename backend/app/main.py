@@ -11,6 +11,7 @@ import re
 import shutil
 import unicodedata
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -59,7 +60,8 @@ MODE_LABELS = {
 }
 SCENE_KINDS = ("scene", "relief", "lithophane")
 HEX_COLOR = r"^#[0-9a-fA-F]{6}$"
-REMESH_LABELS = {"decimate": "reducido", "lowpoly": "low-poly", "voxel": "vóxel", "smooth": "suavizado"}
+REMESH_LABELS = {"decimate": "reducido", "lowpoly": "low-poly", "voxel": "vóxel", "smooth": "suavizado",
+                 "quads": "quads"}
 
 logging.basicConfig(level=logging.INFO)
 
@@ -96,7 +98,7 @@ class JobPatch(BaseModel):
 
 
 class RemeshIn(BaseModel):
-    mode: Literal["decimate", "lowpoly", "voxel", "smooth"] = "decimate"
+    mode: Literal["decimate", "lowpoly", "voxel", "smooth", "quads"] = "decimate"
     target_faces: int = Field(5000, ge=100, le=500_000)
     resolution: int = Field(32, ge=8, le=96)
 
@@ -137,6 +139,7 @@ def hex_rgb(value: str) -> tuple[int, int, int]:
 
 
 class RigIn(BaseModel):
+    template: Literal["auto", "humanoid", "quadruped"] = "auto"
     markers: dict[str, list[float]] | None = None
     yaw: Literal[0, 90, 180, 270] | None = None
     symmetric: bool = False
@@ -145,6 +148,7 @@ class RigIn(BaseModel):
 
 
 class MarkersIn(BaseModel):
+    template: Literal["auto", "humanoid", "quadruped"] = "auto"
     yaw: Literal[0, 90, 180, 270] | None = None
     auto: bool = False  # ignore a rigged character's saved markers and estimate again
 
@@ -578,17 +582,26 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         format: ExportFormat = "glb",
         size_mm: float | None = Query(None, gt=0, le=10_000),
         fit: Literal["height", "width", "depth", "max"] = "height",
+        colors: int = Query(4, ge=1, le=16, description="filamentos para 3mf_color / stl_colors"),
         height_mm: float | None = Query(None, gt=0, le=10_000, description="alias de size_mm con fit=height"),
     ):
         job, path = ready_model(request, job_id)
         if size_mm is None and height_mm is not None:
             size_mm, fit = height_mm, "height"
         filename = slugify(job_title(job))
+        quads = job_dir(job_id) / "quads.obj"  # true quad topology from a quad remesh
+        if format == "obj" and quads.is_file() and size_mm is None:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("model.obj", quads.read_bytes())
+            return Response(buf.getvalue(), media_type="application/zip",
+                            headers={"Content-Disposition": f'attachment; filename="{filename}.zip"'})
         if format in blender.FORMATS:
             if not request.app.state.blender:
                 raise HTTPException(400, "Para FBX/.blend instala Blender (o indica BLENDER_PATH en .env) y reinicia la app")
+            source, ext = (quads.read_bytes(), "obj") if quads.is_file() else (path.read_bytes(), "glb")
             try:
-                data = await asyncio.to_thread(blender.convert, path.read_bytes(), format, request.app.state.blender)
+                data = await asyncio.to_thread(blender.convert, source, format, request.app.state.blender, 300, ext)
             except blender.BlenderError as exc:
                 raise HTTPException(422, str(exc)) from exc
             ext, media_type = blender.FORMATS[format]
@@ -599,7 +612,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                             headers={"Content-Disposition": f'attachment; filename="{filename}.glb"'})
         try:
             data, ext, media_type = await asyncio.to_thread(
-                geometry.export, path.read_bytes(), format, size_mm, fit
+                geometry.export, path.read_bytes(), format, size_mm, fit, colors
             )
         except geometry.GeometryError as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -611,8 +624,14 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
     @app.post("/api/jobs/{job_id}/remesh", response_model=JobOut, status_code=201)
     async def remesh(request: Request, job_id: str, body: RemeshIn):
         parent, path = ready_model(request, job_id)
-        work = pipelines.local(path, "Remallando", geometry.remesh, mode=body.mode,
-                               target_faces=body.target_faces, resolution=body.resolution)
+        if body.mode == "quads":
+            async def work(on_progress):
+                await on_progress(15, "Remallado en quads (Instant Meshes)")
+                glb, obj = await asyncio.to_thread(geometry.quad_remesh, path.read_bytes(), body.target_faces)
+                return GenerationResult(model_glb=glb, extra_files={"quads.obj": obj})
+        else:
+            work = pipelines.local(path, "Remallando", geometry.remesh, mode=body.mode,
+                                   target_faces=body.target_faces, resolution=body.resolution)
         name = f"{job_title(parent)} · {REMESH_LABELS[body.mode]}"
         return create_derived_job(request, parent, "remesh", work, name, body.model_dump())
 
@@ -665,10 +684,17 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
 
     @app.get("/api/rig/presets")
     async def rig_presets():
+        def listing(presets):
+            return [{"id": k, "label": p.label, "duration": p.duration, "loop": p.loop, "tags": p.tags}
+                    for k, p in presets.items()]
+
         return {
-            "presets": [{"id": k, "label": p.label, "duration": p.duration, "loop": p.loop, "tags": p.tags}
-                        for k, p in rigging.PRESETS.items()],
+            "presets": listing(rigging.PRESETS),
             "default": rigging.DEFAULT_PRESETS,
+            "quadruped": {"presets": listing(rigging.quadruped.QUAD_PRESETS),
+                          "default": rigging.quadruped.DEFAULT_QUAD_PRESETS,
+                          "markers": [{"id": m, "label": rigging.quadruped.MARKER_LABELS[m]}
+                                      for m in rigging.quadruped.MARKERS]},
             "library": [{"id": c["id"], "label": c["label"], "category": c["category"], "seconds": c["seconds"]}
                         for c in rigging.mocap.catalogue().values()],
             "markers": [{"id": m, "label": rigging.MARKER_LABELS[m]} for m in rigging.MARKERS],
@@ -687,32 +713,41 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
     async def rig_markers(request: Request, job_id: str, body: MarkersIn | None = None):
         """Markers to edit. `view_yaw` is how much the model shown in the viewer must turn to match them
         (a rigged model is already stored turned and centred)."""
+        body = body or MarkersIn()
         job, _ = ready_model(request, job_id)
-        shown_yaw = job["params"].get("yaw", 0) if job["mode"] == "rig" else 0
-        fresh = body is not None and body.auto
-        if job["mode"] == "rig" and not fresh and (body is None or body.yaw is None or body.yaw == shown_yaw):
-            p = job["params"]
-            return {"yaw": p["yaw"], "markers": p["markers"], "source_id": p["source_id"], "view_yaw": 0}
+        p = job["params"]
+        shown_yaw = p.get("yaw", 0) if job["mode"] == "rig" else 0
+        same_template = body.template in ("auto", p.get("template", "humanoid"))
+        if job["mode"] == "rig" and not body.auto and same_template and body.yaw in (None, shown_yaw):
+            tpl = rigging.TEMPLATES[p.get("template", "humanoid")]
+            return {"yaw": p["yaw"], "markers": p["markers"], "source_id": p["source_id"], "view_yaw": 0,
+                    "template": tpl.name, "view": tpl.view, "labels": tpl.marker_labels}
         source, path = rig_source(request, job)
         try:
-            result = await asyncio.to_thread(rigging.auto_markers, path.read_bytes(), body.yaw if body else None)
+            result = await asyncio.to_thread(rigging.auto_markers, path.read_bytes(), body.yaw, body.template)
         except rigging.RigError as exc:
             raise HTTPException(422, str(exc)) from exc
         return {**result, "source_id": source["id"], "view_yaw": (result["yaw"] - shown_yaw) % 360}
 
     def submit_rig(request: Request, parent: dict, body: RigIn, bvh: list[tuple[str, str, bytes]],
                    keep_bvh: list[str]) -> JobOut:
-        unknown = [a for a in body.animations if a not in rigging.PRESETS and a not in rigging.mocap.catalogue()]
+        known = set(rigging.PRESETS) | set(rigging.quadruped.QUAD_PRESETS) | set(rigging.mocap.catalogue())
+        unknown = [a for a in body.animations if a not in known]
         if unknown:
             raise HTTPException(422, f"Animaciones desconocidas: {', '.join(unknown)}")
         source, path = rig_source(request, parent)
         markers = body.markers
         if markers is not None:
-            missing = [m for m in rigging.MARKERS if m not in markers or len(markers[m]) < 2]
+            template = body.template if body.template != "auto" else (
+                "quadruped" if "withers" in markers else "humanoid")
+            body.template = template
+            names = rigging.TEMPLATES[template].markers
+            missing = [m for m in names if m not in markers or len(markers[m]) < 2]
             if missing:
                 raise HTTPException(422, f"Faltan marcadores: {', '.join(missing)}")
-            markers = {m: [float(markers[m][0]), float(markers[m][1])] for m in rigging.MARKERS}
-            if body.symmetric:
+            extra = {k: v for k, v in markers.items() if k.startswith("_")}
+            markers = {m: [float(markers[m][0]), float(markers[m][1])] for m in names} | extra
+            if body.symmetric and template == "humanoid":
                 markers = rigging.mirror_markers(markers, "l")
         job_id = uuid.uuid4().hex
         job_dir(job_id).mkdir(parents=True)
@@ -730,14 +765,16 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             await on_progress(10, "Colocando esqueleto y calculando pesos")
             try:
                 result = await asyncio.to_thread(rigging.rig, path.read_bytes(), markers, body.yaw, body.animations,
-                                                 clips, body.in_place)
+                                                 clips, body.in_place, body.template)
             except rigging.RigError as exc:
                 raise geometry.GeometryError(str(exc)) from exc
             request.app.state.store.update_params(job_id, {"markers": result.markers, "yaw": result.yaw,
-                                                           "clips": result.clips, "skeleton": result.skeleton})
+                                                           "clips": result.clips, "skeleton": result.skeleton,
+                                                           "template": result.template})
             return GenerationResult(model_glb=result.glb)
 
         params = {"source_id": source["id"], "markers": markers, "yaw": body.yaw, "animations": body.animations,
+                  "template": body.template,
                   "bvh": bvh_files, "in_place": body.in_place, "symmetric": body.symmetric}
         state = request.app.state
         title = job_title(source)
@@ -779,7 +816,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             uploads.append((stem, f"mocap_{i}_{stem}.bvh", data))
         p = parent["params"]
         body = RigIn(markers=p.get("markers"), yaw=p.get("yaw"), in_place=in_place,
-                     animations=[a for a in animations.split(",") if a])
+                     template=p.get("template", "humanoid"), animations=[a for a in animations.split(",") if a])
         return submit_rig(request, parent, body, uploads, [n for n in keep_bvh.split(",") if n])
 
     def generative_parent(request: Request, job_id: str) -> dict:

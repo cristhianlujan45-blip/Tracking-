@@ -19,6 +19,8 @@ from ..creations import pseudo_depth
 from .base import GenerationRequest, GenerationResult, InputImage, ProgressCallback
 
 KEYWORDS = {
+    "quadruped": ("perro", "dog", "gato", "cat", "caballo", "horse", "lobo", "wolf", "zorro", "fox", "vaca", "cow",
+                  "tigre", "tiger", "león", "leon", "lion", "cachorro", "puppy", "oveja", "sheep", "ciervo", "deer"),
     "humanoid": ("personaje", "character", "humano", "human", "persona", "robot", "guerrero", "warrior", "soldado",
                  "chica", "chico", "hombre", "mujer", "caballero", "knight", "mago", "wizard", "astronauta",
                  "astronaut", "héroe", "heroe", "hero", "ninja", "zombi", "zombie", "elfo", "elf"),
@@ -118,9 +120,40 @@ def build_humanoid(rng: np.random.Generator, hue: np.ndarray, arm_angle: float =
     return fused
 
 
+def build_quadruped(rng: np.random.Generator, hue: np.ndarray) -> trimesh.Trimesh:
+    """Dog-like animal facing +Z (~1.1 long, ~0.75 tall), fused into one surface."""
+    belly = tuple(np.clip(hue * 1.25, 0, 1))
+    parts = []
+    body = _limb((0, 0.5, -0.32), (0, 0.52, 0.3), 0.15)
+    body.apply_scale((0.9, 1.0, 1.0))
+    parts.append(_part(body, hue, rng))
+    for side in (-1, 1):
+        for z, shoulder_y in ((0.27, 0.48), (-0.3, 0.48)):
+            knee = (0.1 * side, 0.27, z - 0.02)
+            parts += [_part(_limb((0.1 * side, shoulder_y, z), knee, 0.055), hue, rng),
+                      _part(_limb(knee, (0.1 * side, 0.05, z + 0.02), 0.042), belly, rng),
+                      _part(_limb((0.1 * side, 0.035, z + 0.02), (0.1 * side, 0.035, z + 0.09), 0.04), belly, rng)]
+    parts += [_part(_limb((0, 0.56, 0.36), (0, 0.72, 0.46), 0.075), hue, rng),
+              _part(trimesh.creation.icosphere(3, radius=0.11), hue, rng, (0, 0.76, 0.5)),
+              _part(_limb((0, 0.73, 0.55), (0, 0.7, 0.66), 0.05), belly, rng),
+              _part(_limb((0, 0.56, -0.44), (0, 0.72, -0.62), 0.035), hue, rng)]
+    for side in (-1, 1):  # ears
+        parts.append(_part(trimesh.creation.cone(0.04, 0.1, sections=12), hue * 0.7, rng, (0.06 * side, 0.83, 0.49)))
+    raw = trimesh.util.concatenate(parts)
+    from .. import geometry
+
+    fused = geometry.voxelize(raw, 80)
+    fused.merge_vertices()
+    trimesh.smoothing.filter_taubin(fused, iterations=12)
+    fused.visual = trimesh.visual.ColorVisuals(fused, vertex_colors=geometry.transfer_colors(raw, fused))
+    return fused
+
+
 def build_shape(kind: str, rng: np.random.Generator, hue: np.ndarray) -> trimesh.Trimesh:
     if kind == "humanoid":
         return build_humanoid(rng, hue)
+    if kind == "quadruped":
+        return build_quadruped(rng, hue)
     if kind == "tree":
         parts = [_part(_y_up(trimesh.creation.cylinder(0.12, 0.6, sections=24)), (0.45, 0.28, 0.15), rng, (0, 0.3, 0))]
         for i, (r, h, y) in enumerate([(0.55, 0.7, 0.85), (0.42, 0.6, 1.2), (0.28, 0.5, 1.5)]):

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .animations import Clip
-from .skeleton import JOINT_NAMES, PARENTS, Skeleton
+from .skeleton import Skeleton
 
 FLOAT, UINT, USHORT, UBYTE = 5126, 5125, 5123, 5121
 ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER = 34962, 34963
@@ -86,16 +86,17 @@ def _continuous(quats: np.ndarray) -> np.ndarray:
 def write_glb(primitives: list[Primitive], skeleton: Skeleton, clips: list[Clip],
               deform_joints: list[str] | None = None) -> bytes:
     buf = _Buffer()
-    n_joints = len(JOINT_NAMES)
+    names, parents = skeleton.template.names, skeleton.template.parents
+    n_joints = len(names)
     joint_node = lambda j: 2 + j  # noqa: E731 - node 0: Armature, node 1: Character
 
     # ---------------- nodes
     nodes: list[dict] = [{"name": "Armature", "children": [joint_node(0)]}, {"name": "Character", "mesh": 0, "skin": 0}]
-    for j, name in enumerate(JOINT_NAMES):
-        parent = PARENTS[j]
+    for j, name in enumerate(names):
+        parent = parents[j]
         local = skeleton.positions[j] - (skeleton.positions[parent] if parent >= 0 else 0)
         node = {"name": name, "translation": [float(x) for x in local]}
-        children = [joint_node(c) for c, p in enumerate(PARENTS) if p == j]
+        children = [joint_node(c) for c, p in enumerate(parents) if p == j]
         if children:
             node["children"] = children
         nodes.append(node)
@@ -131,7 +132,7 @@ def write_glb(primitives: list[Primitive], skeleton: Skeleton, clips: list[Clip]
                          "indices": buf.accessor(prim.faces.reshape(-1), UINT, "SCALAR", ELEMENT_ARRAY_BUFFER)})
 
     # ---------------- animations
-    animated = [JOINT_NAMES.index(n) for n in (deform_joints or [n for n in JOINT_NAMES if not n.endswith("_End")])]
+    animated = [names.index(n) for n in (deform_joints or skeleton.template.deform)]
     animations = []
     for clip in clips:
         times = buf.accessor(clip.times.astype(np.float32), FLOAT, "SCALAR", bounds=True)

@@ -303,3 +303,73 @@ def test_every_library_clip_retargets_with_feet_on_floor():
                 for i in range(0, len(clip.times), max(1, len(clip.times) // 60))]
         assert min(lows) >= floor - 1e-6, clip_id
         assert np.percentile(lows, 5) == pytest.approx(floor, abs=0.03 * sk.height), clip_id
+
+
+# ---------------------------------------------------------------- quadrupeds
+
+
+def dog():
+    from app.providers.mock import build_quadruped
+
+    mesh = build_quadruped(np.random.default_rng(0), np.array([0.7, 0.5, 0.3]))
+    mesh.apply_translation([0, -mesh.vertices[:, 1].min(), 0])
+    return mesh
+
+
+def test_quadruped_detection_orientation_and_markers():
+    import trimesh as _trimesh
+
+    from app.rigging import auto_markers
+
+    for yaw in (0, 90, 180, 270):
+        mesh = dog()
+        mesh.apply_transform(_trimesh.transformations.rotation_matrix(np.radians(yaw), [0, 1, 0]))
+        result = auto_markers(geometry.mesh_to_glb(mesh))
+        assert result["template"] == "quadruped" and result["view"] == "side"
+        assert (result["yaw"] + yaw) % 360 == 0, (yaw, result["yaw"])  # turned back to face +Z
+        m = result["markers"]
+        assert m["nose"][0] > m["withers"][0] > m["rump"][0] > m["tail_tip"][0]  # head → tail along Z
+        assert m["front_paw"][1] < 0.1 and m["back_hock"][1] < m["back_knee"][1] < m["back_hip"][1]
+    assert auto_markers(geometry.mesh_to_glb(humanoid()))["template"] == "humanoid"
+
+
+def test_quadruped_gaits_keep_paws_on_floor():
+    from app.rigging import quadruped
+    from app.rigging.animations import forward_kinematics as fk
+
+    mesh = dog()
+    sk = quadruped.build_skeleton(mesh.vertices, quadruped.estimate_markers(mesh))
+    assert sk.template.name == "quadruped" and len(sk.template.names) == 26
+    feet = sk.foot_indices
+    floor = sk.positions[feet, 1].min()
+    for name in quadruped.QUAD_PRESETS:
+        clip = preset_clip(sk, name)
+        lows = [fk(sk, clip.rotations[i], clip.hips_offset[i])[feet, 1].min() for i in range(len(clip.times))]
+        assert min(lows) >= floor - 1e-6, name
+    trot = preset_clip(sk, "q_trot")
+    paw = [fk(sk, trot.rotations[i], trot.hips_offset[i])[sk.template.index["FrontLeftFoot"], 2]
+           for i in range(len(trot.times))]
+    assert np.ptp(paw) > 0.1  # the paw actually travels
+
+
+def test_rig_quadruped_api(client):
+    job = wait_done(client, client.post("/api/jobs/text", json={"prompt": "un perro", "quality": "draft"}).json()[0]["id"])
+    markers = client.post(f"/api/jobs/{job['id']}/rig/markers").json()
+    assert markers["template"] == "quadruped" and markers["view"] == "side"
+    assert set(markers["labels"]) == set(client.get("/api/rig/presets").json()["quadruped"]["markers"][i]["id"]
+                                         for i in range(11))
+    rigged = wait_done(client, client.post(f"/api/jobs/{job['id']}/rig",
+                                           json={"template": "quadruped", "animations": ["q_walk", "q_trot"]}).json()["id"])
+    assert rigged["status"] == "succeeded", rigged["error"]
+    assert rigged["params"]["template"] == "quadruped" and rigged["params"]["clips"] == ["q_walk", "q_trot"]
+    gltf = gltf_json(client.get(rigged["model_url"]).content)
+    assert len(gltf["skins"][0]["joints"]) == 26
+    # humanoid-only things are refused clearly
+    bad = wait_done(client, client.post(f"/api/jobs/{job['id']}/rig",
+                                        json={"template": "quadruped", "animations": ["cmu_16_15"]}).json()["id"])
+    assert bad["status"] == "failed" and "no disponible" in bad["error"]
+    # re-rig with edited side-view markers
+    edited = dict(markers["markers"], nose=[markers["markers"]["nose"][0] - 0.02, markers["markers"]["nose"][1]])
+    again = wait_done(client, client.post(f"/api/jobs/{rigged['id']}/rig",
+                                          json={"markers": edited, "animations": ["q_idle"]}).json()["id"])
+    assert again["status"] == "succeeded", again["error"] and again["params"]["template"] == "quadruped"

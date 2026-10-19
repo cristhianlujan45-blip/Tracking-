@@ -18,7 +18,7 @@ from typing import Callable
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .skeleton import BONE_CHILD, JOINT_INDEX, JOINT_NAMES, JOINTS, PARENTS, RigError, Skeleton
+from .skeleton import BONE_CHILD, HUMANOID, JOINT_INDEX, JOINT_NAMES, JOINTS, RigError, Skeleton
 
 FPS = 30
 Z = np.array([0.0, 0.0, 1.0])
@@ -49,7 +49,7 @@ class Pose:
         self.rot[joint] = r * self.rot.get(joint, Rotation.identity())
 
     def rest_dir(self, joint: str) -> np.ndarray:
-        d = self.sk[BONE_CHILD[joint]] - self.sk[joint]
+        d = self.sk[self.sk.template.bone_child[joint]] - self.sk[joint]
         return d / max(np.linalg.norm(d), 1e-9)
 
     def about(self, joint: str, axis, degrees: float) -> None:
@@ -102,9 +102,10 @@ class Pose:
             self.about(f"{side}Foot", [1, 0, 0], -ankle)
 
     def matrix(self) -> np.ndarray:
-        quats = np.tile([0.0, 0.0, 0.0, 1.0], (len(JOINT_NAMES), 1))
+        index = self.sk.template.index
+        quats = np.tile([0.0, 0.0, 0.0, 1.0], (len(index), 1))
         for joint, r in self.rot.items():
-            quats[JOINT_INDEX[joint]] = r.as_quat()
+            quats[index[joint]] = r.as_quat()
         return quats
 
 
@@ -292,12 +293,14 @@ PRESETS: dict[str, Preset] = {
     "a_pose": Preset("A-pose", 1.0, a_pose, tags=["pose"]),
 }
 DEFAULT_PRESETS = ["idle", "walk", "run", "jump", "wave"]
+PRESET_SETS: dict[str, dict[str, Preset]] = {"humanoid": PRESETS}  # other templates register theirs
 
 
 def preset_clip(skeleton: Skeleton, name: str) -> Clip:
-    if name not in PRESETS:
-        raise RigError(f"Animación desconocida: {name}")
-    preset = PRESETS[name]
+    presets = PRESET_SETS.get(skeleton.template.name, {})
+    if name not in presets:
+        raise RigError(f"Animación desconocida para este tipo de esqueleto: {name}")
+    preset = presets[name]
     frames = max(2, int(round(preset.duration * FPS)) + 1)
     times = np.linspace(0, preset.duration, frames)
     rotations, offsets = [], []
@@ -313,15 +316,15 @@ def preset_clip(skeleton: Skeleton, name: str) -> Clip:
     return Clip(name, times, rotations, offsets, preset.loop)
 
 
-FOOT_JOINTS = [JOINT_INDEX[n] for n in ("LeftFoot", "LeftToeBase", "LeftToe_End",
-                                        "RightFoot", "RightToeBase", "RightToe_End")]
+FOOT_JOINTS = [JOINT_INDEX[n] for n in HUMANOID.feet]  # humanoid default, kept for callers and tests
 
 
 def ground_feet(skeleton: Skeleton, rotations: np.ndarray, offsets: np.ndarray, mode: str) -> None:
     """Adjust the hips height per frame so feet meet the floor (in place)."""
-    floor = skeleton.positions[FOOT_JOINTS, 1].min()
+    feet = skeleton.foot_indices
+    floor = skeleton.positions[feet, 1].min()
     for i in range(len(rotations)):
-        lowest = forward_kinematics(skeleton, rotations[i], offsets[i])[FOOT_JOINTS, 1].min()
+        lowest = forward_kinematics(skeleton, rotations[i], offsets[i])[feet, 1].min()
         if mode == "plant" or lowest < floor:
             offsets[i, 1] += floor - lowest
 
@@ -460,6 +463,8 @@ def bvh_global(joints: list[BvhJoint], motion: np.ndarray) -> tuple[list[Rotatio
 
 def retarget_bvh(skeleton: Skeleton, text: str, name: str = "mocap", in_place: bool = True,
                  max_seconds: float = 120.0) -> Clip:
+    if skeleton.template is not HUMANOID:
+        raise RigError("La captura de movimiento BVH solo se aplica a personajes humanoides")
     joints, motion, frame_time = parse_bvh(text)
     frame_time = frame_time if frame_time > 0 else 1 / FPS
     step = max(1, int(round((1 / FPS) / frame_time)))  # resample to ~30 fps
@@ -531,9 +536,10 @@ def retarget_bvh(skeleton: Skeleton, text: str, name: str = "mocap", in_place: b
 def calibrate_floor(skeleton: Skeleton, rotations: np.ndarray, offsets: np.ndarray) -> None:
     """Shift the clip vertically so the feet's contact level (5th percentile of the lowest foot)
     matches the character's floor: mocap floors are rarely exactly at y=0."""
-    floor = skeleton.positions[FOOT_JOINTS, 1].min()
+    feet = skeleton.foot_indices
+    floor = skeleton.positions[feet, 1].min()
     sample = range(0, len(rotations), max(1, len(rotations) // 60))
-    lowest = [forward_kinematics(skeleton, rotations[i], offsets[i])[FOOT_JOINTS, 1].min() for i in sample]
+    lowest = [forward_kinematics(skeleton, rotations[i], offsets[i])[feet, 1].min() for i in sample]
     offsets[:, 1] -= np.percentile(lowest, 5) - floor
 
 
@@ -544,7 +550,7 @@ def forward_kinematics(skeleton: Skeleton, rotations: np.ndarray, hips_offset: n
     """World joint positions (J, 3) for one frame of local rotations."""
     world_rot: list[Rotation] = []
     pos = np.zeros_like(skeleton.positions)
-    for j, parent in enumerate(PARENTS):
+    for j, parent in enumerate(skeleton.template.parents):
         local = Rotation.from_quat(rotations[j])
         if parent < 0:
             world_rot.append(local)

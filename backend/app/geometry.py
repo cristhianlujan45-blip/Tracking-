@@ -7,7 +7,10 @@ changes the topology.
 
 from __future__ import annotations
 
+import contextlib
 import io
+import os
+import sys
 import zipfile
 from dataclasses import dataclass
 
@@ -26,6 +29,8 @@ EXPORT_FORMATS = {
     "stl": ("stl", "model/stl", True),
     "3mf": ("3mf", "model/3mf", True),
     "ply": ("ply", "application/octet-stream", False),
+    "3mf_color": ("3mf", "model/3mf", True),  # multicolour (Bambu AMS, Prusa MMU), one filament per colour
+    "stl_colors": ("zip", "application/zip", True),  # one STL per colour, for any slicer
 }
 DEFAULT_PRINT_HEIGHT_MM = 100.0
 
@@ -187,6 +192,49 @@ def remesh(glb: bytes, mode: str, target_faces: int = 5000, resolution: int = 32
     return mesh_to_glb(out)
 
 
+@contextlib.contextmanager
+def _quiet_stdout():
+    """Silence C++ libraries that print straight to the process's stdout."""
+    try:
+        fd = sys.stdout.fileno()
+    except (AttributeError, ValueError, io.UnsupportedOperation):
+        yield
+        return
+    saved = os.dup(fd)
+    try:
+        with open(os.devnull, "w") as null:
+            os.dup2(null.fileno(), fd)
+            yield
+    finally:
+        os.dup2(saved, fd)
+        os.close(saved)
+
+
+def quad_remesh(glb: bytes, target_faces: int = 5000) -> tuple[bytes, bytes]:
+    """Instant Meshes field-aligned remesh into pure quads: (triangulated GLB, quad OBJ)."""
+    import pynanoinstantmeshes
+
+    mesh = to_color_mesh(load_scene(glb))
+    mesh.merge_vertices()
+    target = int(np.clip(target_faces, 200, 400_000))
+    with _quiet_stdout():
+        verts, quads = pynanoinstantmeshes.remesh(
+            np.asarray(mesh.vertices, dtype=np.float32), np.asarray(mesh.faces, dtype=np.uint32),
+            max(target // 4, 50), rosy=4, posy=4, deterministic=True)
+    verts, quads = np.asarray(verts, dtype=float), np.asarray(quads, dtype=np.int64)
+    if not len(quads):
+        raise GeometryError("No se pudo generar la malla de quads (¿modelo demasiado pequeño o roto?)")
+    colors = transfer_colors(mesh, mesh, points=verts)
+    tris = np.vstack([quads[:, [0, 1, 2]], quads[:, [0, 2, 3]]])
+    out = trimesh.Trimesh(verts, tris, process=False)
+    out.visual = trimesh.visual.ColorVisuals(out, vertex_colors=colors)
+    lines = ["# Forja3D quad remesh (Instant Meshes)"]
+    lines += [f"v {x:.6f} {y:.6f} {z:.6f} {r / 255:.4f} {g / 255:.4f} {b / 255:.4f}"
+              for (x, y, z), (r, g, b, _a) in zip(verts, colors)]
+    lines += [f"f {a + 1} {b + 1} {c + 1} {d + 1}" for a, b, c, d in quads]
+    return mesh_to_glb(out), ("\n".join(lines) + "\n").encode()
+
+
 def apply_style(glb: bytes, style: str) -> bytes:
     """Styles that are guaranteed by geometry, not only by the prompt."""
     if style not in ("lowpoly", "voxel", "sculpture"):
@@ -334,7 +382,83 @@ def split_parts(glb: bytes, mode: str = "height", parts: int = 2) -> bytes:
 FIT_AXES = {"width": 0, "height": 1, "depth": 2}
 
 
-def export(glb: bytes, fmt: str, size_mm: float | None = None, fit: str = "height") -> tuple[bytes, str, str]:
+def color_groups(mesh: trimesh.Trimesh, n_colors: int) -> tuple[np.ndarray, np.ndarray]:
+    """Cluster face colours into `n_colors` filaments: (label per face, palette uint8 (k, 3))."""
+    from scipy.cluster.vq import kmeans2
+
+    face_rgb = mesh.visual.vertex_colors[mesh.faces][:, :, :3].astype(float).mean(axis=1)
+    k = int(np.clip(n_colors, 1, 16))
+    unique = np.unique(np.round(face_rgb), axis=0)
+    if len(unique) <= k:  # already few colours: keep them exactly
+        palette = unique
+        labels = np.argmin(((face_rgb[:, None, :] - palette[None]) ** 2).sum(axis=2), axis=1)
+    else:
+        sample = face_rgb[np.random.default_rng(0).choice(len(face_rgb), min(len(face_rgb), 20000), replace=False)]
+        palette, _ = kmeans2(sample, k, minit="++", seed=0)
+        labels = np.argmin(((face_rgb[:, None, :] - palette[None]) ** 2).sum(axis=2), axis=1)
+    used = np.unique(labels)  # drop empty clusters, renumber 0..n-1
+    remap = np.full(len(palette), -1)
+    remap[used] = np.arange(len(used))
+    return remap[labels], np.clip(np.round(palette[used]), 0, 255).astype(np.uint8)
+
+
+def _paint_code(index: int) -> str:
+    """PrusaSlicer/Bambu/Orca per-triangle extruder encoding (TriangleSelector serialisation)."""
+    state = index + 1  # extruder number, 1-based
+    if state < 3:
+        return "%X" % (state << 2)
+    rest = state - 3
+    return ("%X" % rest) + "C" if rest < 16 else "%X" % 0xC
+
+
+def multicolor_3mf(mesh: trimesh.Trimesh, n_colors: int) -> bytes:
+    labels, palette = color_groups(mesh, n_colors)
+    v, f = mesh.vertices, mesh.faces
+    hexes = ["#%02X%02X%02X" % tuple(c) for c in palette]
+    vertices = "".join(f'<vertex x="{x:.4f}" y="{y:.4f}" z="{z:.4f}"/>' for x, y, z in v)
+    triangles = "".join(
+        f'<triangle v1="{a}" v2="{b}" v3="{c}" pid="1" p1="{k}" paint_color="{_paint_code(k)}" '
+        f'slic3rpe:mmu_segmentation="{_paint_code(k)}"/>'
+        for (a, b, c), k in zip(f, labels))
+    bases = "".join(f'<base name="Filamento {i + 1}" displaycolor="{h}FF"/>' for i, h in enumerate(hexes))
+    model = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<model unit="millimeter" xml:lang="es-ES" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" '
+        'xmlns:slic3rpe="http://schemas.slic3r.org/3mf/2017/06">'
+        '<metadata name="Application">Forja3D</metadata>'
+        f'<resources><basematerials id="1">{bases}</basematerials>'
+        f'<object id="2" type="model" pid="1" pindex="0"><mesh><vertices>{vertices}</vertices>'
+        f'<triangles>{triangles}</triangles></mesh></object></resources>'
+        '<build><item objectid="2"/></build></model>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml",
+                    '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                    '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')
+        zf.writestr("_rels/.rels",
+                    '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                    '<Relationship Target="/3D/3dmodel.model" Id="rel0" '
+                    'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
+        zf.writestr("3D/3dmodel.model", model)
+        zf.writestr("Metadata/filamentos.txt", "\n".join(f"Filamento {i + 1}: {h}" for i, h in enumerate(hexes)) + "\n")
+    return buf.getvalue()
+
+
+def stl_per_color(mesh: trimesh.Trimesh, n_colors: int) -> bytes:
+    labels, palette = color_groups(mesh, n_colors)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, color in enumerate(palette):
+            part = mesh.submesh([np.where(labels == i)[0]], append=True)
+            name = "color_%d_%02X%02X%02X.stl" % (i + 1, *color)
+            zf.writestr(name, part.export(file_type="stl"))
+    return buf.getvalue()
+
+
+def export(glb: bytes, fmt: str, size_mm: float | None = None, fit: str = "height",
+           n_colors: int = 4) -> tuple[bytes, str, str]:
     """Return (data, file extension, media type). Print formats are Z-up, in mm, resting on the bed.
 
     `size_mm` is the final size of the dimension named by `fit` (width / height / depth, or `max`
@@ -367,6 +491,10 @@ def export(glb: bytes, fmt: str, size_mm: float | None = None, fit: str = "heigh
         return buf.getvalue(), ext, media_type
 
     mesh = to_color_mesh(scene)
+    if fmt == "3mf_color":
+        return multicolor_3mf(mesh, n_colors), ext, media_type
+    if fmt == "stl_colors":
+        return stl_per_color(mesh, n_colors), ext, media_type
     if fmt == "3mf":
         return trimesh.Scene(mesh).export(file_type="3mf"), ext, media_type
     return mesh.export(file_type=fmt), ext, media_type

@@ -14,7 +14,10 @@ src, dst = args[-2], args[-1]
 addon_utils.enable("io_scene_gltf2", default_set=True)
 addon_utils.enable("io_scene_fbx", default_set=True)
 bpy.ops.wm.read_factory_settings(use_empty=True)
-bpy.ops.import_scene.gltf(filepath=src)
+if src.lower().endswith(".obj"):
+    bpy.ops.wm.obj_import(filepath=src)  # keeps quads and vertex colours
+else:
+    bpy.ops.import_scene.gltf(filepath=src)
 
 # the glTF importer adds a display shape (an icosphere) for the bones; it is not part of the model
 shapes = set()

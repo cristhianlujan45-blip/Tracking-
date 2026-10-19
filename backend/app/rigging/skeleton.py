@@ -9,7 +9,7 @@ knees, ankles); every joint position is derived from them plus the mesh itself.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import trimesh
@@ -60,25 +60,59 @@ class RigError(Exception):
     """User-facing rigging error."""
 
 
+@dataclass(frozen=True)
+class Template:
+    """A skeleton layout: joints (topological order), bone ownership, editable markers and feet."""
+
+    name: str
+    joints: list[tuple[str, str | None]]
+    bone_child: dict[str, str]
+    markers: list[str]
+    marker_labels: dict[str, str]
+    feet: list[str]
+    view: str  # marker editor view: "front" (x, y) or "side" (z, y)
+    names: list[str] = field(init=False)
+    index: dict[str, int] = field(init=False)
+    parents: list[int] = field(init=False)
+    deform: list[str] = field(init=False)
+
+    def __post_init__(self) -> None:
+        names = [n for n, _ in self.joints]
+        index = {n: i for i, n in enumerate(names)}
+        object.__setattr__(self, "names", names)
+        object.__setattr__(self, "index", index)
+        object.__setattr__(self, "parents", [index[p] if p else -1 for _, p in self.joints])
+        object.__setattr__(self, "deform", [n for n in names if not n.endswith("_End")])
+
+
+HUMANOID = Template("humanoid", JOINTS, BONE_CHILD, MARKERS, MARKER_LABELS,
+                    ["LeftFoot", "LeftToeBase", "LeftToe_End", "RightFoot", "RightToeBase", "RightToe_End"], "front")
+
+
 @dataclass
 class Skeleton:
-    positions: np.ndarray  # (J, 3) world rest positions, in JOINTS order
+    positions: np.ndarray  # (J, 3) world rest positions, in template joint order
+    template: Template = HUMANOID
 
     def __getitem__(self, name: str) -> np.ndarray:
-        return self.positions[JOINT_INDEX[name]]
+        return self.positions[self.template.index[name]]
 
     @property
     def height(self) -> float:
-        return float(self["HeadTop_End"][1] - min(self["LeftToe_End"][1], self["RightToe_End"][1]))
+        return float(np.ptp(self.positions[:, 1]))
+
+    @property
+    def foot_indices(self) -> list[int]:
+        return [self.template.index[n] for n in self.template.feet]
 
     def bone_segments(self) -> tuple[list[str], np.ndarray, np.ndarray]:
-        names = DEFORM_JOINTS
+        names = self.template.deform
         starts = np.array([self[n] for n in names])
-        ends = np.array([self[BONE_CHILD[n]] for n in names])
+        ends = np.array([self[self.template.bone_child[n]] for n in names])
         return names, starts, ends
 
     def as_dict(self) -> dict:
-        return {name: [round(float(v), 5) for v in self.positions[i]] for i, name in enumerate(JOINT_NAMES)}
+        return {name: [round(float(v), 5) for v in self.positions[i]] for i, name in enumerate(self.template.names)}
 
 
 # ---------------------------------------------------------------- orientation
