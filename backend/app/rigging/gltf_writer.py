@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..geometry import srgb_to_linear
 from .animations import Clip
 from .skeleton import Skeleton
 
@@ -177,7 +178,8 @@ def write_glb(primitives: list[Primitive], skeleton: Skeleton, clips: list[Clip]
         if prim.emissive and "emissiveFactor" not in material and any(prim.emissive):
             material["emissiveFactor"] = [float(c) for c in prim.emissive]
         if prim.colors is not None:
-            attrs["COLOR_0"] = buf.accessor(prim.colors, UBYTE, "VEC4", ARRAY_BUFFER, normalized=True)
+            # glTF vertex colours are linear; the app keeps them in sRGB
+            attrs["COLOR_0"] = buf.accessor(srgb_to_linear(prim.colors), UBYTE, "VEC4", ARRAY_BUFFER, normalized=True)
         materials.append(material)
         gl_prims.append({"attributes": attrs, "material": len(materials) - 1,
                          "indices": buf.accessor(prim.faces.reshape(-1), UINT, "SCALAR", ELEMENT_ARRAY_BUFFER)})

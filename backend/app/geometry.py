@@ -42,6 +42,27 @@ class GeometryError(Exception):
 # ---------------------------------------------------------------- loading
 
 
+# Vertex colours live in sRGB inside the app (like pictures, 3MF and PLY), but glTF's COLOR_0 is
+# linear: convert when reading and writing GLB so viewers, Blender and engines show the real colours.
+_TO_LINEAR = np.round(255 * np.where((x := np.arange(256) / 255) <= 0.04045, x / 12.92,
+                                     ((x + 0.055) / 1.055) ** 2.4)).astype(np.uint8)
+_TO_SRGB = np.round(255 * np.where((x := np.arange(256) / 255) <= 0.0031308, x * 12.92,
+                                   1.055 * x ** (1 / 2.4) - 0.055)).clip(0, 255).astype(np.uint8)
+
+
+def srgb_to_linear(rgba: np.ndarray) -> np.ndarray:
+    out = np.array(rgba, dtype=np.uint8, copy=True)
+    out[..., :3] = _TO_LINEAR[out[..., :3]]
+    return out
+
+
+def _vertex_colored(scene: trimesh.Scene):
+    for geom in scene.geometry.values():
+        visual = getattr(geom, "visual", None)
+        if isinstance(visual, trimesh.visual.ColorVisuals) and visual.kind in ("vertex", "face"):
+            yield geom
+
+
 def load_scene(data: bytes, file_type: str = "glb") -> trimesh.Scene:
     try:
         loaded = trimesh.load(io.BytesIO(data), file_type=file_type, force="scene")
@@ -49,7 +70,26 @@ def load_scene(data: bytes, file_type: str = "glb") -> trimesh.Scene:
         raise GeometryError(f"No se pudo leer el archivo {file_type.upper()}: {exc}") from exc
     if not loaded.geometry:
         raise GeometryError("El archivo no contiene ninguna malla")
+    if file_type == "glb":
+        for geom in _vertex_colored(loaded):
+            colors = np.array(geom.visual.vertex_colors, dtype=np.uint8)
+            colors[:, :3] = _TO_SRGB[colors[:, :3]]
+            geom.visual.vertex_colors = colors
     return loaded
+
+
+def glb_bytes(scene: trimesh.Scene) -> bytes:
+    """GLB with vertex colours written as linear COLOR_0 (the scene itself is left untouched)."""
+    saved = []
+    for geom in _vertex_colored(scene):
+        colors = np.array(geom.visual.vertex_colors, dtype=np.uint8)
+        saved.append((geom, colors))
+        geom.visual.vertex_colors = srgb_to_linear(colors)
+    try:
+        return scene.export(file_type="glb", include_normals=True)
+    finally:
+        for geom, colors in saved:
+            geom.visual.vertex_colors = colors
 
 
 def to_color_mesh(scene: trimesh.Scene) -> trimesh.Trimesh:
@@ -80,7 +120,7 @@ def to_color_mesh(scene: trimesh.Scene) -> trimesh.Trimesh:
 
 def mesh_to_glb(mesh_or_scene) -> bytes:
     scene = mesh_or_scene if isinstance(mesh_or_scene, trimesh.Scene) else trimesh.Scene(mesh_or_scene)
-    return scene.export(file_type="glb", include_normals=True)
+    return glb_bytes(scene)
 
 
 def transfer_colors(source: trimesh.Trimesh, target: trimesh.Trimesh, points: np.ndarray | None = None) -> np.ndarray:
@@ -479,7 +519,7 @@ def export(glb: bytes, fmt: str, size_mm: float | None = None, fit: str = "heigh
         scene.apply_scale(size_mm / 1000 / current)  # glTF units are metres
 
     if fmt == "glb":
-        return scene.export(file_type="glb", include_normals=True), ext, media_type
+        return glb_bytes(scene), ext, media_type
     if fmt == "obj":
         mesh = scene.to_geometry()
         text, files = trimesh.exchange.obj.export_obj(mesh, include_texture=True, return_texture=True)
@@ -509,4 +549,4 @@ def convert_upload(data: bytes, file_type: str) -> bytes:
         scene.apply_transform(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))
     center = scene.bounds.mean(axis=0)
     scene.apply_translation([-center[0], -scene.bounds[0][1], -center[2]])
-    return scene.export(file_type="glb", include_normals=True)
+    return glb_bytes(scene)

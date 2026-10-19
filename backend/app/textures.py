@@ -18,7 +18,7 @@ import trimesh
 from PIL import Image, ImageFilter
 from scipy.ndimage import gaussian_filter, sobel
 
-from .geometry import GeometryError, load_scene
+from .geometry import GeometryError, glb_bytes, load_scene
 
 TARGETS = {"2k": 2048, "4k": 4096, "8k": 8192}
 Upscaler = Callable[[bytes, int], Awaitable[bytes]]
@@ -172,5 +172,5 @@ async def enhance(glb: bytes, target: str = "4k", scale: int = 4, add_pbr: bool 
 
     if not cache:
         raise GeometryError("Este modelo no tiene texturas (usa colores por vértice). Retexturízalo primero.")
-    data = scene.export(file_type="glb", include_normals=True)
+    data = glb_bytes(scene)
     return data, TextureReport(len(cache), before, after, method, add_pbr)

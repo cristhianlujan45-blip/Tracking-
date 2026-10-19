@@ -121,14 +121,12 @@ def test_enhance_uses_worker_upscaler(client):
 
 
 def test_bare_shapes_are_painted_from_the_input_image(client):
-    import io
-
-    import trimesh
+    from app.geometry import load_scene
 
     job = client.post("/api/jobs/image", files={"images": ("r.png", PNG, "image/png")}, data={"quality": "draft"}).json()[0]
     job = wait_done(client, job["id"])
     assert job["status"] == "succeeded", job
-    scene = trimesh.load(io.BytesIO(client.get(job["model_url"]).content), file_type="glb")
+    scene = load_scene(client.get(job["model_url"]).content)  # COLOR_0 is linear: read back as sRGB
     mesh = next(iter(scene.geometry.values()))
     colors = mesh.visual.vertex_colors[:, :3].astype(int)
     front = mesh.vertices[:, 2] > mesh.vertices[:, 2].mean()

@@ -553,3 +553,15 @@ def test_send_to_slicer(client, monkeypatch):
     assert resp.status_code == 200, resp.text
     assert resp.json()["opened_with"] == "Bambu Studio" and opened["slicer"] == "bambu"
     assert opened["path"].suffix == ".3mf" and zipfile.is_zipfile(opened["path"])
+
+
+def test_glb_vertex_colours_are_linear_and_read_back_as_srgb():
+    """glTF COLOR_0 is linear: viewers and Blender must show the same colour the app painted."""
+    box = trimesh.creation.box()
+    box.visual.vertex_colors = np.tile([47, 56, 59, 255], (len(box.vertices), 1)).astype(np.uint8)
+    glb = geometry.mesh_to_glb(box)
+    raw = trimesh.load(io.BytesIO(glb), file_type="glb", force="mesh").visual.vertex_colors[0][:3]
+    assert list(raw) == [7, 10, 11]  # linear values in the file
+    back = next(iter(geometry.load_scene(glb).geometry.values())).visual.vertex_colors[0][:3]
+    assert abs(np.asarray(back, int) - [47, 56, 59]).max() <= 1
+    assert list(box.visual.vertex_colors[0][:3]) == [47, 56, 59]  # the scene itself is untouched
