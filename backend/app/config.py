@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 
@@ -56,5 +57,32 @@ class Settings:
         return self.data_dir / "files"
 
 
+# Settings the user can change from the app (stored in DATA_DIR/settings.json, they win over .env).
+USER_KEYS = ("provider", "fal_key", "fal_engine", "local_worker_url", "local_worker_token", "blender_path")
+
+
+def user_settings_path(settings: Settings) -> Path:
+    return settings.data_dir / "settings.json"
+
+
+def with_user_settings(settings: Settings) -> Settings:
+    path = user_settings_path(settings)
+    if not path.is_file():
+        return settings
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return settings
+    return replace(settings, **{k: v for k, v in saved.items() if k in USER_KEYS and isinstance(v, str)})
+
+
+def save_user_settings(settings: Settings, values: dict) -> Settings:
+    updated = replace(settings, **{k: v for k, v in values.items() if k in USER_KEYS})
+    path = user_settings_path(updated)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({k: getattr(updated, k) for k in USER_KEYS}, indent=1), encoding="utf-8")
+    return updated
+
+
 def get_settings() -> Settings:
-    return Settings()
+    return with_user_settings(Settings())

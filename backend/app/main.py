@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import json
+from dataclasses import replace
 import logging
 import random
 import re
@@ -23,10 +25,11 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from . import blender, creations, geometry, pipelines, rigging, textures
-from .config import Settings, get_settings
+from .config import Settings, get_settings, save_user_settings, user_settings_path, with_user_settings
 from .db import JobStore
 from .jobs import JobRunner
 from .providers import GenerationError, GenerationRequest, GenerationResult, InputImage, Provider, build_provider
+from .providers.fal import ENGINES as FAL_ENGINES
 from .styles import POSES, STYLES
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
@@ -138,6 +141,15 @@ def hex_rgb(value: str) -> tuple[int, int, int]:
     return tuple(int(value[i : i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
 
 
+class SettingsIn(BaseModel):
+    provider: Literal["mock", "local", "fal"] | None = None
+    fal_key: str | None = Field(None, max_length=200)
+    fal_engine: str | None = Field(None, max_length=40)
+    local_worker_url: str | None = Field(None, max_length=300)
+    local_worker_token: str | None = Field(None, max_length=200)
+    blender_path: str | None = Field(None, max_length=500)
+
+
 class RigIn(BaseModel):
     template: Literal["auto", "humanoid", "quadruped"] = "auto"
     markers: dict[str, list[float]] | None = None
@@ -206,7 +218,7 @@ def new_seed() -> int:
 
 
 def create_app(settings: Settings | None = None, provider: Provider | None = None) -> FastAPI:
-    settings = settings or get_settings()
+    settings = with_user_settings(settings) if settings else get_settings()
     concepts_dir = settings.files_dir / "concepts"
 
     @asynccontextmanager
@@ -215,7 +227,13 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         store = JobStore(settings.db_path)
         store.fail_interrupted()
         app.state.store = store
-        app.state.provider = provider or build_provider(settings)
+        app.state.settings = settings
+        app.state.provider_error = None
+        try:
+            app.state.provider = provider or build_provider(settings)
+        except (GenerationError, ValueError) as exc:  # e.g. cloud mode without a key: start in demo mode
+            app.state.provider_error = str(exc)
+            app.state.provider = build_provider(replace(settings, provider="mock"))
         if hasattr(app.state.provider, "start"):
             await app.state.provider.start()
         app.state.runner = JobRunner(store, settings.files_dir, settings.max_concurrent_jobs)
@@ -335,6 +353,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             "provider": provider.name,
             "provider_info": getattr(provider, "info", {}),
             "engines": getattr(provider, "engines", []),
+            "provider_error": request.app.state.provider_error,
             "default_engine": getattr(provider, "default_engine", None),
             "capabilities": sorted(provider.capabilities),
             "styles": [{"id": k, "label": v[0]} for k, v in STYLES.items()],
@@ -355,6 +374,49 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         source = source.replace('DEFAULT_SERVER = "http://localhost:8000"', f'DEFAULT_SERVER = "{base}"', 1)
         return Response(source, media_type="text/x-python",
                         headers={"Content-Disposition": 'attachment; filename="forja3d_blender.py"'})
+
+    # ------------------------------------------------------------ settings (desktop app)
+
+    @app.get("/api/settings")
+    async def get_app_settings(request: Request):
+        s = request.app.state.settings
+        return {
+            "provider": s.provider,
+            "active_provider": request.app.state.provider.name,
+            "provider_error": request.app.state.provider_error,
+            "fal_key_set": bool(s.fal_key),
+            "fal_key_hint": f"…{s.fal_key[-4:]}" if len(s.fal_key) >= 8 else "",
+            "fal_engine": s.fal_engine,
+            "fal_engines": [e.public() for e in FAL_ENGINES.values()],
+            "local_worker_url": s.local_worker_url,
+            "blender_path": s.blender_path,
+            "blender_found": request.app.state.blender,
+            "first_run": not user_settings_path(s).is_file(),
+            "locked": settings_locked(),
+        }
+
+    def settings_locked() -> bool:
+        return os.getenv("FORJA_LOCK_SETTINGS", "") not in ("", "0")
+
+    @app.put("/api/settings")
+    async def put_app_settings(request: Request, body: SettingsIn):
+        if settings_locked():
+            raise HTTPException(403, "Los ajustes están bloqueados en este servidor")
+        state = request.app.state
+        values = {k: v for k, v in body.model_dump().items() if v is not None}
+        if values.get("fal_key") == "":
+            values.pop("fal_key")  # empty field = keep the saved key
+        candidate = replace(state.settings, **values)
+        try:
+            new_provider = build_provider(candidate)
+        except (GenerationError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if hasattr(new_provider, "start"):
+            await new_provider.start()
+        state.settings = save_user_settings(state.settings, values)
+        state.provider, state.provider_error = new_provider, None  # running jobs keep their own provider
+        state.blender = blender.find_blender(state.settings.blender_path)
+        return await get_app_settings(request)
 
     # ------------------------------------------------------------ concepts (text -> image)
 
