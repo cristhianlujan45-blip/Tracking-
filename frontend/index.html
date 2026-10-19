@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Forja3D — Generador 3D con IA</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">◆</span> Forja3D</div>
+    <div class="provider" id="provider">conectando…</div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel create">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-mode="text" role="tab">Texto a 3D</button>
+        <button class="tab" data-mode="image" role="tab">Imagen a 3D</button>
+      </div>
+
+      <form id="form">
+        <section class="mode mode-text">
+          <label for="prompt">Describe tu objeto</label>
+          <textarea id="prompt" rows="5" maxlength="500"
+            placeholder="Ej.: un cofre del tesoro de madera con remaches dorados, estilo low-poly"></textarea>
+          <div class="chips" id="examples"></div>
+        </section>
+
+        <section class="mode mode-image" hidden>
+          <label>Imagen de referencia</label>
+          <label class="dropzone" id="dropzone">
+            <input type="file" id="file" accept="image/png,image/jpeg,image/webp" hidden />
+            <img id="preview" alt="" hidden />
+            <span id="dropText">Arrastra una imagen o haz clic<br /><small>PNG, JPG o WEBP · máx. 10 MB · fondo limpio funciona mejor</small></span>
+          </label>
+        </section>
+
+        <label for="quality">Calidad</label>
+        <select id="quality">
+          <option value="draft">Borrador (rápido)</option>
+          <option value="standard" selected>Estándar</option>
+          <option value="high">Alta (lento)</option>
+        </select>
+
+        <button type="submit" class="primary" id="submit">Generar modelo 3D</button>
+        <p class="error" id="formError" hidden></p>
+      </form>
+    </aside>
+
+    <section class="panel stage">
+      <div class="viewer-wrap">
+        <canvas id="viewer"></canvas>
+        <div class="viewer-empty" id="viewerEmpty">Genera o selecciona un modelo para verlo aquí</div>
+        <div class="viewer-loading" id="viewerLoading" hidden><div class="spinner"></div></div>
+      </div>
+      <div class="toolbar">
+        <div class="title" id="viewerTitle"></div>
+        <button class="tool" id="btnRotate" aria-pressed="true" title="Rotación automática">⟳ Girar</button>
+        <button class="tool" id="btnWire" aria-pressed="false" title="Ver malla">▦ Malla</button>
+        <button class="tool" id="btnReset" title="Encuadrar">⌖ Encuadrar</button>
+        <a class="tool primary-ghost" id="btnDownload" download hidden>⬇ Descargar GLB</a>
+      </div>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <aside class="panel gallery">
+      <h2>Mis modelos</h2>
+      <ul id="jobs" class="jobs"></ul>
+      <p class="muted" id="jobsEmpty">Aún no hay modelos.</p>
+    </aside>
+  </main>
+
+  <template id="jobTpl">
+    <li class="job">
+      <div class="thumb"></div>
+      <div class="info">
+        <div class="name"></div>
+        <div class="meta"></div>
+        <div class="bar"><span></span></div>
+      </div>
+      <button class="del" title="Eliminar">✕</button>
+    </li>
+  </template>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
