@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import os
 import json
@@ -12,6 +13,7 @@ import random
 import re
 import shutil
 import unicodedata
+import sys
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
@@ -24,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from . import blender, creations, geometry, pipelines, rigging, textures
+from . import blender, creations, geometry, pipelines, rigging, sheet, textures
 from .config import Settings, get_settings, save_user_settings, user_settings_path, with_user_settings
 from .db import JobStore
 from .jobs import JobRunner
@@ -32,8 +34,10 @@ from .providers import GenerationError, GenerationRequest, GenerationResult, Inp
 from .providers.fal import ENGINES as FAL_ENGINES
 from .styles import POSES, STYLES
 
-FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
-BLENDER_ADDON = Path(__file__).resolve().parents[2] / "integrations" / "blender" / "forja3d_blender.py"
+# repository root, or the unpacked bundle when running as the desktop app (PyInstaller)
+RESOURCES = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+FRONTEND_DIR = RESOURCES / "frontend"
+BLENDER_ADDON = RESOURCES / "integrations" / "blender" / "forja3d_blender.py"
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 MIME_BY_EXT = {ext: mime for mime, ext in IMAGE_TYPES.items()}
 GENERATIVE_MODES = ("text", "image", "multi_image")
@@ -446,6 +450,17 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             (concepts_dir / f"{concept_id}.png").write_bytes(data)
             concepts.append({"id": concept_id, "url": f"/api/concepts/{concept_id}"})
         return {"seed": seed, "concepts": concepts}
+
+    @app.post("/api/sheet/split")
+    async def split_character_sheet(image: UploadFile = File(...)):
+        """Find the full-body views on a character sheet and cut them out (transparent background)."""
+        upload = await read_image(image)
+        try:
+            views = await asyncio.to_thread(sheet.split_sheet, upload.data)
+        except sheet.SheetError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"views": [{"role": v["role"], "box": v["box"],
+                           "url": "data:image/png;base64," + base64.b64encode(v["image"]).decode()} for v in views]}
 
     @app.get("/api/concepts/{concept_id}")
     async def get_concept(concept_id: str):

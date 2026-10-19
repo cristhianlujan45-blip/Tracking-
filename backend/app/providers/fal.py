@@ -55,7 +55,8 @@ def _hunyuan3d_v3(req: GenerationRequest, images: list[str]) -> dict:
         "face_count": faces,
         "generate_type": "LowPoly" if req.style == "lowpoly" else "Normal",
     }
-    for key, url in zip(("back_image_url", "left_image_url", "right_image_url"), images[1:]):
+    # same order as the app's view slots and the local worker: front, side (left), back, right
+    for key, url in zip(("left_image_url", "back_image_url", "right_image_url"), images[1:]):
         payload[key] = url
     return payload
 

@@ -1,192 +1,147 @@
-# Forja3D — generador de modelos 3D con IA
+# Forja3D — estudio 3D con IA
 
-Aplicación web propia para crear, editar y preparar modelos 3D con IA, al estilo de Meshy o Tripo3D.
+Programa propio para crear, texturizar, riggear, animar y exportar modelos 3D con IA, al estilo de Meshy o Tripo3D. Funciona como **aplicación de escritorio para Windows y macOS** o como web autoalojada. Interfaz en **español e inglés**.
+
+## Instalar (Windows y Mac)
+
+Descarga la última versión desde la página **Releases** del repositorio (se compila sola con GitHub Actions):
+
+- **Windows 10/11 (64 bits):** `Forja3D-Setup-x.y.z.exe` → ejecútalo. Crea el acceso directo y abre la app en su propia ventana. Si SmartScreen avisa, pulsa «Más información» → «Ejecutar de todas formas» (el instalador no está firmado).
+- **macOS (Apple Silicon):** `Forja3D-x.y.z-mac-arm64.dmg` → arrastra Forja3D a Aplicaciones. La primera vez: clic derecho → «Abrir» (no está firmada por Apple).
+
+Al abrirla por primera vez elige el motor de IA en **Ajustes**: la nube (fal.ai, la mejor calidad), tu GPU NVIDIA o el modo demo. Tus modelos y ajustes se guardan en `%APPDATA%\Forja3D` (Windows) o `~/Library/Application Support/Forja3D` (Mac).
+
+**IA en tu propia GPU** (gratis y privado, RTX con 8 GB o más, incluida la serie 50): es un complemento aparte para Windows. Ejecuta una vez `scripts\windows\instalar.bat`; después abre `scripts\windows\iniciar.bat -SoloWorker` (añade `-Multiview` para hojas de personaje) y elige «Mi GPU» en Ajustes. Ver [gpu_worker/README.md](gpu_worker/README.md).
 
 ## Funciones
 
 **Crear**
-- **Texto → 3D**, con 7 estilos (realista, cartoon, pintado a mano, low-poly, vóxel, escultura), simetría, pose A/T para personajes y semilla reproducible.
-- **Conceptos primero**: genera 4 imágenes, elige la que te guste y conviértela en 3D (no pagas el paso 3D por diseños que no quieres).
-- **Imagen → 3D** y **Multi-vista → 3D** (2–4 fotos del mismo objeto para una espalda fiel).
-- **Variantes**: hasta 4 modelos por petición, con semillas consecutivas.
-- **Escena / foto → 3D**: cualquier foto (paisaje, habitación, retrato) a partir de su profundidad estimada con IA (Depth Anything V2 en tu GPU):
-  - **Escena 2.5D**: malla con la foto como textura, para fondos y entornos en Blender, Unity o Unreal.
-  - **Relieve**: placa sólida con la escena en bajorrelieve, lista para imprimir.
-  - **Litofanía**: placa fina que muestra la foto al iluminarla por detrás.
-- **Texto 3D**: letras extruidas, placas con nombre o llaveros con agujero; elige fuente, grosor y colores.
-- **Subir tu modelo** (GLB, OBJ, STL, PLY, OFF, 3MF) para verlo, convertirlo o editarlo.
+- **Texto → 3D** con 7 estilos, simetría, pose A/T y semilla; **conceptos primero** (4 imágenes, eliges una y pasa a 3D).
+- **Imagen → 3D** y **multi-vista → 3D** (frente, lateral, espalda, lateral derecho).
+- **Hoja de personaje**: sube un *model sheet* y Forja3D encuentra y recorta solo las vistas de frente, lado y espalda (con fondo transparente) para generar el modelo multi-vista.
+- Motores de primera línea en la nube: **Hunyuan3D 3**, **TRELLIS 2**, **Tripo H3.1** y **Meshy 6** (PBR, hasta 1 M de caras); en tu GPU, **Hunyuan3D-2mini/2mv**.
+- **Escena / foto → 3D**: escena 2.5D, relieve y litofanía a partir de la profundidad estimada con IA.
+- **Texto 3D** (letras, placas, llaveros) y **subida de modelos** (GLB, OBJ, STL, PLY, OFF, 3MF).
 
-**Editar** (cada edición crea un modelo nuevo y conserva el original)
-- **Refinar HD**: la misma entrada y semilla en calidad alta.
-- **Variaciones**: 3 alternativas nuevas de un modelo.
-- **Remallado**: reducir polígonos (de 200 a 200k), low-poly facetado, vóxeles (8³–96³) o suavizado.
-- **Texturizado IA**: repintar un modelo existente desde texto.
+**Texturas**
+- **Full HD 2K / 4K / 8K**: ampliación con IA (Real-ESRGAN) y mapas **PBR** (normal, rugosidad, oclusión). Si el motor ya entregó mapas PBR reales, se conservan y se amplían en lugar de sustituirlos.
+- **Retexturizado IA** (Meshy 7 hasta 8K) desde una descripción.
+- **Pintado desde las vistas**: cuando el motor devuelve solo la forma (Hunyuan3D-2mini en GPUs de 8 GB), el modelo se colorea proyectando tus imágenes con prueba de visibilidad; lo que ninguna vista ve se rellena por difusión.
+- **Inspector de materiales** en el visor: ver solo el color, normal, rugosidad, metal u oclusión, y la malla sobre la textura.
 
-**Rigging y animación de personajes**
-- **Auto-rig con un clic** para humanoides en pose A o T: esqueleto de 27 huesos con nombres estándar (Mixamo, Unity Humanoid y retargeting de Unreal). Los pies quedan apoyados en el suelo.
-- **Marcadores ajustables** al estilo Mixamo (barbilla, hombros, codos, muñecas, ingle, rodillas, tobillos), con vista frontal, simetría y giro de 90° si el personaje no mira al frente.
-- **Pesos de piel por difusión de calor** (*bone heat*, el método de Pinocchio): codos, rodillas y hombros se doblan con transiciones suaves y como máximo 4 huesos por vértice.
-- **Biblioteca de 14 animaciones** que se adaptan a las proporciones y a la pose de reposo de cada personaje: reposo, caminar, correr, saltar, saludar, bailar, puñetazos, victoria, asentir, negar, mirar alrededor, sentado, T-pose y A-pose. Los pies se pegan al suelo automáticamente.
-- **Mocap BVH**: sube capturas de movimiento (CMU, Rokoko, Mixamo convertido en Blender…) y se adaptan a tu personaje, aunque el BVH esté en pose T y el personaje en pose A. Opción "en el sitio" o con desplazamiento.
-- Visor con **esqueleto** y **mapa de pesos por hueso** para revisar el rig.
-- Exportación **GLB con animaciones** y **FBX / .blend** (convertidos con Blender) para Unity, Unreal, Maya o 3ds Max. Validado con el validador oficial de Khronos y reimportado en Blender 5.0.
+**Personajes: rig y animación**
+- **Personaje completo en un clic**: texturas HD + PBR → esqueleto → animaciones elegidas.
+- Auto-rig de **humanos** (27 huesos con nombres Mixamo/Unity Humanoid) y de **cuadrúpedos** (perros, gatos, caballos…; 26 huesos), con detección automática.
+- **Marcadores ajustables** estilo Mixamo (vista frontal para personas, lateral para animales).
+- Pesos por difusión de calor (*bone heat*), máximo 4 huesos por vértice; visor de huesos y mapa de pesos.
+- **14 animaciones procedurales**, **6 andares de cuadrúpedo** y una **biblioteca mocap de 66 clips** (CMU) por categorías; además tus propios **BVH**.
+- El personaje riggeado conserva **todos los mapas PBR y tangentes** (validado con el validador oficial de Khronos: 0 errores, 0 avisos).
 
-**Impresión 3D**
-- Análisis: estanqueidad, normales, triángulos degenerados, piezas sueltas, volumen.
-- **Reparación automática**: tapa agujeros de cualquier tamaño y corrige normales.
-- **División en piezas**: cortes por altura con tapas, o separación por componentes.
-- Exportación STL/3MF con el eje Z hacia arriba, en milímetros y apoyada en la cama. Eliges qué medida fijar: alto, ancho, fondo o lado mayor.
+**Exportar**
+- **Destinos con un clic**: Blender, Unity, Unreal, Godot, Roblox, web/AR e impresora 3D (elige el mejor formato disponible).
+- GLB con animaciones, **FBX** y **.blend** (con Blender instalado): en el `.blend` cada animación queda en su **pista NLA numerada** (01 idle, 02 walk…), lista para editar.
+- OBJ (quads reales tras el remallado en quads), STL, 3MF, PLY, USDZ (iPhone/AR).
+- **Impresión multicolor**: 3MF pintado por colores (Bambu AMS, Prusa MMU) o un STL por color.
+- **Complemento de Blender**: lista tus modelos y los importa con un clic, con las animaciones ya en pistas NLA.
 
-**Ver y compartir**
-- Visor three.js: modos textura / arcilla / normales / malla, iluminación estudio / exterior / noche, reproducción de animaciones.
-- Captura PNG y **vídeo 360° en WebM** con un clic.
-- Miniaturas automáticas, galería con búsqueda, filtros, favoritos y renombrado.
-- **Enlace para compartir con AR** (Android, y iOS con Quick Look) y código `<iframe>` para insertar en cualquier web.
-- Exportación: **GLB, OBJ (zip con textura), STL, 3MF, PLY y USDZ** (iPhone/AR).
-- **Historial de versiones**: cada modelo muestra de dónde viene y qué se hizo a partir de él.
+**Editar e imprimir**
+- Refinar HD, variaciones, remallado (reducir, **quads limpios**, low-poly, vóxel, suavizar).
+- Análisis de imprimibilidad, reparación automática, división en piezas, medida final en mm.
 
-**Blender**
-- **Complemento de Blender** (descárgalo desde el panel Exportar de la app; ya viene configurado con la dirección de tu servidor). En Blender: *Edit › Preferences › Add-ons › Install from Disk*, y luego la barra lateral (tecla **N**) › pestaña **Forja3D**:
-  - lista y busca tus modelos, e **impórtalos con un clic** en el cursor 3D, opcionalmente escalados a una altura;
-  - **envía la selección de Blender a Forja3D** para remallar, reparar, dividir o exportar para impresión.
-- Probado con Blender 5.0. Sin el complemento: *Archivo › Importar › glTF 2.0* con el GLB descargado.
+**Interfaz**
+- Diseño neón propio, **español / inglés** (selector arriba), barra de flujo **01 Entrada → 02 Modelo texturizado → 03 Rig → 04 Blender y motores**, galería con filtros, historial de versiones, captura PNG y vídeo 360°, enlace para compartir con AR.
 
-### Comparación con Meshy
+### Comparación con Meshy y Tripo
 
-Datos de Meshy según su web (octubre de 2026). "No figura" significa que la web no lo menciona.
-
-| | Forja3D | Meshy |
+| | Forja3D | Meshy / Tripo |
 |---|---|---|
-| Texto/imagen/multi-vista → 3D | ✅ | ✅ |
-| Elegir entre conceptos antes del 3D | ✅ | ✅ |
-| Auto-rig de humanoides | ✅ | ✅ (y cuadrúpedos) |
-| Corregir el rig con marcadores (estilo Mixamo) | ✅ | no figura |
-| Ver huesos y mapa de pesos antes de exportar | ✅ | no figura |
-| Biblioteca de animaciones | 14, adaptadas a cada personaje | 600+ |
-| Importar tu propio mocap BVH | ✅ | no figura |
-| Exportar GLB/FBX con animaciones | ✅ | ✅ |
-| Foto/escena → 3D, relieve y litofanía | ✅ | no figura |
-| Texto 3D, placas y llaveros | ✅ | ✅ |
-| Remallado / low-poly / vóxel | ✅ local | ✅ |
-| Retexturizado | ✅ demo y GPU local (`--texture`) | ✅ |
-| Análisis, reparación y división para impresión | ✅ | ✅ |
-| STL/3MF a escala en mm | ✅ | ✅ |
-| Complemento de Blender | ✅ | ✅ |
-| IA en tu propia GPU, sin coste por modelo | ✅ (8 GB bastan) | ❌ |
-| Autoalojado, sin suscripción, el código es tuyo | ✅ | ❌ |
-| Rig de cuadrúpedos y dedos | ❌ | ✅ cuadrúpedos |
-| Texturas PBR separadas, quads | ❌ | ✅ |
-| Impresión multicolor, cuentas, comunidad | ❌ | ✅ |
+| Texto, imagen y multi-vista → 3D con motores punteros | ✅ (Hunyuan3D 3, TRELLIS 2, Tripo H3.1, Meshy 6) | ✅ |
+| Hoja de personaje → vistas recortadas automáticamente | ✅ | no figura |
+| Texturas 8K + PBR | ✅ | ✅ |
+| Auto-rig humano y cuadrúpedo | ✅ | ✅ |
+| Corregir el rig con marcadores, ver pesos | ✅ | no figura |
+| Animaciones | 14 + 6 + 66 mocap + tus BVH | cientos (biblioteca propia) |
+| Exportar a Blender con pistas NLA, FBX, Unity/Unreal/Godot | ✅ | ✅ |
+| Impresión multicolor, quads | ✅ | ✅ |
+| IA en tu propia GPU, sin pagar por modelo | ✅ | ❌ |
+| Escritorio Windows/Mac, sin suscripción, el código es tuyo | ✅ | ❌ |
 
-### Qué falta (en orden de prioridad)
+### Pendiente
 
-1. **Rig de cuadrúpedos y de dedos.** La misma técnica (marcadores, pesos por calor y animaciones) se amplía con otra plantilla de esqueleto.
-2. **Más animaciones**: una biblioteca de mocap con licencia libre (p. ej. CMU) precargada; el importador BVH ya está hecho.
-3. **Remallado en quads** con Instant Meshes, para una topología limpia al animar o esculpir.
-4. **Impresión multicolor**: 3MF por colores (Bambu AMS, Prusa MMU) y abrir directamente en Bambu Studio u OrcaSlicer.
-5. **Texturas PBR** (normal, rugosidad, metal). Hunyuan3D-2.1 las genera, pero pide más de 8 GB de VRAM.
-6. **Producto**: cuentas, créditos, galería pública, API con claves y app móvil.
+- Firma de código (Windows y Apple) para que no aparezcan avisos al instalar; versión para Mac Intel.
+- Rig de dedos y expresiones faciales (*blendshapes*).
+- Cuentas, galería pública y app móvil.
 
 ## Proveedores de IA
 
-Se eligen con `GEN_PROVIDER` en `.env`:
+Se eligen en **Ajustes** dentro de la app (o con `GEN_PROVIDER` en `.env` para servidores):
 
-- **`local`**: IA real **en tu propia GPU NVIDIA** (desde 8 GB de VRAM, RTX serie 50 incluidas), gratis y privada. Usa Hunyuan3D-2mini para la forma y SD-Turbo para los conceptos; varias vistas y texturas son opcionales. Ver [gpu_worker/README.md](gpu_worker/README.md).
-- **`mock`** (por defecto): sin GPU ni clave. Genera figuras procedurales y conceptos dibujados, y respeta colores, estilos y semillas. Sirve para desarrollar y hacer demos.
-- **`fal`**: IA real a través de [fal.ai](https://fal.ai):
-  - imagen → 3D: **TRELLIS** (`fal-ai/trellis`) o **Hunyuan3D-2** (`fal-ai/hunyuan3d/v2`)
-  - multi-vista → 3D: `fal-ai/trellis/multi`
-  - texto → imagen (y conceptos): **FLUX** (`fal-ai/flux/schnell`)
-  - El retexturizado aún no está disponible con este proveedor; la interfaz lo oculta.
+- **Nube (fal.ai)**: pega tu clave de <https://fal.ai/dashboard/keys>. Motores 3D: Hunyuan3D 3 (por defecto), TRELLIS 2, Tripo H3.1, Meshy 6, TRELLIS 1; FLUX para conceptos; Meshy 7 para retexturizar; Real-ESRGAN y Depth Anything.
+- **Mi GPU** (`local`): Hunyuan3D-2mini/2mv, SD-Turbo, Depth Anything V2 y Real-ESRGAN en tu NVIDIA (8 GB bastan).
+- **Demo** (`mock`): sin IA, formas procedurales para probar todo el flujo.
 
-Todas las herramientas de geometría (remallado, estilos low-poly/vóxel/escultura, reparación, división, exportación) se ejecutan **en local** con cualquier proveedor.
+Las herramientas de geometría, rig, animación, texturas HD (sin IA, con reescalado de calidad) y exportación funcionan en local con cualquier proveedor.
 
-## Arranque rápido
-
-**Windows con GPU NVIDIA** (IA local):
-
-```bat
-scripts\windows\instalar.bat
-scripts\windows\iniciar.bat
-```
-
-**Modo demo** (cualquier sistema, sin GPU):
+## Desarrollo
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements-dev.txt
-cp .env.example .env          # GEN_PROVIDER=mock por defecto
-cd backend
-../.venv/bin/uvicorn app.main:app --reload
+cd backend && ../.venv/bin/uvicorn app.main:app --reload     # http://localhost:8000
 ```
 
-Abre <http://localhost:8000>.
-
-**Con IA real:** crea una clave en <https://fal.ai/dashboard/keys> y pon `GEN_PROVIDER=fal` y `FAL_KEY=…` en `.env`. Cada modelo tarda de 30 s a 2 min y fal.ai lo cobra por uso.
-
-**Docker:**
-```bash
-docker build -t forja3d .
-docker run -p 8000:8000 --env-file .env -v forja3d-data:/data forja3d
-```
-
-**Tests:** `cd backend && ../.venv/bin/python -m pytest` y `cd gpu_worker && ../.venv/bin/python -m pytest tests`
+- Ventana de escritorio desde el código: `pip install pywebview` y `python desktop/forja3d_desktop.py`.
+- Empaquetar: `pip install pyinstaller` y `pyinstaller desktop/forja3d.spec` (el instalador de Windows usa Inno Setup con `desktop/windows/forja3d.iss`; ver `.github/workflows/desktop.yml`).
+- Docker: `docker build -t forja3d . && docker run -p 8000:8000 --env-file .env -v forja3d-data:/data forja3d`
+- Tests: `cd backend && ../.venv/bin/python -m pytest` y `cd gpu_worker && ../.venv/bin/python -m pytest tests`
 
 ## Arquitectura
 
 ```
-gpu_worker/            servidor de IA local en tu GPU (Hunyuan3D-2mini, SD-Turbo)
-scripts/windows/       instalar.bat / iniciar.bat
+desktop/               lanzador de escritorio (ventana nativa), spec de PyInstaller, instalador Windows
+gpu_worker/            servidor de IA local en tu GPU (Hunyuan3D-2, SD-Turbo, Depth Anything, Real-ESRGAN)
+scripts/windows/       instalar.bat / iniciar.bat (worker de GPU)
 integrations/blender/  complemento de Blender
-frontend/              HTML + JS sin build (three.js y model-viewer desde CDN)
-  index.html, app.js   estudio: crear, galería, herramientas
-  viewer.js            visor: modos, luces, animación, captura, vídeo 360°
-  share.html           página pública con AR / iframe
+frontend/              HTML + JS sin build; three.js y fuentes incluidos (funciona sin internet)
+  index.html, app.js   estudio: crear, galería, herramientas, flujo 01–04
+  i18n.js              español / inglés
+  viewer.js            visor: modos, inspector de mapas, luces, animación, editor de marcadores
+  rig.js, settings.js  panel de rig y animación · ajustes
 backend/app/
   main.py              API REST (FastAPI) + sirve el frontend
   pipelines.py         trabajos: generación IA, operaciones locales, subidas
-  jobs.py              ejecutor asíncrono con límite de concurrencia
-  geometry.py          remallado, vóxeles, análisis, reparación, corte, exportación
+  jobs.py              ejecutor asíncrono con límite de concurrencia y dependencias
+  geometry.py          remallado (quads incl.), análisis, reparación, corte, exportación, multicolor
+  textures.py          texturas HD y mapas PBR
+  projection.py        pintado del modelo desde sus vistas
+  sheet.py             hojas de personaje: detección y recorte de vistas
   creations.py         escena 2.5D, relieve, litofanía, texto 3D
-  rigging/             skeleton.py (marcadores, esqueleto) · skinning.py (bone heat)
-                       animations.py (biblioteca + BVH) · gltf_writer.py (GLB con skin)
-  blender.py           conversión FBX/.blend con Blender en segundo plano
-  styles.py            estilos y construcción de prompts
-  db.py                SQLite con migraciones automáticas
-  providers/           local.py (tu GPU) · fal.py (fal.ai) · mock.py (demo) · base.py
+  rigging/             skeleton · quadruped · skinning · animations · mocap (CMU) · gltf_writer
+  blender.py           conversión FBX/.blend con Blender (pistas NLA)
+  providers/           fal.py (nube) · local.py (tu GPU) · mock.py (demo)
 ```
 
 ### API
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| `GET` | `/api/config` | proveedor, capacidades, estilos, formatos |
+| `GET` | `/api/config` | proveedor, motores, capacidades, estilos, formatos |
+| `GET` / `PUT` | `/api/settings` | motor de IA, clave, Blender (la clave nunca se devuelve) |
 | `POST` | `/api/concepts` | `{prompt, style, symmetry, pose, count, seed?}` → imágenes concepto |
-| `POST` | `/api/jobs/text` | `{prompt, quality, style, symmetry, pose, seed?, variants}` → lista de trabajos |
-| `POST` | `/api/jobs/image` | multipart: `images` (1–4) o `concept_id`, `prompt?`, `quality`, `style`, `seed?`, `variants` |
-| `POST` | `/api/jobs/upload` | multipart: `model` (glb/obj/stl/ply/off/3mf) |
-| `POST` | `/api/jobs/scene` | multipart: `image`, `kind: scene\|relief\|lithophane`, `resolution`, `strength`, `cut_edges` |
-| `POST` | `/api/jobs/text3d` | `{text, style: letters\|plate\|keychain, font, bold, depth, color, plate_color}` |
-| `GET` | `/api/jobs/{id}/depth` | mapa de profundidad usado (escenas y relieves) |
-| `GET` | `/api/integrations/blender` | complemento de Blender preconfigurado |
-| `GET` | `/api/rig/presets` | animaciones disponibles y marcadores |
-| `POST` | `/api/jobs/{id}/rig/markers` | `{yaw?, auto?}` → marcadores estimados (o los guardados) |
-| `POST` | `/api/jobs/{id}/rig` | `{markers?, yaw?, symmetric, animations, in_place}` → personaje con rig |
-| `POST` | `/api/jobs/{id}/animate` | multipart: `animations`, `bvh` (archivos), `keep_bvh`, `in_place` |
+| `POST` | `/api/sheet/split` | multipart `image` (hoja de personaje) → vistas recortadas con su papel |
+| `POST` | `/api/jobs/text` | `{prompt, quality, style, symmetry, pose, seed?, variants, engine?}` |
+| `POST` | `/api/jobs/image` | multipart: `images` (1–4: frente, lateral, espalda, derecho) o `concept_id`, `engine?` |
+| `POST` | `/api/jobs/upload` · `/scene` · `/text3d` | subir modelo · foto → 3D · texto 3D |
 | `GET` | `/api/jobs` · `/api/jobs/{id}` | listado / detalle |
-| `PATCH` | `/api/jobs/{id}` | `{name?, favorite?}` |
-| `DELETE` | `/api/jobs/{id}` | elimina trabajo y archivos |
-| `GET` | `/api/jobs/{id}/model.glb` · `/image` · `/thumbnail` | archivos |
-| `PUT` | `/api/jobs/{id}/thumbnail` | miniatura (cuerpo PNG/JPG/WEBP) |
-| `GET` | `/api/jobs/{id}/analysis` | informe de imprimibilidad |
-| `GET` | `/api/jobs/{id}/export?format=glb\|obj\|stl\|3mf\|ply\|fbx\|blend&size_mm=&fit=height\|width\|depth\|max` | descarga convertida (FBX/.blend necesitan Blender) |
-| `POST` | `/api/jobs/{id}/remesh` | `{mode: decimate\|lowpoly\|voxel\|smooth, target_faces, resolution}` |
-| `POST` | `/api/jobs/{id}/retexture` | `{prompt, style, seed?}` |
-| `POST` | `/api/jobs/{id}/repair` | reparación para impresión |
-| `POST` | `/api/jobs/{id}/split` | `{mode: height\|components, parts}` |
-| `POST` | `/api/jobs/{id}/refine` | misma entrada y semilla, calidad alta |
-| `POST` | `/api/jobs/{id}/variations` | `{count}` nuevas semillas |
-
-## Añadir otro proveedor (p. ej. tu propia GPU)
-
-Implementa `generate`, `generate_images`, `retexture` y `estimate_depth` (ver `providers/base.py`), declara tus `capabilities` y regístralo en `providers/__init__.py`; la interfaz se adapta sola a lo que soporte. Para autoalojar, levanta en una GPU de 16–24 GB un servicio HTTP con [TRELLIS](https://github.com/microsoft/TRELLIS) o [Hunyuan3D-2](https://github.com/Tencent/Hunyuan3D-2). Hunyuan3D-2 incluye texturizado de mallas, lo que habilitaría el retexturizado real.
+| `PATCH` / `DELETE` | `/api/jobs/{id}` | renombrar, favorito / eliminar |
+| `GET` | `/api/jobs/{id}/export?format=glb\|obj\|stl\|3mf\|3mf_color\|stl_colors\|ply\|fbx\|blend&size_mm=&fit=&colors=` | descarga |
+| `POST` | `/api/jobs/{id}/enhance` | `{target: 2k\|4k\|8k, pbr}` texturas HD |
+| `POST` | `/api/jobs/{id}/retexture` | `{prompt, style, resolution}` |
+| `POST` | `/api/jobs/{id}/remesh` | `{mode: decimate\|quads\|lowpoly\|voxel\|smooth, target_faces, resolution}` |
+| `POST` | `/api/jobs/{id}/repair` · `/split` · `/refine` · `/variations` | impresión y variantes |
+| `GET` | `/api/rig/presets` | animaciones (humano, cuadrúpedo, biblioteca mocap) y marcadores |
+| `POST` | `/api/jobs/{id}/rig/markers` | `{template?, yaw?, auto?}` → marcadores |
+| `POST` | `/api/jobs/{id}/rig` | `{template, markers?, yaw?, animations, in_place}` |
+| `POST` | `/api/jobs/{id}/character` | `{target, pbr, template, animations}` → texturas HD + rig en un clic |
+| `POST` | `/api/jobs/{id}/animate` | multipart: `animations`, `bvh`, `keep_bvh`, `in_place` |
+| `GET` | `/api/integrations/blender` | complemento de Blender preconfigurado |

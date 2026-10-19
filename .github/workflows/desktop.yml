@@ -1,0 +1,105 @@
+name: Desktop app (Windows + macOS)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ccr-90c69cc6-siyqqi, main]
+    paths: [backend/**, frontend/**, desktop/**, integrations/**, .github/workflows/desktop.yml]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  APP_VERSION: 1.0.${{ github.run_number }}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+      - run: python -m pytest -q
+        working-directory: backend
+
+  windows:
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - name: Install
+        run: pip install -r backend/requirements.txt pywebview pyinstaller
+      - name: Build app
+        run: pyinstaller desktop/forja3d.spec --noconfirm
+      - name: Smoke test (starts the packaged server)
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\Forja3D\Forja3D.exe -ArgumentList '--server','--port','8799' -PassThru
+          $ok = $false
+          foreach ($i in 1..60) {
+            try { if ((Invoke-WebRequest http://127.0.0.1:8799/api/health -UseBasicParsing).StatusCode -eq 200) { $ok = $true; break } } catch {}
+            Start-Sleep 2
+          }
+          $html = (Invoke-WebRequest http://127.0.0.1:8799/ -UseBasicParsing).Content
+          Stop-Process $p -Force
+          if (-not $ok -or $html -notmatch 'FORJA') { Get-Content "$env:APPDATA\Forja3D\forja3d.log" -ErrorAction SilentlyContinue; exit 1 }
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://go.microsoft.com/fwlink/p/?LinkId=2124703 -OutFile desktop\windows\MicrosoftEdgeWebview2Setup.exe
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=$env:APP_VERSION" desktop\windows\forja3d.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Forja3D-Windows
+          path: dist-installer/*.exe
+
+  macos:
+    needs: tests
+    runs-on: macos-latest  # Apple Silicon (M1/M2/M3/M4)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - name: Install
+        run: pip install -r backend/requirements.txt pywebview pyinstaller
+      - name: Build app
+        run: pyinstaller desktop/forja3d.spec --noconfirm
+      - name: Smoke test (starts the packaged server)
+        run: |
+          dist/Forja3D.app/Contents/MacOS/Forja3D --server --port 8799 &
+          for i in $(seq 60); do curl -sf http://127.0.0.1:8799/api/health && break; sleep 2; done
+          curl -sf http://127.0.0.1:8799/ | grep -q FORJA
+          kill %1
+      - name: Disk image
+        run: |
+          mkdir dmg && cp -R dist/Forja3D.app dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname Forja3D -srcfolder dmg -ov -format UDZO "Forja3D-${APP_VERSION}-mac-arm64.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Forja3D-macOS
+          path: "*.dmg"
+
+  release:
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-v${{ env.APP_VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: Forja3D ${{ env.APP_VERSION }} (Windows + macOS)
+          make_latest: true
+          files: out/*
+          body: |
+            **Windows 10/11 (64 bits):** descarga `Forja3D-Setup-*.exe` y ejecútalo. Si Windows SmartScreen avisa, pulsa «Más información» → «Ejecutar de todas formas» (el instalador no está firmado).
+            **macOS (Apple Silicon):** abre el `.dmg` y arrastra Forja3D a Aplicaciones. La primera vez: clic derecho sobre la app → «Abrir» (no está firmada por Apple).
+            La IA en la nube (fal.ai) funciona en ambos. La IA en tu propia GPU NVIDIA es un complemento aparte para Windows (`scripts\windows\instalar.bat` y luego `iniciar.bat -SoloWorker`).

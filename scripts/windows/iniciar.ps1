@@ -4,11 +4,13 @@
 #   scripts\windows\iniciar.bat -Texture        # + texturas (requiere instalar con -Texture; lento con 8 GB)
 #   scripts\windows\iniciar.bat -Multiview      # + varias vistas con Hunyuan3D-2mv
 #   scripts\windows\iniciar.bat -Demo           # sin IA: comprueba que todo funciona
+#   scripts\windows\iniciar.bat -SoloWorker     # solo la IA, para la app de escritorio (Ajustes → Mi GPU)
 
 param(
     [switch]$Texture,
     [switch]$Multiview,
     [switch]$Demo,
+    [switch]$SoloWorker,
     [string]$ImageModel = "stabilityai/sd-turbo",
     [int]$Port = 8000,
     [int]$WorkerPort = 8001
@@ -38,6 +40,12 @@ do {
 } until ($health -or (Get-Date) -gt $deadline -or $worker.HasExited)
 if (-not $health) { Write-Host "El worker no arrancó; revisa su ventana para ver el error." -ForegroundColor Red; exit 1 }
 Write-Host "Worker listo: $($health.gpu) · $($health.capabilities -join ', ')" -ForegroundColor Green
+
+if ($SoloWorker) {
+    Write-Host "Abre la app Forja3D → Ajustes → «Mi GPU» (dirección http://127.0.0.1:$WorkerPort). Deja esta ventana abierta." -ForegroundColor Green
+    Wait-Process -Id $worker.Id
+    exit 0
+}
 
 $env:GEN_PROVIDER = "local"
 $env:LOCAL_WORKER_URL = "http://127.0.0.1:$WorkerPort"

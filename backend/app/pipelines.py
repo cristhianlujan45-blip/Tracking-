@@ -7,7 +7,7 @@ from functools import partial
 from pathlib import Path
 from typing import Callable
 
-from . import creations, geometry
+from . import creations, geometry, projection
 from .jobs import Work
 from .providers import GenerationRequest, GenerationResult, InputImage, Provider
 from .providers.base import ProgressCallback
@@ -16,6 +16,11 @@ from .providers.base import ProgressCallback
 def generation(provider: Provider, req: GenerationRequest) -> Work:
     async def work(on_progress: ProgressCallback) -> GenerationResult:
         result = await provider.generate(req, on_progress)
+        if getattr(provider, "paints_from_views", False):
+            pictures = [img.data for img in req.images] or ([result.reference_image] if result.reference_image else [])
+            if pictures:
+                await on_progress(97, "Pintando el modelo desde las imágenes")
+                result.model_glb = await asyncio.to_thread(projection.paint_glb, result.model_glb, pictures)
         if req.style in ("lowpoly", "voxel", "sculpture"):
             await on_progress(96, "Aplicando estilo")
             result.model_glb = await asyncio.to_thread(geometry.apply_style, result.model_glb, req.style)

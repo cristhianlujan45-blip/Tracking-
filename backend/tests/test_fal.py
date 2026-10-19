@@ -104,6 +104,13 @@ def test_hunyuan_multiview_maps_extra_views():
                                                   engine="hunyuan3d_v3"), _noop))
     payload = fake.calls[0][1]
     assert {"back_image_url", "left_image_url", "right_image_url"} <= payload.keys()
+    # app slots: front, side, back, right
+    views = [InputImage(bytes([i]) + PNG, "image/png") for i in range(3)]
+    fake = FakeFal()
+    run(provider(fake).generate(GenerationRequest("multi_image", None, "standard", images=views,
+                                                  engine="hunyuan3d_v3"), _noop))
+    payload = fake.calls[0][1]
+    assert set(payload) >= {"left_image_url", "back_image_url"} and "right_image_url" not in payload
 
 
 def test_retexture_uses_meshy7_at_8k():

@@ -29,6 +29,8 @@ def _b64(data: bytes) -> str:
 
 class LocalProvider:
     name = "local"
+    # Hunyuan3D-2mini without its paint model (8 GB GPUs) returns bare shapes: colour them from the inputs
+    paints_from_views = True
 
     def __init__(
         self,

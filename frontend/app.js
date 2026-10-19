@@ -60,7 +60,8 @@ const FORMAT_INFO = {
 };
 const CLIENT_FORMATS = ["usdz"];
 const COLOR_FORMATS = ["3mf_color", "stl_colors"];
-const SLOT_LABELS = ["Frente", "Lateral", "Espalda", "Otra vista"];
+const SLOT_LABELS = ["Frente", "Lateral", "Espalda", "Lateral derecho"];
+const SLOT_ROLE = { front: 0, left: 1, back: 2, right: 3 };
 // export destinations: pick the best format available for each tool (FBX/.blend need Blender)
 const TARGETS = [
   { id: "blender", label: "Blender", pick: (f) => (f.includes("blend") ? "blend" : "glb"),
@@ -158,6 +159,37 @@ function setupDropzone(zone, { accept, onFile }) {
   });
 }
 
+// character sheet → cut-out views in the multi-view slots
+async function splitSheet(file) {
+  const hint = $("#sheetHint");
+  $("#sheetBtn").classList.add("busy");
+  hint.textContent = t("Buscando las vistas…");
+  try {
+    const body = new FormData();
+    body.append("image", file);
+    const { views } = await api("/api/sheet/split", { method: "POST", body });
+    const zones = $$("#slots .dropzone");
+    const used = [];
+    for (const view of views) {
+      const slot = SLOT_ROLE[view.role];
+      if (slot === undefined) continue;
+      const blob = await (await fetch(view.url)).blob();
+      const f = new File([blob], `${view.role}.png`, { type: "image/png" });
+      state.multiFiles[slot] = f;
+      previewInto(zones[slot], f);
+      used.push(t(SLOT_LABELS[slot]).toLowerCase());
+    }
+    const extra = views.length - used.length;
+    hint.textContent = t("Vistas detectadas: {v}", { v: used.join(", ") }) +
+      (extra > 0 ? t(" (+{n} sin usar, p. ej. 3/4)", { n: extra }) : "");
+  } catch (err) {
+    hint.textContent = err.message;
+  } finally {
+    $("#sheetBtn").classList.remove("busy");
+    $("#sheetFile").value = "";
+  }
+}
+
 function previewInto(zone, file) {
   const img = zone.querySelector("img");
   if (img) {
@@ -228,6 +260,7 @@ function buildForm() {
     }),
   );
 
+  $("#sheetFile").addEventListener("change", (e) => e.target.files[0] && splitSheet(e.target.files[0]));
   SLOT_LABELS.forEach((label, i) => {
     const zone = document.createElement("label");
     zone.className = "dropzone";

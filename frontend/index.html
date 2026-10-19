@@ -79,6 +79,11 @@
         </section>
 
         <section class="mode" data-for="multi" hidden>
+          <label class="secondary sheet-btn" id="sheetBtn">
+            <input type="file" id="sheetFile" accept="image/png,image/jpeg,image/webp" hidden />
+            ▦ Hoja de personaje: separar vistas automáticamente
+          </label>
+          <p class="muted small" id="sheetHint">Sube una hoja con el personaje de frente, de lado y de espaldas: se recortan solas.</p>
           <label>De 2 a 4 vistas del mismo objeto</label>
           <div class="slots" id="slots"></div>
           <p class="muted small">Frente, lateral, espalda… Más vistas = geometría más fiel por detrás.</p>
@@ -498,7 +503,7 @@
         <input id="workerUrl" type="text" placeholder="http://127.0.0.1:8001" />
         <label for="workerToken">Token (opcional)</label>
         <input id="workerToken" type="password" placeholder="Sólo si lo configuraste" />
-        <p class="muted small">Instálalo con scripts/windows/instalar.ps1 -Worker y déjalo abierto.</p>
+        <p class="muted small">Instálalo con scripts\windows\instalar.bat y ábrelo con iniciar.bat -SoloWorker.</p>
       </div>
       <label for="blenderPath">Blender (para FBX y .blend)</label>
       <input id="blenderPath" type="text" placeholder="Detección automática" />

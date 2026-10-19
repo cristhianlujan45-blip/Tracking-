@@ -5,3 +5,7 @@ __pycache__/
 .env
 data/
 backend/data/
+dist/
+build/
+dist-installer/
+desktop/windows/MicrosoftEdgeWebview2Setup.exe

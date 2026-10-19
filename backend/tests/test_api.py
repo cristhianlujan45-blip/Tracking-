@@ -1,8 +1,10 @@
 import asyncio
+import base64
 import io
 import time
 import zipfile
 
+import numpy as np
 import pytest
 import trimesh
 from fastapi.testclient import TestClient
@@ -489,3 +491,28 @@ def test_paint_code_encoding():
     from app.geometry import _paint_code
 
     assert [_paint_code(i) for i in range(6)] == ["4", "8", "0C", "1C", "2C", "3C"]
+
+
+def test_character_sheet_split(client):
+    from PIL import Image, ImageDraw
+
+    sheet = Image.new("RGB", (900, 420), (27, 28, 30))
+    d = ImageDraw.Draw(sheet)
+    # front (wide), side (narrow), back (wide): blue figures with a dark shaded belly
+    for x0, w in ((40, 200), (330, 110), (560, 200)):
+        d.rounded_rectangle([x0, 40, x0 + w, 380], radius=40, fill=(70, 120, 140))
+        d.ellipse([x0 + w // 4, 200, x0 + 3 * w // 4, 300], fill=(45, 60, 70))
+    d.rectangle([20, 395, 120, 405], fill=(200, 200, 200))  # a caption: too small to be a view
+    buf = io.BytesIO()
+    sheet.save(buf, format="PNG")
+    resp = client.post("/api/sheet/split", files={"image": ("sheet.png", buf.getvalue(), "image/png")})
+    assert resp.status_code == 200, resp.text
+    views = resp.json()["views"]
+    assert [v["role"] for v in views] == ["front", "left", "back"]
+    img = Image.open(io.BytesIO(base64.b64decode(views[0]["url"].split(",", 1)[1])))
+    assert img.mode == "RGBA"
+    alpha = np.asarray(img.getchannel("A"))
+    assert alpha[0, 0] == 0 and alpha[alpha.shape[0] // 2, alpha.shape[1] // 2] == 255  # cut out, belly kept
+    blank = io.BytesIO()
+    Image.new("RGB", (200, 200), (27, 28, 30)).save(blank, format="PNG")
+    assert client.post("/api/sheet/split", files={"image": ("b.png", blank.getvalue(), "image/png")}).status_code == 422

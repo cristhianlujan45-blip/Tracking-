@@ -118,3 +118,18 @@ def test_enhance_uses_worker_upscaler(client):
     job = wait_done(client, client.post(f"/api/jobs/{scene['id']}/enhance", json={"target": "2k"}).json()["id"])
     assert job["status"] == "succeeded", job["error"]
     assert job["params"]["method"] == "IA local (Real-ESRGAN)" and job["params"]["sizes"] == [[256, 192]]
+
+
+def test_bare_shapes_are_painted_from_the_input_image(client):
+    import io
+
+    import trimesh
+
+    job = client.post("/api/jobs/image", files={"images": ("r.png", PNG, "image/png")}, data={"quality": "draft"}).json()[0]
+    job = wait_done(client, job["id"])
+    assert job["status"] == "succeeded", job
+    scene = trimesh.load(io.BytesIO(client.get(job["model_url"]).content), file_type="glb")
+    mesh = next(iter(scene.geometry.values()))
+    colors = mesh.visual.vertex_colors[:, :3].astype(int)
+    front = mesh.vertices[:, 2] > mesh.vertices[:, 2].mean()
+    assert colors[front].mean(0)[0] > 150 and colors[front].mean(0)[1] < 90  # the red of the picture
