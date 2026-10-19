@@ -26,10 +26,12 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from . import blender, creations, geometry, pipelines, rigging, sheet, textures
+from . import agent as ai_agent
+from . import blender, creations, geometry, pipelines, printing, rigging, sheet, textures
 from .config import Settings, get_settings, save_user_settings, user_settings_path, with_user_settings
 from .db import JobStore
 from .jobs import JobRunner
+from .local_ai import LocalAI, LocalAIError
 from .providers import GenerationError, GenerationRequest, GenerationResult, InputImage, Provider, build_provider
 from .providers.fal import ENGINES as FAL_ENGINES
 from .styles import POSES, STYLES
@@ -111,8 +113,21 @@ class RemeshIn(BaseModel):
 
 
 class SplitIn(BaseModel):
-    mode: Literal["height", "components"] = "height"
+    mode: Literal["height", "components", "bed"] = "height"
     parts: int = Field(2, ge=2, le=8)
+    # mode "bed": cut so every piece fits this printer at the final size
+    bed: str = Field("bambu_a1", max_length=40)
+    size_mm: float = Field(200, gt=0, le=10_000)
+    fit: Literal["height", "width", "depth", "max"] = "height"
+
+
+class SlicerIn(BaseModel):
+    slicer: str | None = Field(None, max_length=40)  # None: the program associated with .3mf
+    format: Literal["3mf", "3mf_color"] = "3mf"
+    size_mm: float | None = Field(None, gt=0, le=10_000)
+    fit: Literal["height", "width", "depth", "max"] = "height"
+    colors: int = Field(4, ge=1, le=16)
+    bed: str = Field("bambu_a1", max_length=40)
 
 
 class RetextureIn(BaseModel):
@@ -152,6 +167,13 @@ class SettingsIn(BaseModel):
     local_worker_url: str | None = Field(None, max_length=300)
     local_worker_token: str | None = Field(None, max_length=200)
     blender_path: str | None = Field(None, max_length=500)
+    anthropic_key: str | None = Field(None, max_length=300)
+
+
+class AgentIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    conversation_id: str | None = Field(None, max_length=64)
+    lang: Literal["es", "en"] = "es"
 
 
 class RigIn(BaseModel):
@@ -241,20 +263,44 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         app.state.store = store
         app.state.settings = settings
         app.state.provider_error = None
+        app.state.local_ai = local_ai = LocalAI(settings.data_dir, RESOURCES)
         try:
-            app.state.provider = provider or build_provider(settings)
+            app.state.provider = provider or make_provider(settings)
         except (GenerationError, ValueError) as exc:  # e.g. cloud mode without a key: start in demo mode
             app.state.provider_error = str(exc)
             app.state.provider = build_provider(replace(settings, provider="mock"))
-        if hasattr(app.state.provider, "start"):
+        if getattr(app.state.provider, "launcher", None) is not None:
+            warm_up(app.state.provider)
+        elif hasattr(app.state.provider, "start"):
             await app.state.provider.start()
         app.state.runner = JobRunner(store, settings.files_dir, settings.max_concurrent_jobs)
         app.state.blender = blender.find_blender(settings.blender_path)
         yield
         await app.state.runner.shutdown()
+        local_ai.stop()
         store.close()
 
     app = FastAPI(title="Forja3D", version="0.2.0", lifespan=lifespan)
+
+    def make_provider(s: Settings) -> Provider:
+        """The built-in local AI launcher is used for a worker on this machine, not for a remote one."""
+        on_this_pc = s.local_worker_url.rstrip("/") in ("http://127.0.0.1:8001", "http://localhost:8001")
+        return build_provider(s, app.state.local_ai if on_this_pc else None)
+
+    def warm_up(local_provider) -> None:
+        """Start the local AI in the background (or install it, on the desktop app's first run with an NVIDIA GPU)."""
+        local_ai = app.state.local_ai
+
+        async def run():
+            try:
+                if local_ai.installed:
+                    await local_provider._ready()
+                elif os.getenv("FORJA_AUTO_INSTALL") and local_ai.status()["gpu"]:
+                    local_ai.start_install()
+            except (GenerationError, LocalAIError) as exc:
+                logging.warning("La IA local no arrancó: %s", exc)
+
+        app.state.warm_up = asyncio.create_task(run())
 
     # ------------------------------------------------------------ helpers
 
@@ -372,6 +418,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             "poses": [{"id": k, "label": v[0]} for k, v in POSES.items()],
             "export_formats": list(geometry.EXPORT_FORMATS) + (list(blender.FORMATS) if app.state.blender else []),
             "blender": bool(app.state.blender),
+            "agent": bool(request.app.state.settings.anthropic_key),
+            "local_ai": {k: v for k, v in request.app.state.local_ai.status().items() if k != "log"},
             "upload_types": sorted(geometry.UPLOAD_TYPES),
             "max_upload_mb": settings.max_upload_bytes // (1024 * 1024),
         }
@@ -403,6 +451,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             "local_worker_url": s.local_worker_url,
             "blender_path": s.blender_path,
             "blender_found": request.app.state.blender,
+            "anthropic_key_set": bool(s.anthropic_key),
+            "anthropic_key_hint": f"…{s.anthropic_key[-4:]}" if len(s.anthropic_key) >= 8 else "",
             "first_run": not user_settings_path(s).is_file(),
             "locked": settings_locked(),
         }
@@ -416,19 +466,39 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             raise HTTPException(403, "Los ajustes están bloqueados en este servidor")
         state = request.app.state
         values = {k: v for k, v in body.model_dump().items() if v is not None}
-        if values.get("fal_key") == "":
-            values.pop("fal_key")  # empty field = keep the saved key
+        for key in ("fal_key", "anthropic_key"):
+            if values.get(key) == "":
+                values.pop(key)  # empty field = keep the saved key
         candidate = replace(state.settings, **values)
         try:
-            new_provider = build_provider(candidate)
+            new_provider = make_provider(candidate)
         except (GenerationError, ValueError) as exc:
             raise HTTPException(400, str(exc)) from exc
-        if hasattr(new_provider, "start"):
+        if getattr(new_provider, "launcher", None) is not None:
+            warm_up(new_provider)
+        elif hasattr(new_provider, "start"):
             await new_provider.start()
         state.settings = save_user_settings(state.settings, values)
         state.provider, state.provider_error = new_provider, None  # running jobs keep their own provider
         state.blender = blender.find_blender(state.settings.blender_path)
         return await get_app_settings(request)
+
+    # ------------------------------------------------------------ free local AI (installed by the app)
+
+    @app.get("/api/local-ai")
+    async def local_ai_status(request: Request):
+        status = request.app.state.local_ai.status()
+        return {**status, "worker_up": bool(await request.app.state.local_ai.healthy(1))}
+
+    @app.post("/api/local-ai/install")
+    async def local_ai_install(request: Request):
+        if settings_locked():
+            raise HTTPException(403, "Los ajustes están bloqueados en este servidor")
+        try:
+            request.app.state.local_ai.start_install()
+        except LocalAIError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return request.app.state.local_ai.status()
 
     # ------------------------------------------------------------ concepts (text -> image)
 
@@ -648,17 +718,54 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         request.app.state.store.update(job_id, thumbnail=f"thumb.{ext}")
 
     @app.get("/api/jobs/{job_id}/analysis")
-    async def analysis(request: Request, job_id: str):
+    async def analysis(request: Request, job_id: str, size_mm: float | None = Query(None, gt=0, le=10_000),
+                       fit: Literal["height", "width", "depth", "max"] = "height", bed: str = "bambu_a1"):
         _, path = ready_model(request, job_id)
         cache = path.with_name("analysis.json")
         if cache.is_file() and cache.stat().st_mtime >= path.stat().st_mtime:
-            return json.loads(cache.read_text())
+            result = json.loads(cache.read_text())
+        else:
+            try:
+                result = (await asyncio.to_thread(geometry.analyze, path.read_bytes())).as_dict()
+            except geometry.GeometryError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            cache.write_text(json.dumps(result))
+        # printability at the final size (cheap enough to compute every time)
+        report = await asyncio.to_thread(printing.printability, path.read_bytes(), size_mm, fit)
+        printer = printing.BEDS.get(bed, printing.BEDS["bambu_a1"])
+        return {**result, "print": {**report, "bed": bed, "bed_label": printer[0], "bed_mm": printer[1],
+                                    "fits_bed": printing.fits(report["size_mm"], printer[1])}}
+
+    @app.get("/api/printers")
+    async def printers():
+        return {"beds": [{"id": k, "label": v[0], "size_mm": v[1]} for k, v in printing.BEDS.items()],
+                "slicers": [{"id": s["id"], "label": s["label"]} for s in printing.find_slicers()]}
+
+    @app.post("/api/jobs/{job_id}/slicer")
+    async def send_to_slicer(request: Request, job_id: str, body: SlicerIn):
+        """Desktop only: export for printing and open it in an installed slicer."""
+        host = request.client.host if request.client else ""
+        if host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+            raise HTTPException(403, "Abrir el laminador solo funciona en la app de escritorio")
+        job, path = ready_model(request, job_id)
+        glb = path.read_bytes()
+        bed = printing.BEDS.get(body.bed, printing.BEDS["bambu_a1"])[1]
         try:
-            result = (await asyncio.to_thread(geometry.analyze, path.read_bytes())).as_dict()
+            if body.format == "3mf_color":
+                data, _, _ = await asyncio.to_thread(geometry.export, glb, "3mf_color", body.size_mm, body.fit, body.colors)
+            else:
+                data = await asyncio.to_thread(printing.plate_3mf, glb, body.size_mm, body.fit, bed)
         except geometry.GeometryError as exc:
             raise HTTPException(422, str(exc)) from exc
-        cache.write_text(json.dumps(result))
-        return result
+        out_dir = settings.data_dir / "exports"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        target = out_dir / f"{slugify(job_title(job))}.3mf"
+        target.write_bytes(data)
+        try:
+            opened = await asyncio.to_thread(printing.open_in_slicer, target, body.slicer)
+        except OSError as exc:
+            raise HTTPException(422, f"No se pudo abrir el laminador: {exc}") from exc
+        return {"file": str(target), "opened_with": opened}
 
     @app.get("/api/jobs/{job_id}/export")
     async def export(
@@ -669,6 +776,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         fit: Literal["height", "width", "depth", "max"] = "height",
         colors: int = Query(4, ge=1, le=16, description="filamentos para 3mf_color / stl_colors"),
         height_mm: float | None = Query(None, gt=0, le=10_000, description="alias de size_mm con fit=height"),
+        bed: str = Query("bambu_a1", max_length=40, description="impresora: reparte las piezas en su cama (3MF)"),
     ):
         job, path = ready_model(request, job_id)
         if size_mm is None and height_mm is not None:
@@ -692,6 +800,14 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             ext, media_type = blender.FORMATS[format]
             return Response(data, media_type=media_type,
                             headers={"Content-Disposition": f'attachment; filename="{filename}.{ext}"'})
+        if format == "3mf" and job["mode"] == "split":  # each piece its own object, laid out on the bed
+            plate = printing.BEDS.get(bed, printing.BEDS["bambu_a1"])[1]
+            try:
+                data = await asyncio.to_thread(printing.plate_3mf, path.read_bytes(), size_mm, fit, plate)
+            except geometry.GeometryError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            return Response(data, media_type="model/3mf",
+                            headers={"Content-Disposition": f'attachment; filename="{filename}.3mf"'})
         if format == "glb" and job["mode"] == "rig":  # keep the skeleton and animations untouched
             return Response(path.read_bytes(), media_type="model/gltf-binary",
                             headers={"Content-Disposition": f'attachment; filename="{filename}.glb"'})
@@ -752,7 +868,17 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
     @app.post("/api/jobs/{job_id}/split", response_model=JobOut, status_code=201)
     async def split(request: Request, job_id: str, body: SplitIn):
         parent, path = ready_model(request, job_id)
-        work = pipelines.local(path, "Dividiendo en piezas", geometry.split_parts, mode=body.mode, parts=body.parts)
+        if body.mode == "bed":
+            bed = printing.BEDS.get(body.bed)
+            if not bed:
+                raise HTTPException(422, f"Impresora desconocida: {body.bed}")
+
+            async def work(on_progress):
+                await on_progress(15, "Dividiendo para la cama de impresión")
+                result = await asyncio.to_thread(printing.split_for_bed, path.read_bytes(), bed[1], body.size_mm, body.fit)
+                return GenerationResult(model_glb=result.glb)
+        else:
+            work = pipelines.local(path, "Dividiendo en piezas", geometry.split_parts, mode=body.mode, parts=body.parts)
         return create_derived_job(request, parent, "split", work, f"{job_title(parent)} · piezas", body.model_dump())
 
     @app.post("/api/jobs/{job_id}/retexture", response_model=JobOut, status_code=201)
@@ -782,7 +908,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                           "default": rigging.quadruped.DEFAULT_QUAD_PRESETS,
                           "markers": [{"id": m, "label": rigging.quadruped.MARKER_LABELS[m]}
                                       for m in rigging.quadruped.MARKERS]},
-            "library": [{"id": c["id"], "label": c["label"], "category": c["category"], "seconds": c["seconds"]}
+            "library": [{"id": c["id"], "label": c["label"], "label_en": c.get("label_en", c["label"]),
+                         "category": c["category"], "seconds": c["seconds"]}
                         for c in rigging.mocap.catalogue().values()],
             "markers": [{"id": m, "label": rigging.MARKER_LABELS[m]} for m in rigging.MARKERS],
         }
@@ -961,6 +1088,95 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                                  engine=p.get("engine"))
         return create_generation_jobs(request, parent["mode"], parent["prompt"], opts, load_inputs(parent),
                                       {"variation_of": parent["id"]}, parent["id"])
+
+    # ------------------------------------------------------------ AI agent (chat)
+
+    def agent_tools(request: Request) -> dict[str, ai_agent.ToolFn]:
+        """The agent's tools call the same code as the buttons in the app."""
+
+        def job_card(out: JobOut) -> dict:
+            return {"type": "job", "job": out.model_dump()}
+
+        async def make_concepts(args):
+            result = await create_concepts(request, ConceptsIn(prompt=args["prompt"], style=args["style"]))
+            ids = [c["id"] for c in result["concepts"]]
+            return {"concept_ids": ids}, [{"type": "concepts", "prompt": args["prompt"], "concepts": result["concepts"]}]
+
+        async def generate_3d(args):
+            if args.get("concept_id"):
+                jobs = await create_image_job(request, images=None, concept_id=args["concept_id"], prompt=args["prompt"],
+                                              quality=args["quality"], style=args["style"], seed=None, variants=1,
+                                              engine=None)
+            else:
+                require(request, "text", "Texto a 3D")
+                body = TextJobIn(prompt=args["prompt"], quality=args["quality"], style=args["style"],
+                                 pose="a-pose" if args.get("a_pose") else "none")
+                jobs = create_generation_jobs(request, "text", body.prompt.strip(), body, [])
+            return [{"job_id": j.id, "status": j.status} for j in jobs], [job_card(j) for j in jobs]
+
+        async def find_animations(args):
+            words = [w for w in ai_agent.fold(args["query"]).split() if len(w) > 1]
+            if args["body"] == "quadruped":
+                pool = [(k, p.label, " ".join(p.tags), p.duration)
+                        for k, p in rigging.quadruped.QUAD_PRESETS.items()]
+            else:
+                pool = [(k, p.label, " ".join(p.tags), p.duration) for k, p in rigging.PRESETS.items()]
+                pool += [(c["id"], c["label"], f"{c.get('label_en', '')} {c['category']}", c["seconds"])
+                         for c in rigging.mocap.catalogue().values()]
+            hits = []
+            for clip_id, label, extra, seconds in pool:
+                text = ai_agent.fold(f"{clip_id} {label} {extra}")
+                score = sum(w in text for w in words)
+                if score or not words:
+                    hits.append((-score, clip_id, label, seconds))
+            hits.sort()
+            return [{"id": h[1], "label": h[2], "seconds": h[3]} for h in hits[:25]], []
+
+        async def rig_character(args):
+            body = CharacterIn(template=args["body"], animations=args["animations"] or list(rigging.DEFAULT_PRESETS))
+            jobs = await full_character(request, args["job_id"], body)
+            return [{"job_id": j.id, "title": j.title, "status": j.status} for j in jobs], [job_card(j) for j in jobs]
+
+        async def check_print(args):
+            _, path = ready_model(request, args["job_id"])
+            report = await asyncio.to_thread(printing.printability, path.read_bytes(), args["size_mm"], "height")
+            label, bed = printing.BEDS.get(args["printer"], printing.BEDS["bambu_a1"])
+            return {**report, "printer": label, "bed_mm": bed, "fits_bed": printing.fits(report["size_mm"], bed),
+                    "printers": list(printing.BEDS)}, []
+
+        async def list_models(args):
+            jobs = request.app.state.store.list(min(max(int(args["limit"]), 1), 20))
+            return [{"job_id": j["id"], "title": job_title(j), "type": j["mode"], "status": j["status"]}
+                    for j in jobs], []
+
+        async def job_status(args):
+            out = to_out(get_job_or_404(request, args["job_id"]))
+            return {"job_id": out.id, "title": out.title, "type": out.mode, "status": out.status,
+                    "progress": out.progress, "stage": out.stage, "error": out.error}, [job_card(out)]
+
+        return {"make_concepts": make_concepts, "generate_3d": generate_3d, "find_animations": find_animations,
+                "rig_character": rig_character, "check_print": check_print, "list_models": list_models,
+                "job_status": job_status}
+
+    @app.post("/api/agent/chat")
+    async def agent_chat(request: Request, body: AgentIn):
+        state = request.app.state
+        key = state.settings.anthropic_key
+        agent = getattr(state, "agent", None)
+        if not key and agent is None:  # free built-in assistant: no key needed
+            state.offline_agent = getattr(state, "offline_agent", None) or ai_agent.OfflineAgent()
+            agent = state.offline_agent
+        elif agent is None or getattr(state, "agent_key", None) != key:
+            try:
+                agent = ai_agent.Agent(key, state.settings.anthropic_model)
+            except ai_agent.AgentError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            state.agent, state.agent_key = agent, key
+        try:
+            turn = await agent.chat(body.message.strip(), body.conversation_id, agent_tools(request), body.lang)
+        except ai_agent.AgentError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return {"reply": turn.reply, "conversation_id": turn.conversation_id, "artifacts": turn.artifacts}
 
     if FRONTEND_DIR.is_dir():
         app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

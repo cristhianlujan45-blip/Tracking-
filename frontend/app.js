@@ -1,6 +1,8 @@
 import { applyI18n, lang, t, title, tr } from "./i18n.js";
 import { clipLabel, initRig, renderRig } from "./rig.js";
-import { initSettings } from "./settings.js";
+import { initAgent } from "./agent.js";
+import { initLocalAI } from "./localai.js";
+import { initSettings, openSettings } from "./settings.js";
 import { Viewer } from "./viewer.js";
 
 applyI18n(); // translate the static page before anything else renders
@@ -251,6 +253,7 @@ function buildForm() {
   for (const f of [...state.config.export_formats, ...CLIENT_FORMATS]) {
     $("#exportFormat").append(new Option(t(FORMAT_INFO[f]?.[0] || f), f));
   }
+  setupPrinting();
   $("#targets").replaceChildren(
     ...TARGETS.map((target) => {
       const b = Object.assign(document.createElement("button"), { type: "button", textContent: t(target.label) });
@@ -816,24 +819,36 @@ function renderTools(job) {
 
 async function loadAnalysis(job) {
   const el = $("#printReport");
-  if (!state.analysis[job.id]) {
+  const key = `${job.id}|${$("#printSize").value}|${$("#printer").value}`;
+  if (!state.analysis[key]) {
     el.textContent = t("Analizando…");
     try {
-      state.analysis[job.id] = await api(`/api/jobs/${job.id}/analysis`);
+      const params = new URLSearchParams({ size_mm: $("#printSize").value || 100, fit: "height", bed: $("#printer").value || "bambu_a1" });
+      state.analysis[key] = await api(`/api/jobs/${job.id}/analysis?${params}`);
     } catch (err) {
       el.textContent = err.message;
       return;
     }
   }
   if (state.selected !== job.id) return;
-  const a = state.analysis[job.id];
-  const [x, y, z] = a.extents.map((v) => v.toFixed(2));
+  const a = state.analysis[key];
+  const p = a.print;
+  const yes = (v) => (v ? `<b class="ok">${t("Sí")}</b>` : `<b class="bad">${t("No")}</b>`);
+  const num = (v, good) => `<b class="${good ? "ok" : "bad"}">${v}</b>`;
   el.innerHTML = `
-    <div class="${a.printable ? "ok" : "bad"}">${t(a.printable ? "✔ Listo para imprimir" : "⚠ Necesita reparación")}</div>
-    <div class="muted small">${t("{f} triángulos · {b} pieza(s) · {x}×{y}×{z} u", { f: a.faces.toLocaleString(), b: a.bodies, x, y, z })}${
-      a.volume ? t(" · vol. {v} u³", { v: a.volume.toFixed(3) }) : ""
-    }</div>
+    <div class="${a.printable ? "ok" : "bad"} report-title">${t(a.printable ? "✔ Listo para imprimir" : "⚠ Necesita reparación")}</div>
+    <dl class="print-grid">
+      <dt>${t("Estanco")}</dt><dd>${yes(p.watertight)}</dd>
+      <dt>${t("Volumen")}</dt><dd>${p.volume_cm3 != null ? `${p.volume_cm3.toLocaleString(lang)} cm³` : "—"}</dd>
+      <dt>${t("Peso aprox. (PLA)")}</dt><dd>${p.weight_g != null ? `${p.weight_g.toLocaleString(lang)} g` : "—"}</dd>
+      <dt>${t("Huecos")}</dt><dd>${num(p.holes, !p.holes)}</dd>
+      <dt>${t("Bordes no manifold")}</dt><dd>${num(p.non_manifold_edges, !p.non_manifold_edges)}</dd>
+      <dt>${t("Tamaño")}</dt><dd>${p.size_mm.join(" × ")} mm</dd>
+      <dt>${t("Cabe en la cama")}</dt><dd>${yes(p.fits_bed)} <small class="muted">(${p.bed_mm.join("×")})</small></dd>
+    </dl>
+    <div class="muted small">${t("{f} triángulos · {b} pieza(s)", { f: a.faces.toLocaleString(lang), b: a.bodies })}</div>
     ${a.issues.length ? `<ul>${a.issues.map((i) => `<li>${escapeHtml(tr(i))}</li>`).join("")}</ul>` : ""}`;
+  $("#btnFitBed").classList.toggle("attention", !p.fits_bed);
 }
 $("#printReport").closest("details").addEventListener("toggle", (e) => {
   const job = selectedJob();
@@ -950,6 +965,54 @@ function updateEnhance() {
 $("#btnEnhance").addEventListener("click", (e) =>
   derive(e.currentTarget, "enhance", { target: $("#enhanceTarget .on").dataset.v, pbr: $("#enhancePbr").checked }),
 );
+async function setupPrinting() {
+  let info = { beds: [], slicers: [] };
+  try {
+    info = await api("/api/printers");
+  } catch {}
+  $("#printer").replaceChildren(...info.beds.map((b) => new Option(`${b.label} · ${b.size_mm.join("×")}`, b.id)));
+  try {
+    $("#printer").value = localStorage.getItem("forja.printer") || "bambu_a1";
+  } catch {}
+  $("#slicer").replaceChildren(
+    ...info.slicers.map((s) => new Option(s.label, s.id)),
+    new Option(t("Programa predeterminado para .3mf"), ""),
+  );
+  // launching programs only makes sense when the app runs on this computer (desktop app)
+  $("#slicerBox").hidden = !["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+}
+const reanalyse = () => {
+  const job = selectedJob();
+  if (job?.status === "succeeded" && $("#printSection").open) loadAnalysis(job);
+};
+$("#printer").addEventListener("change", () => {
+  try {
+    localStorage.setItem("forja.printer", $("#printer").value);
+  } catch {}
+  reanalyse();
+});
+$("#printSize").addEventListener("change", reanalyse);
+$("#btnFitBed").addEventListener("click", (e) =>
+  derive(e.currentTarget, "split", { mode: "bed", bed: $("#printer").value, size_mm: Number($("#printSize").value) || 100, fit: "height" }),
+);
+$("#btnSlicer").addEventListener("click", async (e) => {
+  const job = selectedJob();
+  if (!job) return;
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/jobs/${job.id}/slicer`, {
+      method: "POST",
+      json: { slicer: $("#slicer").value || null, format: $("#slicerColor").checked ? "3mf_color" : "3mf",
+              size_mm: Number($("#printSize").value) || 100, fit: "height", bed: $("#printer").value },
+    });
+    toast(t("Abierto en {s}", { s: res.opened_with === "default" ? t("tu laminador") : res.opened_with }));
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
 $("#btnSplit").addEventListener("click", (e) =>
   derive(e.currentTarget, "split", { mode: $("#splitMode").value, parts: Number($("#splitParts").value) || 2 }),
 );
@@ -1022,12 +1085,18 @@ function sakura(count = 14) {
     state.config = await api("/api/config");
     const gpu = state.config.provider_info?.gpu;
     const engine = (state.config.engines || []).find((e) => e.id === state.config.default_engine);
+    const ai = state.config.local_ai || {};
+    const localText = gpu ? `${t("IA local gratis")} · ${gpu}`
+      : ai.installing ? t("IA local · instalando {p}%", { p: ai.progress })
+      : ai.installed ? t("IA local gratis · arranca al generar")
+      : t("IA local · instalar (gratis)");
     el.textContent =
       state.config.provider === "mock" ? t("Modo demo (sin IA) · configurar")
-      : state.config.provider === "local" ? (gpu ? `${t("IA local")} · ${gpu}` : t("IA local · servidor sin conexión"))
+      : state.config.provider === "local" ? localText
       : `${t("IA nube")} · ${tr(engine?.label) || state.config.provider}`;
     el.classList.toggle("real", state.config.provider !== "mock");
-    el.classList.toggle("bad", !!state.config.provider_error || (state.config.provider === "local" && !gpu));
+    el.classList.toggle("bad", !!state.config.provider_error
+      || (state.config.provider === "local" && !gpu && !ai.installed && !ai.installing));
     if (state.config.provider_error) el.title = `${t("No se pudo iniciar el motor elegido")}: ${tr(state.config.provider_error)}`;
   } catch {
     el.textContent = t("sin conexión");
@@ -1039,5 +1108,13 @@ function sakura(count = 14) {
   await refreshJobs();
   const first = state.jobs.find((j) => j.status === "succeeded");
   if (first && !state.selected) selectJob(first.id);
+  initLocalAI({ api, toast, openSettings: () => openSettings(), config: () => state.config });
   initSettings({ api, toast });
+  initAgent({
+    api, onCreated, openSettings: () => openSettings(), config: () => state.config,
+    selectJob: async (id) => {
+      if (!state.jobs.some((j) => j.id === id)) await refreshJobs();
+      selectJob(id);
+    },
+  });
 })();

@@ -516,3 +516,40 @@ def test_character_sheet_split(client):
     blank = io.BytesIO()
     Image.new("RGB", (200, 200), (27, 28, 30)).save(blank, format="PNG")
     assert client.post("/api/sheet/split", files={"image": ("b.png", blank.getvalue(), "image/png")}).status_code == 422
+
+
+def test_print_report_bed_split_and_plate(client):
+    import xml.etree.ElementTree as ET
+
+    job = make_job(client, "un muñeco de nieve")
+    report = client.get(f"/api/jobs/{job['id']}/analysis", params={"size_mm": 400, "bed": "bambu_a1mini"}).json()["print"]
+    assert report["size_mm"][2] == 400 and report["fits_bed"] is False and report["bed_mm"] == [180, 180, 180]
+    assert {"holes", "non_manifold_edges", "watertight", "volume_cm3", "weight_g"} <= set(report)
+    beds = client.get("/api/printers").json()["beds"]
+    assert any(b["id"] == "prusa_mk4" for b in beds)
+
+    split = wait_done(client, client.post(f"/api/jobs/{job['id']}/split",
+                                          json={"mode": "bed", "bed": "bambu_a1mini", "size_mm": 400}).json()["id"])
+    assert split["status"] == "succeeded", split["error"]
+    data = client.get(f"/api/jobs/{split['id']}/export", params={"format": "3mf", "size_mm": 400, "bed": "bambu_a1mini"}).content
+    model = ET.fromstring(zipfile.ZipFile(io.BytesIO(data)).read("3D/3dmodel.model"))
+    ns = {"m": "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"}
+    objects = model.findall(".//m:object", ns)
+    assert len(objects) >= 3  # 400 mm tall on a 180 mm printer needs several pieces
+    for obj in objects:  # every piece fits the printer
+        v = np.array([[float(x.get(a)) for a in "xyz"] for x in obj.findall(".//m:vertex", ns)])
+        assert np.ptp(v[:, 2]) <= 180 and sorted(np.ptp(v[:, :2], axis=0))[1] <= 180
+    pieces = trimesh.load(io.BytesIO(client.get(split["model_url"]).content), file_type="glb")
+    assert all(g.is_watertight for g in pieces.geometry.values())
+
+
+def test_send_to_slicer(client, monkeypatch):
+    from app import printing
+
+    opened = {}
+    monkeypatch.setattr(printing, "open_in_slicer", lambda path, slicer: opened.update(path=path, slicer=slicer) or "Bambu Studio")
+    job = make_job(client, "un cofre")
+    resp = client.post(f"/api/jobs/{job['id']}/slicer", json={"slicer": "bambu", "size_mm": 60})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["opened_with"] == "Bambu Studio" and opened["slicer"] == "bambu"
+    assert opened["path"].suffix == ".3mf" and zipfile.is_zipfile(opened["path"])

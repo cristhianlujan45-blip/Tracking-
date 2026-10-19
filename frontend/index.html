@@ -45,6 +45,10 @@
     <button class="gear" id="btnSettings" type="button" title="Ajustes">⚙ <span>Ajustes</span></button>
   </header>
 
+  <div class="ai-banner" id="aiBanner" hidden>
+    <span class="ai-spin" aria-hidden="true"></span><span id="aiBannerText"></span><b id="aiBannerPct"></b>
+  </div>
+
   <main class="layout">
     <!-- ============ CREATE ============ -->
     <aside class="panel create">
@@ -165,8 +169,8 @@
               <label for="quality">Calidad</label>
               <select id="quality">
                 <option value="draft">Borrador · rápido</option>
-                <option value="standard" selected>Estándar · PBR</option>
-                <option value="high">Full HD · 4K</option>
+                <option value="standard">Estándar · PBR</option>
+                <option value="high" selected>Full HD · 4K</option>
               </select>
             </div>
             <div>
@@ -410,11 +414,22 @@
           <button class="secondary wide" id="btnRemesh">Aplicar</button>
         </details>
 
-        <details>
+        <details id="printSection">
           <summary><span class="tag">07</span>Impresión 3D</summary>
+          <div class="row">
+            <div>
+              <label for="printer">Impresora</label>
+              <select id="printer"></select>
+            </div>
+            <div>
+              <label for="printSize">Alto final (mm)</label>
+              <input id="printSize" type="number" min="5" max="2000" value="100" />
+            </div>
+          </div>
           <div id="printReport" class="report muted">Analizando…</div>
           <div class="btn-row">
             <button class="secondary" id="btnRepair">✚ Reparar</button>
+            <button class="secondary" id="btnFitBed" title="Corta el modelo en piezas cerradas que caben en la cama, listas para pegar">✂ Dividir para que quepa</button>
           </div>
           <div class="row">
             <select id="splitMode">
@@ -424,6 +439,18 @@
             <input id="splitParts" type="number" min="2" max="8" value="2" title="Número de cortes" />
           </div>
           <button class="secondary wide" id="btnSplit">✂ Dividir</button>
+          <div id="slicerBox">
+            <label for="slicer">Directo a tu laminador</label>
+            <div class="row">
+              <select id="slicer"></select>
+              <button class="primary" id="btnSlicer">▶ Abrir</button>
+            </div>
+            <label class="check"><input type="checkbox" id="slicerColor" /> Multicolor (AMS / MMU)</label>
+          </div>
+          <p class="muted small">Publica tu 3MF en
+            <a class="link" href="https://makerworld.com" target="_blank" rel="noopener">MakerWorld</a> ·
+            <a class="link" href="https://www.printables.com" target="_blank" rel="noopener">Printables</a> ·
+            <a class="link" href="https://www.thingiverse.com" target="_blank" rel="noopener">Thingiverse</a></p>
         </details>
 
         <details open id="exportSection">
@@ -487,8 +514,8 @@
       </div>
       <label>Motor de IA</label>
       <div class="prov-cards" id="provCards">
-        <button type="button" data-p="fal"><span class="p-ico">☁</span><b>Nube (fal.ai)</b><small>Máxima calidad: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy. Necesita clave.</small></button>
-        <button type="button" data-p="local"><span class="p-ico">▦</span><b>Mi GPU</b><small>Gratis y privado en tu NVIDIA RTX con el servidor IA local.</small></button>
+        <button type="button" data-p="local"><span class="p-ico">▦</span><b>Mi GPU · gratis</b><small>Recomendado. Ilimitado y privado en tu NVIDIA RTX: se instala y arranca sola, sin claves.</small></button>
+        <button type="button" data-p="fal"><span class="p-ico">☁</span><b>Nube (fal.ai)</b><small>Opcional y de pago por uso: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy. Necesita clave.</small></button>
         <button type="button" data-p="mock"><span class="p-ico">◇</span><b>Demo</b><small>Sin IA: formas de prueba para conocer la app.</small></button>
       </div>
       <div id="falGroup" hidden>
@@ -499,12 +526,24 @@
         <p class="muted small" id="falEngineHint"></p>
       </div>
       <div id="localGroup" hidden>
-        <label for="workerUrl">Dirección del servidor IA local</label>
-        <input id="workerUrl" type="text" placeholder="http://127.0.0.1:8001" />
-        <label for="workerToken">Token (opcional)</label>
-        <input id="workerToken" type="password" placeholder="Sólo si lo configuraste" />
-        <p class="muted small">Instálalo con scripts\windows\instalar.bat y ábrelo con iniciar.bat -SoloWorker.</p>
+        <div class="ai-box" id="aiBox">
+          <p class="ai-state" id="aiState">Comprobando la IA local…</p>
+          <div class="ai-bar" id="aiBar" hidden><span></span></div>
+          <p class="muted small ai-log" id="aiLog" hidden></p>
+          <button type="button" class="primary" id="btnInstallAI" hidden>Instalar IA gratis en mi GPU</button>
+          <p class="muted small">Una sola vez: descarga ≈20 GB (PyTorch, Hunyuan3D-2, SDXL-Turbo). Después arranca sola cada vez que generas: gratis, sin límites, sin claves.</p>
+        </div>
+        <details class="ai-advanced">
+          <summary>Avanzado: usar un servidor IA de otro equipo</summary>
+          <label for="workerUrl">Dirección del servidor IA local</label>
+          <input id="workerUrl" type="text" placeholder="http://127.0.0.1:8001" />
+          <label for="workerToken">Token (opcional)</label>
+          <input id="workerToken" type="password" placeholder="Sólo si lo configuraste" />
+        </details>
       </div>
+      <label for="anthropicKey">Agente IA: clave de Anthropic</label>
+      <input id="anthropicKey" type="password" placeholder="Pega tu clave (console.anthropic.com)" />
+      <p class="muted small">Opcional: el agente ya funciona gratis. Con una clave de Anthropic entiende cualquier petición y conversa como un experto.</p>
       <label for="blenderPath">Blender (para FBX y .blend)</label>
       <input id="blenderPath" type="text" placeholder="Detección automática" />
       <p class="muted small" id="blenderStatus"></p>
@@ -514,6 +553,31 @@
       </div>
     </form>
   </dialog>
+
+  <button class="agent-fab" id="agentBtn" type="button" title="Agente IA: crea y anima hablando">
+    <span class="fab-ico" aria-hidden="true">✦</span><span>Agente IA</span>
+  </button>
+  <aside class="agent" id="agentPanel" hidden aria-label="Agente IA">
+    <header>
+      <div><b>Agente IA</b><small>Ideas, modelos, animaciones e impresión, hablando</small></div>
+      <button type="button" class="ghost" id="agentNew" title="Nueva conversación">↺</button>
+      <button type="button" class="ghost" id="agentClose" title="Cerrar">✕</button>
+    </header>
+    <div class="agent-log" id="agentLog">
+      <div class="agent-hello">
+        <p>Hola, soy tu asistente 3D. Cuéntame qué quieres crear y lo hago contigo: conceptos, modelo 3D, rig con animaciones o revisión para imprimir.</p>
+        <div class="agent-chips" id="agentChips">
+          <button type="button">Un dragón bebé estilo cartoon para animar</button>
+          <button type="button">Una maceta con forma de gato para imprimir en mi Bambu A1</button>
+          <button type="button">Dame ideas para un personaje de videojuego</button>
+        </div>
+      </div>
+    </div>
+    <form class="agent-form" id="agentForm">
+      <textarea id="agentInput" rows="2" maxlength="4000" placeholder="Escribe tu idea o pregunta…"></textarea>
+      <button type="submit" class="primary" id="agentSend">Enviar</button>
+    </form>
+  </aside>
 
   <div class="toast" id="toast" hidden></div>
 

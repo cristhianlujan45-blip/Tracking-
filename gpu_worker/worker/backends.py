@@ -173,7 +173,7 @@ class HunyuanBackend:
         self.texture = texture
         self.multiview = multiview
         self.device = device
-        self._shape = self._mv = self._paint = self._t2i = self._rembg = None
+        self._shape = self._mv = self._paint = self._t2i = self._rembg = self._translator = None
         self._on_gpu: str | None = None
 
     # ------------------------------------------------------------ meta
@@ -226,6 +226,7 @@ class HunyuanBackend:
             self._shape = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
                 self.shape_model, subfolder=self.shape_subfolder, use_safetensors=True, device="cpu"
             )
+            _fast_decoding(self._shape)
         self._activate("shape")
         return self._shape
 
@@ -237,6 +238,7 @@ class HunyuanBackend:
             self._mv = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
                 "tencent/Hunyuan3D-2mv", subfolder="hunyuan3d-dit-v2-mv", use_safetensors=True, device="cpu"
             )
+            _fast_decoding(self._mv)
         self._activate("mv")
         return self._mv
 
@@ -266,6 +268,22 @@ class HunyuanBackend:
         return self._paint
 
     _none = None  # sentinel for _activate("none")
+
+    def to_english(self, text: str) -> str:
+        """The image models only understand English: translate Spanish prompts on the CPU (Opus-MT, ~300 MB)."""
+        if not looks_spanish(text):
+            return text
+        try:
+            if self._translator is None:
+                from transformers import pipeline
+
+                self._translator = pipeline("translation", model=TRANSLATOR, device=-1)
+            out = self._translator(text, max_length=256)[0]["translation_text"]
+            log.info("Prompt traducido: %r → %r", text, out)
+            return out
+        except Exception:  # noqa: BLE001 - an untranslated prompt still works, just worse
+            log.exception("No se pudo traducir el prompt")
+            return text
 
     def _remove_background(self, img: Image.Image) -> Image.Image:
         if self._rembg is None:
@@ -339,19 +357,13 @@ class HunyuanBackend:
         img = Image.fromarray((depth * 65535).astype(np.uint16))  # 16-bit keeps smooth gradients for reliefs
         return img.resize(image.size, Image.BILINEAR) if img.size != image.size else img
 
-    ESRGAN_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
-
     def upscale(self, image: Image.Image, scale: int) -> Image.Image:
         """Real-ESRGAN ×4 (spandrel) in overlapping 256 px tiles so 8 GB of VRAM is plenty."""
         import torch
         from spandrel import ModelLoader
 
         if self._esrgan is None:
-            path = os.path.join(torch.hub.get_dir(), "forja3d", "RealESRGAN_x4plus.pth")
-            if not os.path.exists(path):
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                log.info("Descargando Real-ESRGAN …")
-                torch.hub.download_url_to_file(self.ESRGAN_URL, path)
+            path = esrgan_weights()
             self._esrgan = ModelLoader().load_from_file(path).model.eval()
         if self.device != "cpu":
             self._activate("none")  # free the big pipelines; the upscaler itself is ~70 MB
@@ -385,6 +397,76 @@ class HunyuanBackend:
         image = self._remove_background(job.images[0])
         progress(30, "Pintando textura (puede tardar)")
         return self._load_paint()(mesh, image=image).export(file_type="glb")
+
+
+def _fast_decoding(pipe) -> None:
+    """FlashVDM (newer Hunyuan3D-2 code): the mesh decoding step goes from minutes to seconds."""
+    if hasattr(pipe, "enable_flashvdm"):
+        try:
+            pipe.enable_flashvdm()
+            log.info("FlashVDM activado")
+        except Exception:  # noqa: BLE001 - the regular decoder still works
+            log.exception("FlashVDM no disponible")
+
+
+TRANSLATOR = "Helsinki-NLP/opus-mt-es-en"
+SPANISH_WORDS = {"un", "una", "unos", "de", "del", "con", "el", "la", "los", "las", "y", "para", "que", "en", "sin",
+                 "muy", "rojo", "roja", "azul", "verde", "negro", "negra", "blanco", "blanca", "pequeño", "grande"}
+
+
+def looks_spanish(text: str) -> bool:
+    words = [w.strip(".,;:!?¡¿()\"'").lower() for w in text.split()]
+    return any(c in text for c in "áéíóúñ¿¡") or sum(w in SPANISH_WORDS for w in words) >= 1 and len(words) > 1
+
+
+ESRGAN_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+
+
+def esrgan_weights() -> str:
+    import torch
+
+    path = os.path.join(torch.hub.get_dir(), "forja3d", "RealESRGAN_x4plus.pth")
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        log.info("Descargando Real-ESRGAN …")
+        torch.hub.download_url_to_file(ESRGAN_URL, path, progress=False)
+    return path
+
+
+def prefetch(shape_model: str, shape_subfolder: str, image_model: str, depth_model: str, multiview: bool,
+             texture: bool, say: Callable[[int, str], None]) -> None:
+    """Download every model the worker will use, once, so the first generation does not wait for it."""
+    from huggingface_hub import snapshot_download
+
+    # FlashVDM swaps in the turbo VAE of the same family
+    vae_repo, vae = ((shape_model, "hunyuan3d-vae-v2-mini-turbo") if shape_model.endswith("mini")
+                     else ("tencent/Hunyuan3D-2", "hunyuan3d-vae-v2-0-turbo"))
+    jobs = [(shape_model.split("/")[-1], lambda: snapshot_download(
+        shape_model, allow_patterns=[f"{shape_subfolder}/*"])),
+            ("FlashVDM", lambda: snapshot_download(vae_repo, allow_patterns=[f"{vae}/*"]))]
+    if multiview:
+        jobs.append(("Hunyuan3D-2mv", lambda: snapshot_download(
+            "tencent/Hunyuan3D-2mv", allow_patterns=["hunyuan3d-dit-v2-mv/*"])))
+    # diffusers layout in fp16 only (the repos also hold full-precision single-file checkpoints)
+    jobs.append((image_model.split("/")[-1], lambda: snapshot_download(
+        image_model, allow_patterns=["model_index.json", "*/*.json", "*/*.txt", "*/*.fp16.safetensors"])))
+    jobs.append((depth_model.split("/")[-1], lambda: snapshot_download(depth_model)))
+    if texture:
+        jobs.append(("Hunyuan3D-Paint", lambda: snapshot_download(
+            "tencent/Hunyuan3D-2", allow_patterns=["hunyuan3d-paint-v2-0/*", "hunyuan3d-delight-v2-0/*"])))
+
+    def rembg():
+        from hy3dgen.rembg import BackgroundRemover
+
+        BackgroundRemover()
+
+    jobs += [("U²-Net", rembg), ("Real-ESRGAN", esrgan_weights),
+             ("Opus-MT es→en", lambda: snapshot_download(
+                 TRANSLATOR, allow_patterns=["*.json", "*.spm", "*.txt", "*.bin", "*.safetensors"]))]
+    for i, (label, fn) in enumerate(jobs):
+        say(int(100 * i / len(jobs)), f"Descargando: {label}")
+        fn()
+    say(100, "Modelos listos")
 
 
 def build_backend(name: str, **kwargs) -> Backend:

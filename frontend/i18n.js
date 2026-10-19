@@ -204,6 +204,17 @@ const EN = {
   "Eliminar modelo": "Delete model", "Modelo eliminado": "Model deleted", "¿Eliminar \"{t}\"?": "Delete \"{t}\"?", "Nuevo nombre:": "New name:",
   "de": "from", "de (eliminado)": "from (deleted)", "mapa de profundidad": "depth map", "Motor de IA usado": "AI engine used",
 
+  // ---------------------------------------------------------------- printing
+  "Impresora": "Printer", "Alto final (mm)": "Final height (mm)", "Estanco": "Watertight", "Volumen": "Volume",
+  "Peso aprox. (PLA)": "Approx. weight (PLA)", "Huecos": "Holes", "Bordes no manifold": "Non-manifold edges", "Tamaño": "Size",
+  "Cabe en la cama": "Fits the bed", "Sí": "Yes", "No": "No", "{f} triángulos · {b} pieza(s)": "{f} triangles · {b} part(s)",
+  "✂ Dividir para que quepa": "✂ Split to fit", "Corta el modelo en piezas cerradas que caben en la cama, listas para pegar":
+    "Cuts the model into closed pieces that fit the bed, ready to glue", "Directo a tu laminador": "Straight to your slicer",
+  "▶ Abrir": "▶ Open", "Multicolor (AMS / MMU)": "Multicolour (AMS / MMU)", "Programa predeterminado para .3mf": "Default program for .3mf",
+  "Abierto en {s}": "Opened in {s}", "tu laminador": "your slicer", "Publica tu 3MF en": "Publish your 3MF on",
+  "Dividiendo para la cama de impresión": "Splitting for the print bed",
+  "Abrir el laminador solo funciona en la app de escritorio": "Opening the slicer only works in the desktop app",
+
   // ---------------------------------------------------------------- share page
   "Cargando…": "Loading…", "Modelo 3D": "3D model", "👋 Ver en tu espacio (AR)": "👋 View in your space (AR)",
   "Hecho con Forja3D": "Made with Forja3D", "Falta el identificador del modelo": "The model id is missing",
@@ -227,6 +238,63 @@ const EN = {
   "Blender no encontrado: instálalo (gratis, blender.org) para exportar FBX y .blend.": "Blender not found: install it (free, blender.org) to export FBX and .blend.",
   "El motor guardado no arrancó: {e}": "The saved engine did not start: {e}", "Pega tu clave de fal.ai para usar la nube": "Paste your fal.ai key to use the cloud",
   "Guardar": "Save", "Cerrar": "Close", "¡Ajustes guardados!": "Settings saved!",
+
+  // ---------------------------------------------------------------- free local AI
+  "Mi GPU · gratis": "My GPU · free",
+  "Recomendado. Ilimitado y privado en tu NVIDIA RTX: se instala y arranca sola, sin claves.": "Recommended. Unlimited and private on your NVIDIA RTX: installs and starts by itself, no keys.",
+  "Opcional y de pago por uso: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy. Necesita clave.": "Optional, pay per use: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy. Needs a key.",
+  "Comprobando la IA local…": "Checking the local AI…", "Instalar IA gratis en mi GPU": "Install free AI on my GPU",
+  "Una sola vez: descarga ≈20 GB (PyTorch, Hunyuan3D-2, SDXL-Turbo). Después arranca sola cada vez que generas: gratis, sin límites, sin claves.":
+    "One time only: downloads ≈20 GB (PyTorch, Hunyuan3D-2, SDXL-Turbo). After that it starts by itself whenever you generate: free, unlimited, no keys.",
+  "Avanzado: usar un servidor IA de otro equipo": "Advanced: use an AI server on another computer",
+  "Instalando…": "Installing…", "La instalación falló: {e}": "The install failed: {e}",
+  "✔ IA local instalada y funcionando": "✔ Local AI installed and running",
+  "✔ IA local instalada: arranca sola al generar": "✔ Local AI installed: starts by itself when you generate",
+  "La IA local necesita Windows o Linux con una tarjeta NVIDIA. En Mac usa la nube.": "The local AI needs Windows or Linux with an NVIDIA card. On a Mac use the cloud.",
+  "No se detecta una tarjeta NVIDIA: actualiza el driver (nvidia.com/drivers).": "No NVIDIA card detected: update the driver (nvidia.com/drivers).",
+  "La IA local aún no está instalada.": "The local AI is not installed yet.", "Reintentar instalación": "Retry install",
+  "Instalando la IA gratis en tu GPU": "Installing the free AI on your GPU",
+  "La instalación de la IA local falló: {e}": "The local AI install failed: {e}",
+  "¡IA local instalada! Ya puedes generar gratis": "Local AI installed! You can generate for free now",
+  "IA local gratis": "Free local AI", "IA local · instalando {p}%": "Local AI · installing {p}%",
+  "IA local gratis · arranca al generar": "Free local AI · starts when you generate", "IA local · instalar (gratis)": "Local AI · install (free)",
+  "Comprobando tu tarjeta gráfica": "Checking your graphics card", "Preparando el instalador": "Preparing the installer",
+  "Instalando Python": "Installing Python", "Instalando PyTorch con CUDA (≈3 GB)": "Installing PyTorch with CUDA (≈3 GB)",
+  "Instalando Hunyuan3D-2 y el servidor de IA": "Installing Hunyuan3D-2 and the AI server",
+  "Comprobando que PyTorch ve tu GPU": "Checking that PyTorch sees your GPU",
+  "Descargando los modelos de IA (≈15 GB, solo una vez)": "Downloading the AI models (≈15 GB, one time only)",
+  "Terminando": "Finishing", "Listo": "Done", "Modelos listos": "Models ready",
+  "La IA local aún no está instalada: abre Ajustes → «Mi GPU» → Instalar (gratis)": "The local AI is not installed yet: open Settings → “My GPU” → Install (free)",
+  "No se encontró una tarjeta NVIDIA con su driver instalado: actualiza el driver (nvidia.com/drivers) y vuelve a intentarlo": "No NVIDIA card with its driver was found: update the driver (nvidia.com/drivers) and try again",
+  "La IA local tarda demasiado en arrancar": "The local AI is taking too long to start",
+  "No se pudo descargar el instalador uv": "Could not download the uv installer",
+
+  // ---------------------------------------------------------------- AI agent
+  "Agente IA": "AI agent", "Agente IA: crea y anima hablando": "AI agent: create and animate by chatting",
+  "Ideas, modelos, animaciones e impresión, hablando": "Ideas, models, animations and printing, by chatting",
+  "Nueva conversación": "New conversation",
+  "Hola, soy tu asistente 3D. Cuéntame qué quieres crear y lo hago contigo: conceptos, modelo 3D, rig con animaciones o revisión para imprimir.":
+    "Hi, I'm your 3D assistant. Tell me what you want to make and we'll build it together: concepts, 3D model, rig with animations or a print check.",
+  "Un dragón bebé estilo cartoon para animar": "A cartoon baby dragon to animate",
+  "Una maceta con forma de gato para imprimir en mi Bambu A1": "A cat-shaped planter to print on my Bambu A1",
+  "Dame ideas para un personaje de videojuego": "Give me ideas for a video game character",
+  "Escribe tu idea o pregunta…": "Type your idea or question…", "Enviar": "Send", "Pensando…": "Thinking…",
+  "Concepto {n}": "Concept {n}", "Hacer este concepto en 3D": "Make this concept 3D",
+  "Haz en 3D el concepto {n}": "Make concept {n} in 3D", "Toca uno para hacerlo en 3D": "Tap one to make it 3D",
+  "en cola": "queued", "generando": "generating", "listo": "ready", "falló": "failed", "Ver": "View",
+  "Agente IA: clave de Anthropic": "AI agent: Anthropic key",
+  "Pega tu clave (console.anthropic.com)": "Paste your key (console.anthropic.com)",
+  "Opcional: el agente ya funciona gratis. Con una clave de Anthropic entiende cualquier petición y conversa como un experto.":
+    "Optional: the agent already works for free. With an Anthropic key it understands any request and chats like an expert.",
+  "Añade tu clave de Anthropic en Ajustes para usar el agente": "Add your Anthropic key in Settings to use the agent",
+  "La clave de Anthropic no es válida: revísala en Ajustes": "The Anthropic key is not valid: check it in Settings",
+  "Tu clave de Anthropic no tiene permiso para usar el agente": "Your Anthropic key is not allowed to use the agent",
+  "Tu clave de Anthropic no tiene modelos disponibles": "Your Anthropic key has no models available",
+  "Demasiadas peticiones al agente: espera unos segundos": "Too many requests to the agent: wait a few seconds",
+  "Sin conexión con el agente: revisa tu internet": "Cannot reach the agent: check your internet",
+  "El agente no respondió": "The agent did not answer",
+  "Borrador": "Draft", "Estándar": "Standard",
+  "Tareas": "Tasks", "Animales": "Animals", "Escalar": "Climbing", "Ejercicio": "Exercise",
 
   // ---------------------------------------------------------------- server: animations, markers, mocap
   "Reposo (respirar)": "Idle (breathing)", "Caminar": "Walk", "Correr": "Run", "Saltar": "Jump", "Saludar": "Wave",
@@ -271,7 +339,7 @@ const EN = {
   "Remallado en quads (Instant Meshes)": "Quad remeshing (Instant Meshes)", "Remallando": "Remeshing", "Reparando malla": "Repairing mesh",
   "Dividiendo en piezas": "Splitting into parts", "Importando modelo": "Importing model",
   "Demo (sin IA)": "Demo (no AI)", "Formas procedurales para probar la app.": "Procedural shapes to try the app.",
-  "Hunyuan3D-2mini (tu GPU)": "Hunyuan3D-2mini (your GPU)",
+  "Hunyuan3D-2mini (tu GPU)": "Hunyuan3D-2mini (your GPU)", "Hunyuan3D-2 (tu GPU)": "Hunyuan3D-2 (your GPU)",
   "Texto o imagen → 3D nativo, PBR, hasta 1 M de caras, hasta 4 vistas.": "Text or image → native 3D, PBR, up to 1 M faces, up to 4 views.",
   "Geometría muy fiel a la imagen y texturas de hasta 4K.": "Geometry very faithful to the image and textures up to 4K.",
   "PBR y calidad «detailed» de geometría y textura.": "PBR and “detailed” geometry and texture quality.",
@@ -317,6 +385,11 @@ const EN = {
 
 // server messages with variable parts: [regex, English template]
 const PATTERNS = [
+  [/^Descargando: (.+)$/, "Downloading: $1"],
+  [/^La IA local se cerró al arrancar: (.*)$/s, "The local AI closed while starting: $1"],
+  [/^No se puede conectar con la IA local en (\S+): ábrela desde Ajustes → «Mi GPU»$/, "Cannot reach the local AI at $1: open it from Settings → “My GPU”"],
+  [/^Falló «(.+?)»: (.*)$/s, "“$1” failed: $2"],
+  [/^El agente no respondió \((\d+)\)$/, "The agent did not answer ($1)"],
   [/^Generando con (.+)$/, "Generating with $1"],
   [/^Reconstruyendo con (.+)$/, "Rebuilding with $1"],
   [/^(.+) no devolvió ninguna malla$/, "$1 returned no mesh"],

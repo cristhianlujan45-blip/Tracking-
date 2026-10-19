@@ -2,6 +2,7 @@
 // Saved on the server (user data folder) so the desktop app remembers them between launches.
 
 import { t, tr } from "./i18n.js";
+import { refreshLocalAI } from "./localai.js";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -42,6 +43,10 @@ export async function openSettings(welcome = false) {
   $("#falKey").placeholder = current.fal_key_set
     ? t("Clave guardada ({h}) — déjalo vacío para mantenerla", { h: current.fal_key_hint })
     : t("Pega tu clave (fal.ai/dashboard/keys)");
+  $("#anthropicKey").value = "";
+  $("#anthropicKey").placeholder = current.anthropic_key_set
+    ? t("Clave guardada ({h}) — déjalo vacío para mantenerla", { h: current.anthropic_key_hint })
+    : t("Pega tu clave (console.anthropic.com)");
   $("#workerUrl").value = current.local_worker_url || "";
   $("#workerToken").value = "";
   $("#blenderPath").value = current.blender_path || "";
@@ -49,7 +54,7 @@ export async function openSettings(welcome = false) {
     ? t("✔ Blender encontrado: {p}", { p: current.blender_found })
     : t("Blender no encontrado: instálalo (gratis, blender.org) para exportar FBX y .blend.");
   showError(current.provider_error ? t("El motor guardado no arrancó: {e}", { e: tr(current.provider_error) }) : "");
-  pick(welcome ? "fal" : current.provider);
+  pick(welcome ? "local" : current.provider);
   engineHint();
   const dlg = $("#settingsDlg");
   if (!dlg.open) dlg.showModal();
@@ -60,6 +65,7 @@ function pick(p) {
   $$("#provCards button").forEach((b) => b.classList.toggle("on", b.dataset.p === p));
   $("#falGroup").hidden = p !== "fal";
   $("#localGroup").hidden = p !== "local";
+  if (p === "local") refreshLocalAI();
 }
 
 function engineHint() {
@@ -74,6 +80,8 @@ function showError(msg) {
 
 async function save() {
   const body = { provider, blender_path: $("#blenderPath").value.trim() };
+  const agentKey = $("#anthropicKey").value.trim();
+  if (agentKey) body.anthropic_key = agentKey;
   if (provider === "fal") {
     const key = $("#falKey").value.trim();
     if (!key && !current.fal_key_set) return showError(t("Pega tu clave de fal.ai para usar la nube"));
@@ -81,7 +89,7 @@ async function save() {
     body.fal_engine = $("#falEngine").value;
   }
   if (provider === "local") {
-    body.local_worker_url = $("#workerUrl").value.trim() || "http://127.0.0.1:8001";
+    body.local_worker_url = $("#workerUrl").value.trim() || "http://127.0.0.1:8001"; // default: the app's own AI
     const token = $("#workerToken").value.trim();
     if (token) body.local_worker_token = token;
   }

@@ -46,6 +46,10 @@ class Settings:
 
     blender_path: str = field(default_factory=lambda: os.getenv("BLENDER_PATH", ""))
 
+    # AI agent (chat): empty model = the newest Opus-class model the key can use
+    anthropic_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
+    anthropic_model: str = field(default_factory=lambda: os.getenv("ANTHROPIC_MODEL", ""))
+
     mock_step_delay: float = field(default_factory=lambda: float(os.getenv("MOCK_STEP_DELAY", "0.6")))
 
     @property
@@ -58,7 +62,8 @@ class Settings:
 
 
 # Settings the user can change from the app (stored in DATA_DIR/settings.json, they win over .env).
-USER_KEYS = ("provider", "fal_key", "fal_engine", "local_worker_url", "local_worker_token", "blender_path")
+USER_KEYS = ("provider", "fal_key", "fal_engine", "local_worker_url", "local_worker_token", "blender_path",
+             "anthropic_key")
 
 
 def user_settings_path(settings: Settings) -> Path:

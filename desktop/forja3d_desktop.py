@@ -59,6 +59,10 @@ def main() -> None:
 
     home = data_dir()
     os.environ.setdefault("DATA_DIR", str(home))
+    if sys.platform != "darwin":
+        # free AI on the NVIDIA GPU by default: the app installs it on first run and starts it by itself
+        os.environ.setdefault("GEN_PROVIDER", "local")
+        os.environ.setdefault("FORJA_AUTO_INSTALL", "1")
     if sys.stdout is None or sys.stderr is None:  # windowed build: no console to write to
         log = open(home / "forja3d.log", "a", encoding="utf-8", buffering=1)  # noqa: SIM115
         sys.stdout = sys.stdout or log

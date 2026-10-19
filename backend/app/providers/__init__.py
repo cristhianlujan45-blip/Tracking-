@@ -17,7 +17,7 @@ __all__ = [
 ]
 
 
-def build_provider(settings: Settings) -> Provider:
+def build_provider(settings: Settings, local_ai=None) -> Provider:
     if settings.provider == "mock":
         return MockProvider(step_delay=settings.mock_step_delay)
     if settings.provider == "fal":
@@ -30,6 +30,7 @@ def build_provider(settings: Settings) -> Provider:
         )
     if settings.provider == "local":
         return LocalProvider(
-            url=settings.local_worker_url, token=settings.local_worker_token, timeout_s=settings.local_timeout_s
+            url=settings.local_worker_url, token=settings.local_worker_token, timeout_s=settings.local_timeout_s,
+            launcher=local_ai,
         )
     raise ValueError(f"Proveedor desconocido: {settings.provider!r} (usa 'mock', 'local' o 'fal')")

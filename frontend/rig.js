@@ -2,7 +2,7 @@
 // (front view for people, side view for animals), procedural clips, the bundled mocap library,
 // BVH mocap, skeleton and skin-weight inspection.
 
-import { t, tr } from "./i18n.js";
+import { lang, t, tr } from "./i18n.js";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -37,7 +37,8 @@ export async function initRig(context) {
         const label = document.createElement("label");
         label.dataset.cat = cat;
         label.innerHTML = `<input type="checkbox" value="${c.id}" /> `;
-        label.append(document.createTextNode(tr(c.label)));
+        label.dataset.search = `${c.label} ${c.label_en || ""}`.toLowerCase(); // search in both languages
+        label.append(document.createTextNode(libraryLabel(c)));
         label.insertAdjacentHTML("beforeend", `<small>${c.seconds.toFixed(1)} s</small>`);
         return label;
       });
@@ -63,10 +64,15 @@ export async function initRig(context) {
   $("#weightBone").addEventListener("change", (e) => ctx.viewer.setWeightBone(e.target.value));
 }
 
-// Spanish label for a baked clip name (procedural presets are stored by id)
+const libraryLabel = (c) => (lang === "en" && c.label_en) || c.label;
+
+// Label for a baked clip name (procedural presets are stored by id, library clips by their Spanish label)
 export function clipLabel(name) {
   const all = [...presets.presets, ...presets.quadruped.presets];
-  return tr(all.find((p) => p.id === name)?.label || name);
+  const preset = all.find((p) => p.id === name);
+  if (preset) return tr(preset.label);
+  const clip = presets.library.find((c) => c.label === name);
+  return clip ? libraryLabel(clip) : tr(name);
 }
 
 async function run(button, fn) {
@@ -89,7 +95,7 @@ function filterLibrary() {
   const cat = $("#libCat").value;
   const visible = new Set();
   $$("#libList label").forEach((l) => {
-    const show = (!cat || l.dataset.cat === cat) && (!q || l.textContent.toLowerCase().includes(q));
+    const show = (!cat || l.dataset.cat === cat) && (!q || (l.dataset.search || l.textContent.toLowerCase()).includes(q));
     l.hidden = !show;
     if (show) visible.add(l.dataset.cat);
   });

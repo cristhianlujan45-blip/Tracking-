@@ -39,15 +39,18 @@ class LocalProvider:
         timeout_s: float = 1800,
         poll_interval: float = 1.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        launcher=None,
     ):
+        """`launcher`: the app's LocalAI, which installs and starts the worker by itself when needed."""
         self.url = url.rstrip("/")
         self.headers = {"Authorization": f"Bearer {token}"} if token else {}
         self.timeout_s = timeout_s
         self.poll_interval = poll_interval
         self.transport = transport  # tests inject the worker app in-process
+        self.launcher = launcher
         self.capabilities = DEFAULT_CAPABILITIES
         self.info: dict = {}
-        self.engines = [{"id": "hunyuan2mini", "label": "Hunyuan3D-2mini (tu GPU)",
+        self.engines = [{"id": "hunyuan2", "label": "Hunyuan3D-2 (tu GPU)",
                          "description": "Gratis y privado, en tu tarjeta gráfica.", "native_text": False,
                          "max_views": 4, "tags": ["local"]}]
 
@@ -62,13 +65,29 @@ class LocalProvider:
                 resp.raise_for_status()
                 self.info = resp.json()
                 self.capabilities = frozenset(self.info.get("capabilities", DEFAULT_CAPABILITIES))
+                if any("mini" in m for m in self.info.get("models", [])[:1]):
+                    self.engines = [{**self.engines[0], "id": "hunyuan2mini", "label": "Hunyuan3D-2mini (tu GPU)"}]
                 log.info("Worker GPU: %s · %s", self.info.get("gpu"), ", ".join(sorted(self.capabilities)))
         except (httpx.HTTPError, ValueError) as exc:
             log.warning("No se pudo contactar con el worker en %s (%s); se reintentará al generar", self.url, exc)
 
+    async def _ready(self) -> None:
+        """With the built-in launcher, start the worker if it is not running yet (first use or after a crash)."""
+        if self.launcher is None:
+            return
+        from ..local_ai import LocalAIError
+
+        try:
+            self.url = (await self.launcher.ensure_running()).rstrip("/")
+        except LocalAIError as exc:
+            raise GenerationError(str(exc)) from exc
+        if not self.info:
+            await self.start()
+
     # ------------------------------------------------------------ provider API
 
     async def generate(self, req: GenerationRequest, on_progress: ProgressCallback) -> GenerationResult:
+        await self._ready()
         async with self._client() as client:
             reference = None
             images = req.images
@@ -85,10 +104,12 @@ class LocalProvider:
         return GenerationResult(model_glb=glb, reference_image=reference)
 
     async def generate_images(self, req: GenerationRequest, count: int) -> list[bytes]:
+        await self._ready()
         async with self._client() as client:
             return await self._images(client, req, count)
 
     async def retexture(self, glb: bytes, req: GenerationRequest, on_progress: ProgressCallback) -> bytes:
+        await self._ready()
         async with self._client() as client:
             await on_progress(3, "Generando imagen de la textura")
             image = (await self._images(client, req, 1))[0]
@@ -96,11 +117,13 @@ class LocalProvider:
             return await self._run_task(client, payload, on_progress, (15, 97))
 
     async def estimate_depth(self, image: InputImage) -> bytes:
+        await self._ready()
         async with self._client() as client:
             resp = await self._call(client.post("/depth", json={"image": _b64(image.data)}, timeout=300))
             return base64.b64decode(resp.json()["depth"])
 
     async def upscale_image(self, png: bytes, scale: int) -> bytes:
+        await self._ready()
         async with self._client() as client:
             resp = await self._call(client.post("/upscale", json={"image": _b64(png), "scale": scale}, timeout=900))
             return base64.b64decode(resp.json()["image"])
@@ -112,7 +135,7 @@ class LocalProvider:
             resp = await coro
         except httpx.ConnectError as exc:
             raise GenerationError(
-                f"No se puede conectar con el worker de IA local en {self.url}. ¿Está iniciado? (gpu_worker/README.md)"
+                f"No se puede conectar con la IA local en {self.url}: ábrela desde Ajustes → «Mi GPU»"
             ) from exc
         except httpx.TimeoutException as exc:
             raise GenerationError("El worker de IA local no respondió a tiempo") from exc
@@ -125,7 +148,8 @@ class LocalProvider:
         return resp
 
     async def _images(self, client: httpx.AsyncClient, req: GenerationRequest, count: int) -> list[bytes]:
-        body = {"prompt": build_image_prompt(req), "count": count, "seed": req.seed % 2**32, "negative": NEGATIVE_PROMPT}
+        body = {"prompt": build_image_prompt(req), "count": count, "seed": req.seed % 2**32, "negative": NEGATIVE_PROMPT,
+                "subject": (req.prompt or "").strip()}
         resp = await self._call(client.post("/images", json=body, timeout=600))
         return [base64.b64decode(i) for i in resp.json()["images"]]
 

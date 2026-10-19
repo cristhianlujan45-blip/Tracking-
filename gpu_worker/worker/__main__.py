@@ -7,7 +7,7 @@ import logging
 
 import uvicorn
 
-from .backends import build_backend
+from .backends import build_backend, prefetch
 from .server import create_app
 
 
@@ -26,7 +26,16 @@ def main() -> None:
                         help="activa Hunyuan3D-Paint (texturas y retexturizado). Lento con 8 GB de VRAM")
     parser.add_argument("--multiview", action="store_true", help="activa Hunyuan3D-2mv para varias vistas")
     parser.add_argument("--dummy-delay", type=float, default=0.3)
+    parser.add_argument("--prefetch", action="store_true", help="solo descarga los modelos y termina")
     args = parser.parse_args()
+
+    if args.prefetch:
+        if args.backend == "dummy":
+            print("@@ 100 Modelos listos", flush=True)
+            return
+        prefetch(args.shape_model, args.shape_subfolder, args.image_model, args.depth_model, args.multiview,
+                 args.texture, lambda pct, text: print(f"@@ {pct} {text}", flush=True))
+        return
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.backend == "dummy":

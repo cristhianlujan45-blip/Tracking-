@@ -280,8 +280,9 @@ def test_markers_auto_on_rigged_character(client, character):
 
 def test_mocap_library_clips(client, character):
     library = client.get("/api/rig/presets").json()["library"]
-    assert len(library) >= 60 and {"Caminar", "Baile", "Combate"} <= {c["category"] for c in library}
+    assert len(library) >= 600 and {"Caminar", "Baile", "Combate"} <= {c["category"] for c in library}
     walk = next(c for c in library if c["label"] == "Caminar triste")
+    assert walk["label_en"] == "Sad walk"
     job = wait_done(client, client.post(f"/api/jobs/{character['id']}/rig",
                                         json={"animations": ["idle", walk["id"], "cmu_17_10"]}).json()["id"])
     assert job["status"] == "succeeded", job["error"]

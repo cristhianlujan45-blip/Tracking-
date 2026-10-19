@@ -9,9 +9,9 @@ Descarga la última versión desde la página **Releases** del repositorio (se c
 - **Windows 10/11 (64 bits):** `Forja3D-Setup-x.y.z.exe` → ejecútalo. Crea el acceso directo y abre la app en su propia ventana. Si SmartScreen avisa, pulsa «Más información» → «Ejecutar de todas formas» (el instalador no está firmado).
 - **macOS (Apple Silicon):** `Forja3D-x.y.z-mac-arm64.dmg` → arrastra Forja3D a Aplicaciones. La primera vez: clic derecho → «Abrir» (no está firmada por Apple).
 
-Al abrirla por primera vez elige el motor de IA en **Ajustes**: la nube (fal.ai, la mejor calidad), tu GPU NVIDIA o el modo demo. Tus modelos y ajustes se guardan en `%APPDATA%\Forja3D` (Windows) o `~/Library/Application Support/Forja3D` (Mac).
+**IA gratis en tu GPU, sin configurar nada.** En Windows con una NVIDIA RTX (8 GB bastan, incluida la serie 50) la app instala sola su IA la primera vez que la abres (≈20 GB, una única vez, con barra de progreso) y la arranca cada vez que generas: sin claves, sin tokens, sin scripts y sin límite de generaciones. Usa la máxima calidad que cabe en 8 GB: Hunyuan3D-2 (forma) con FlashVDM, Hunyuan3D-2mv (varias vistas), SDXL-Turbo (conceptos), Depth Anything V2 Base y Real-ESRGAN, y traduce sola tus descripciones en español. También se puede instalar o reparar desde **Ajustes → Mi GPU**.
 
-**IA en tu propia GPU** (gratis y privado, RTX con 8 GB o más, incluida la serie 50): es un complemento aparte para Windows. Ejecuta una vez `scripts\windows\instalar.bat`; después abre `scripts\windows\iniciar.bat -SoloWorker` (añade `-Multiview` para hojas de personaje) y elige «Mi GPU» en Ajustes. Ver [gpu_worker/README.md](gpu_worker/README.md).
+La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por uso a fal.ai con tu clave. Tus modelos y ajustes se guardan en `%APPDATA%\Forja3D` (Windows) o `~/Library/Application Support/Forja3D` (Mac). En Mac (sin NVIDIA) usa la nube o el modo demo.
 
 ## Funciones
 
@@ -34,7 +34,7 @@ Al abrirla por primera vez elige el motor de IA en **Ajustes**: la nube (fal.ai,
 - Auto-rig de **humanos** (27 huesos con nombres Mixamo/Unity Humanoid) y de **cuadrúpedos** (perros, gatos, caballos…; 26 huesos), con detección automática.
 - **Marcadores ajustables** estilo Mixamo (vista frontal para personas, lateral para animales).
 - Pesos por difusión de calor (*bone heat*), máximo 4 huesos por vértice; visor de huesos y mapa de pesos.
-- **14 animaciones procedurales**, **6 andares de cuadrúpedo** y una **biblioteca mocap de 66 clips** (CMU) por categorías; además tus propios **BVH**.
+- **650+ animaciones**: 14 procedurales, 6 andares de cuadrúpedo y una **biblioteca mocap de 639 clips** (CMU, en español e inglés) en 15 categorías con buscador; además tus propios **BVH**.
 - El personaje riggeado conserva **todos los mapas PBR y tangentes** (validado con el validador oficial de Khronos: 0 errores, 0 avisos).
 
 **Exportar**
@@ -46,7 +46,10 @@ Al abrirla por primera vez elige el motor de IA en **Ajustes**: la nube (fal.ai,
 
 **Editar e imprimir**
 - Refinar HD, variaciones, remallado (reducir, **quads limpios**, low-poly, vóxel, suavizar).
-- Análisis de imprimibilidad, reparación automática, división en piezas, medida final en mm.
+- Imprimibilidad a la medida final (cerrado, agujeros, aristas no-manifold, volumen y gramos de PLA), reparación automática, **dividir para que quepa en la cama** de tu impresora (Bambu, Prusa, Creality, Elegoo, Anycubic, resina) y **abrir en tu laminador** (Bambu Studio, OrcaSlicer, PrusaSlicer, Cura, Creality Print, ElegooSlicer, Lychee…).
+
+**Agente IA**
+- Chat (botón «Agente IA», abajo a la derecha) que crea conceptos y modelos, los anima y revisa si se imprimen, con tarjetas para abrir cada resultado. Funciona **gratis sin clave** con un asistente integrado; con una clave de Anthropic (opcional, Ajustes) entiende cualquier petición y responde como un experto en 3D, Blender e impresión.
 
 **Interfaz**
 - Diseño neón propio, **español / inglés** (selector arriba), barra de flujo **01 Entrada → 02 Modelo texturizado → 03 Rig → 04 Blender y motores**, galería con filtros, historial de versiones, captura PNG y vídeo 360°, enlace para compartir con AR.
@@ -60,7 +63,9 @@ Al abrirla por primera vez elige el motor de IA en **Ajustes**: la nube (fal.ai,
 | Texturas 8K + PBR | ✅ | ✅ |
 | Auto-rig humano y cuadrúpedo | ✅ | ✅ |
 | Corregir el rig con marcadores, ver pesos | ✅ | no figura |
-| Animaciones | 14 + 6 + 66 mocap + tus BVH | cientos (biblioteca propia) |
+| Animaciones | 650+ (639 mocap) + tus BVH | 600+ |
+| Agente IA que crea, anima y revisa la impresión hablando | ✅ (gratis; más listo con clave de Anthropic) | ✅ |
+| Dividir para la cama, enviar al laminador | ✅ | ✅ |
 | Exportar a Blender con pistas NLA, FBX, Unity/Unreal/Godot | ✅ | ✅ |
 | Impresión multicolor, quads | ✅ | ✅ |
 | IA en tu propia GPU, sin pagar por modelo | ✅ | ❌ |
@@ -77,7 +82,7 @@ Al abrirla por primera vez elige el motor de IA en **Ajustes**: la nube (fal.ai,
 Se eligen en **Ajustes** dentro de la app (o con `GEN_PROVIDER` en `.env` para servidores):
 
 - **Nube (fal.ai)**: pega tu clave de <https://fal.ai/dashboard/keys>. Motores 3D: Hunyuan3D 3 (por defecto), TRELLIS 2, Tripo H3.1, Meshy 6, TRELLIS 1; FLUX para conceptos; Meshy 7 para retexturizar; Real-ESRGAN y Depth Anything.
-- **Mi GPU** (`local`): Hunyuan3D-2mini/2mv, SD-Turbo, Depth Anything V2 y Real-ESRGAN en tu NVIDIA (8 GB bastan).
+- **Mi GPU** (`local`, gratis): la app instala y arranca sola Hunyuan3D-2 + FlashVDM, Hunyuan3D-2mv, SDXL-Turbo, Depth Anything V2, Real-ESRGAN y el traductor Opus-MT en tu NVIDIA (8 GB bastan). Los scripts `scripts/windows/instalar.bat` / `iniciar.bat` siguen disponibles para usarla desde el código fuente.
 - **Demo** (`mock`): sin IA, formas procedurales para probar todo el flujo.
 
 Las herramientas de geometría, rig, animación, texturas HD (sin IA, con reescalado de calidad) y exportación funcionan en local con cualquier proveedor.
@@ -126,7 +131,11 @@ backend/app/
 | Método | Ruta | Descripción |
 |---|---|---|
 | `GET` | `/api/config` | proveedor, motores, capacidades, estilos, formatos |
-| `GET` / `PUT` | `/api/settings` | motor de IA, clave, Blender (la clave nunca se devuelve) |
+| `GET` / `PUT` | `/api/settings` | motor de IA, claves opcionales, Blender (las claves nunca se devuelven) |
+| `GET` / `POST` | `/api/local-ai` · `/api/local-ai/install` | estado / instalación con un clic de la IA gratis en tu GPU |
+| `POST` | `/api/agent/chat` | `{message, conversation_id?, lang}` → `{reply, conversation_id, artifacts}` |
+| `GET` | `/api/printers` | camas de impresoras y laminadores instalados |
+| `POST` | `/api/jobs/{id}/slicer` | `{slicer?, format, size_mm, colors, bed}` abre el modelo en tu laminador |
 | `POST` | `/api/concepts` | `{prompt, style, symmetry, pose, count, seed?}` → imágenes concepto |
 | `POST` | `/api/sheet/split` | multipart `image` (hoja de personaje) → vistas recortadas con su papel |
 | `POST` | `/api/jobs/text` | `{prompt, quality, style, symmetry, pose, seed?, variants, engine?}` |

@@ -1,7 +1,7 @@
 """Build the bundled mocap library from the CMU Motion Capture Database (BVH by B. Hahne/cgspeed).
 
 CMU places no restrictions on the use of the dataset; the BVH conversion adds none either.
-Usage: python tools/build_mocap_library.py <cmubvh checkout> <selection.py>
+Usage: python tools/build_mocap_library.py <cmubvh checkout> [tools/mocap_selection.py]
 Writes backend/app/rigging/mocap/cmu.zip (one trimmed 30 fps BVH per clip + index.json).
 """
 
@@ -49,7 +49,7 @@ def main(src: Path, selection_file: Path) -> None:
     out = ROOT / "backend/app/rigging/mocap/cmu.zip"
     index = []
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-        for clip_id, label, category in selection.SELECTION:
+        for clip_id, label, label_en, category in selection.SELECTION:
             row = catalogue[clip_id]
             with zipfile.ZipFile(src / row["path"]) as inner:
                 name = next(n for n in inner.namelist() if n.lower().endswith(".bvh"))
@@ -58,11 +58,12 @@ def main(src: Path, selection_file: Path) -> None:
             step = max(1, round((1 / FPS) / frame_time))
             motion = motion[1:][::step][: int(MAX_SECONDS * FPS)]  # frame 1 is a calibration T-pose
             zf.writestr(f"{clip_id}.bvh", write_bvh(joints, motion, frame_time * step))
-            index.append({"id": f"cmu_{clip_id}", "file": f"{clip_id}.bvh", "label": label, "category": category,
+            index.append({"id": f"cmu_{clip_id}", "file": f"{clip_id}.bvh", "label": label, "label_en": label_en,
+                          "category": category,
                           "source": f"CMU {clip_id}: {row['desc']}", "seconds": round(len(motion) / FPS, 1)})
         zf.writestr("index.json", json.dumps(index, ensure_ascii=False, indent=1))
     print(f"{len(index)} clips → {out} ({out.stat().st_size / 1e6:.1f} MB)")
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]))
+    main(Path(sys.argv[1]), Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "tools" / "mocap_selection.py")

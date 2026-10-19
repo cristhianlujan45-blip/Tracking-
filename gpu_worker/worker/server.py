@@ -36,6 +36,7 @@ class ImagesIn(BaseModel):
     count: int = Field(1, ge=1, le=4)
     seed: int = Field(0, ge=0, le=2**32 - 1)
     negative: str = ""
+    subject: str = ""  # the user's own words inside prompt: translated to English when they are not
 
 
 class DepthIn(BaseModel):
@@ -140,7 +141,11 @@ def create_app(backend: Backend, token: str | None = None) -> FastAPI:
             raise HTTPException(400, "Este worker no genera imágenes")
         loop = asyncio.get_running_loop()
         try:
-            result = await loop.run_in_executor(gpu, backend.generate_images, body.prompt, body.count, body.seed, body.negative)
+            prompt = body.prompt
+            if body.subject and body.subject in prompt and hasattr(backend, "to_english"):
+                english = await loop.run_in_executor(gpu, backend.to_english, body.subject)
+                prompt = prompt.replace(body.subject, english, 1)
+            result = await loop.run_in_executor(gpu, backend.generate_images, prompt, body.count, body.seed, body.negative)
         except Exception as exc:  # noqa: BLE001
             log.exception("Generación de imágenes falló")
             raise HTTPException(500, friendly_error(exc)) from exc

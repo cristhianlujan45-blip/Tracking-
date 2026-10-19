@@ -95,7 +95,7 @@ def test_worker_down_gives_clear_error(tmp_path):
     with TestClient(create_app(Settings(provider="local", data_dir=tmp_path), provider=provider)) as c:
         assert c.get("/api/config").json()["provider_info"] == {}
         job = wait_done(c, c.post("/api/jobs/text", json={"prompt": "una roca"}).json()[0]["id"])
-        assert job["status"] == "failed" and "worker" in job["error"]
+        assert job["status"] == "failed" and "IA local" in job["error"]
 
 
 def test_scene_uses_worker_depth(client):

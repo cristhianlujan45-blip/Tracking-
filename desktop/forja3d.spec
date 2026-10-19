@@ -14,6 +14,9 @@ datas = [
     # run by Blender as a script, so it must exist as a real .py file
     (str(ROOT / "backend" / "app" / "blender_convert.py"), "app"),
     (str(ROOT / "backend" / "app" / "rigging" / "mocap" / "cmu.zip"), "app/rigging/mocap"),
+    # the GPU worker is installed by the app into its own Python (see app/local_ai.py)
+    (str(ROOT / "gpu_worker" / "worker"), "gpu_worker/worker"),
+    (str(ROOT / "gpu_worker" / "requirements.txt"), "gpu_worker"),
 ]
 datas += collect_data_files("trimesh")
 
@@ -23,6 +26,7 @@ hiddenimports = (
     + collect_submodules("webview")
     + ["fast_simplification", "pynanoinstantmeshes", "mapbox_earcut", "rtree", "shapely", "lxml.etree",
        "networkx", "cv2", "multipart", "python_multipart", "scipy.sparse.linalg", "scipy.ndimage"]
+    + collect_submodules("anthropic")
 )
 
 a = Analysis(
