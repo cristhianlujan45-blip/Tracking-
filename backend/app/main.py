@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from . import blender, creations, geometry, pipelines, rigging
+from . import blender, creations, geometry, pipelines, rigging, textures
 from .config import Settings, get_settings
 from .db import JobStore
 from .jobs import JobRunner
@@ -55,6 +55,7 @@ MODE_LABELS = {
     "lithophane": "Litofanía",
     "text3d": "Texto 3D",
     "rig": "Personaje animado",
+    "enhance": "Textura HD",
 }
 SCENE_KINDS = ("scene", "relief", "lithophane")
 HEX_COLOR = r"^#[0-9a-fA-F]{6}$"
@@ -73,6 +74,7 @@ class GenerationOptions(BaseModel):
     pose: Pose = "none"
     seed: int | None = Field(None, ge=0, le=2**31 - 1)
     variants: int = Field(1, ge=1, le=4)
+    engine: str | None = Field(None, max_length=40)
 
 
 class TextJobIn(GenerationOptions):
@@ -108,6 +110,12 @@ class RetextureIn(BaseModel):
     prompt: str = Field(min_length=3, max_length=500)
     style: Style = "auto"
     seed: int | None = Field(None, ge=0, le=2**31 - 1)
+    resolution: Literal["2k", "4k", "8k"] = "4k"
+
+
+class EnhanceIn(BaseModel):
+    target: Literal["2k", "4k", "8k"] = "4k"
+    pbr: bool = True
 
 
 class VariationsIn(BaseModel):
@@ -132,7 +140,7 @@ class RigIn(BaseModel):
     markers: dict[str, list[float]] | None = None
     yaw: Literal[0, 90, 180, 270] | None = None
     symmetric: bool = False
-    animations: list[str] = Field(default_factory=lambda: list(rigging.DEFAULT_PRESETS), max_length=20)
+    animations: list[str] = Field(default_factory=lambda: list(rigging.DEFAULT_PRESETS), max_length=40)
     in_place: bool = True
 
 
@@ -251,6 +259,9 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         parent_id: str | None = None,
     ) -> list[JobOut]:
         state = request.app.state
+        engines = [e["id"] for e in getattr(state.provider, "engines", [])]
+        if opts.engine and opts.engine not in engines:
+            raise HTTPException(422, f"Motor desconocido: {opts.engine}")
         base_seed = opts.seed if opts.seed is not None else new_seed()
         jobs = []
         for i in range(opts.variants):
@@ -264,7 +275,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                     (job_dir(job_id) / name).write_bytes(img.data)
                     inputs.append(name)
             params = {
-                "style": opts.style, "symmetry": opts.symmetry, "pose": opts.pose, "seed": seed,
+                "style": opts.style, "symmetry": opts.symmetry, "pose": opts.pose, "seed": seed, "engine": opts.engine,
                 "inputs": inputs, **(extra or {}),
             }
             job = state.store.create(
@@ -273,7 +284,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             )
             req = GenerationRequest(
                 mode=mode, prompt=prompt, quality=opts.quality, images=images,
-                style=opts.style, symmetry=opts.symmetry, pose=opts.pose, seed=seed,
+                style=opts.style, symmetry=opts.symmetry, pose=opts.pose, seed=seed, engine=opts.engine,
             )
             state.runner.submit(job_id, pipelines.generation(state.provider, req))
             jobs.append(to_out(job))
@@ -319,6 +330,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         return {
             "provider": provider.name,
             "provider_info": getattr(provider, "info", {}),
+            "engines": getattr(provider, "engines", []),
+            "default_engine": getattr(provider, "default_engine", None),
             "capabilities": sorted(provider.capabilities),
             "styles": [{"id": k, "label": v[0]} for k, v in STYLES.items()],
             "poses": [{"id": k, "label": v[0]} for k, v in POSES.items()],
@@ -384,6 +397,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         style: Style = Form("auto"),
         seed: int | None = Form(None, ge=0, le=2**31 - 1),
         variants: int = Form(1, ge=1, le=4),
+        engine: str | None = Form(None, max_length=40),
     ):
         inputs: list[InputImage] = []
         extra = {}
@@ -401,7 +415,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             raise HTTPException(400, "Máximo 4 imágenes")
         mode = "multi_image" if len(inputs) > 1 else "image"
         require(request, mode, "Multi-imagen a 3D" if mode == "multi_image" else "Imagen a 3D")
-        opts = GenerationOptions(quality=quality, style=style, seed=seed, variants=variants)
+        opts = GenerationOptions(quality=quality, style=style, seed=seed, variants=variants, engine=engine or None)
         return create_generation_jobs(request, mode, (prompt or "").strip() or None, opts, inputs, extra)
 
     @app.post("/api/jobs/upload", response_model=JobOut, status_code=201)
@@ -602,6 +616,27 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         name = f"{job_title(parent)} · {REMESH_LABELS[body.mode]}"
         return create_derived_job(request, parent, "remesh", work, name, body.model_dump())
 
+    @app.post("/api/jobs/{job_id}/enhance", response_model=JobOut, status_code=201)
+    async def enhance(request: Request, job_id: str, body: EnhanceIn):
+        """HD textures: AI upscaling (Real-ESRGAN) up to 2K/4K/8K plus PBR maps from the base colour."""
+        parent, path = ready_model(request, job_id)
+        provider = request.app.state.provider
+        upscaler = provider.upscale_image if "upscale" in provider.capabilities else None
+        label = {"local": "IA local (Real-ESRGAN)", "fal": "IA en la nube (Real-ESRGAN)"}.get(provider.name, "IA")
+        job_ref: dict = {}
+
+        async def work(on_progress):
+            await on_progress(10, "Ampliando texturas" + (" con IA" if upscaler else ""))
+            glb, report = await textures.enhance(path.read_bytes(), body.target, 4, body.pbr, upscaler, label)
+            request.app.state.store.update_params(job_ref["id"], {
+                "method": report.method, "sizes": [list(s) for s in report.after], "textures": report.textures})
+            return GenerationResult(model_glb=glb)
+
+        out = create_derived_job(request, parent, "enhance", work, f"{job_title(parent)} · {body.target.upper()}",
+                                 body.model_dump())
+        job_ref["id"] = out.id
+        return out
+
     @app.post("/api/jobs/{job_id}/repair", response_model=JobOut, status_code=201)
     async def repair(request: Request, job_id: str):
         parent, path = ready_model(request, job_id)
@@ -619,10 +654,10 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         require(request, "retexture", "El retexturizado")
         parent, path = ready_model(request, job_id)
         seed = body.seed if body.seed is not None else new_seed()
-        req = GenerationRequest(mode="text", prompt=body.prompt.strip(), quality=parent["quality"],
-                                style=body.style, seed=seed)
+        quality = {"2k": "draft", "4k": "standard", "8k": "high"}[body.resolution]
+        req = GenerationRequest(mode="text", prompt=body.prompt.strip(), quality=quality, style=body.style, seed=seed)
         work = pipelines.retexture(request.app.state.provider, path, req)
-        params = {"style": body.style, "seed": seed}
+        params = {"style": body.style, "seed": seed, "resolution": body.resolution}
         return create_derived_job(request, parent, "retexture", work, f"{job_title(parent)} · {req.prompt}",
                                   params, prompt=req.prompt)
 
@@ -634,6 +669,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             "presets": [{"id": k, "label": p.label, "duration": p.duration, "loop": p.loop, "tags": p.tags}
                         for k, p in rigging.PRESETS.items()],
             "default": rigging.DEFAULT_PRESETS,
+            "library": [{"id": c["id"], "label": c["label"], "category": c["category"], "seconds": c["seconds"]}
+                        for c in rigging.mocap.catalogue().values()],
             "markers": [{"id": m, "label": rigging.MARKER_LABELS[m]} for m in rigging.MARKERS],
         }
 
@@ -665,7 +702,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
 
     def submit_rig(request: Request, parent: dict, body: RigIn, bvh: list[tuple[str, str, bytes]],
                    keep_bvh: list[str]) -> JobOut:
-        unknown = [a for a in body.animations if a not in rigging.PRESETS]
+        unknown = [a for a in body.animations if a not in rigging.PRESETS and a not in rigging.mocap.catalogue()]
         if unknown:
             raise HTTPException(422, f"Animaciones desconocidas: {', '.join(unknown)}")
         source, path = rig_source(request, parent)
@@ -757,7 +794,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         parent = generative_parent(request, job_id)
         p = parent["params"]
         opts = GenerationOptions(quality="high", style=p.get("style", "auto"), symmetry=p.get("symmetry", False),
-                                 pose=p.get("pose", "none"), seed=p.get("seed"))
+                                 pose=p.get("pose", "none"), seed=p.get("seed"), engine=p.get("engine"))
         images = load_inputs(parent)
         mode = parent["mode"]
         if mode == "text" and parent["input_image"]:  # reference image from the text -> image step
@@ -770,7 +807,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         parent = generative_parent(request, job_id)
         p = parent["params"]
         opts = GenerationOptions(quality=parent["quality"], style=p.get("style", "auto"),
-                                 symmetry=p.get("symmetry", False), pose=p.get("pose", "none"), variants=body.count)
+                                 symmetry=p.get("symmetry", False), pose=p.get("pose", "none"), variants=body.count,
+                                 engine=p.get("engine"))
         return create_generation_jobs(request, parent["mode"], parent["prompt"], opts, load_inputs(parent),
                                       {"variation_of": parent["id"]}, parent["id"])
 

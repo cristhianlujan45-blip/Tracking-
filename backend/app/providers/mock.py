@@ -231,6 +231,8 @@ def draw_concept(kind: str, hue: np.ndarray, rng: np.random.Generator, size: int
 
 class MockProvider:
     name = "mock"
+    engines = [{"id": "demo", "label": "Demo (sin IA)", "description": "Formas procedurales para probar la app.",
+                "native_text": True, "max_views": 4, "tags": []}]
     capabilities = frozenset({"text", "image", "multi_image", "concepts", "retexture", "depth"})
 
     def __init__(self, step_delay: float = 0.6):

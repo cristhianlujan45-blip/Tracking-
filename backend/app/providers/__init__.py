@@ -23,9 +23,8 @@ def build_provider(settings: Settings) -> Provider:
     if settings.provider == "fal":
         return FalProvider(
             api_key=settings.fal_key,
-            image_to_3d_model=settings.fal_image_to_3d_model,
             text_to_image_model=settings.fal_text_to_image_model,
-            multi_image_model=settings.fal_multi_image_model,
+            default_engine=settings.fal_engine,
             depth_model=settings.fal_depth_model,
             timeout_s=settings.fal_timeout_s,
         )

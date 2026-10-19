@@ -45,6 +45,9 @@ class LocalProvider:
         self.transport = transport  # tests inject the worker app in-process
         self.capabilities = DEFAULT_CAPABILITIES
         self.info: dict = {}
+        self.engines = [{"id": "hunyuan2mini", "label": "Hunyuan3D-2mini (tu GPU)",
+                         "description": "Gratis y privado, en tu tarjeta gráfica.", "native_text": False,
+                         "max_views": 4, "tags": ["local"]}]
 
     def _client(self, timeout: float = 120) -> httpx.AsyncClient:
         return httpx.AsyncClient(base_url=self.url, headers=self.headers, timeout=timeout, transport=self.transport)
@@ -94,6 +97,11 @@ class LocalProvider:
         async with self._client() as client:
             resp = await self._call(client.post("/depth", json={"image": _b64(image.data)}, timeout=300))
             return base64.b64decode(resp.json()["depth"])
+
+    async def upscale_image(self, png: bytes, scale: int) -> bytes:
+        async with self._client() as client:
+            resp = await self._call(client.post("/upscale", json={"image": _b64(png), "scale": scale}, timeout=900))
+            return base64.b64decode(resp.json()["image"])
 
     # ------------------------------------------------------------ helpers
 

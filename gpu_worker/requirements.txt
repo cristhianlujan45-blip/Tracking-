@@ -7,3 +7,4 @@ trimesh>=4.4
 diffusers>=0.31
 transformers>=4.46
 accelerate>=1.0
+spandrel>=0.4      # Real-ESRGAN para ampliar texturas

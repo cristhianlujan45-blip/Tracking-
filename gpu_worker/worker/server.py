@@ -42,6 +42,11 @@ class DepthIn(BaseModel):
     image: str  # base64
 
 
+class UpscaleIn(BaseModel):
+    image: str  # base64
+    scale: int = Field(4, ge=2, le=4)
+
+
 class TaskIn(BaseModel):
     kind: Literal["mesh", "texture"] = "mesh"
     images: list[str] = Field(min_length=1, max_length=4)  # base64 (PNG/JPG/WEBP)
@@ -153,6 +158,21 @@ def create_app(backend: Backend, token: str | None = None) -> FastAPI:
             log.exception("Estimación de profundidad falló")
             raise HTTPException(500, friendly_error(exc)) from exc
         return {"depth": base64.b64encode(png_bytes(result)).decode()}
+
+    @app.post("/upscale")
+    async def upscale(body: UpscaleIn):
+        if "upscale" not in backend.capabilities():
+            raise HTTPException(400, "Este worker no amplía texturas")
+        image = decode_image(body.image)
+        if max(image.size) * body.scale > 8192:
+            raise HTTPException(413, "El resultado superaría 8192 px")
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(gpu, backend.upscale, image, body.scale)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Ampliación falló")
+            raise HTTPException(500, friendly_error(exc)) from exc
+        return {"image": base64.b64encode(png_bytes(result)).decode()}
 
     @app.post("/tasks", status_code=202)
     async def create_task(body: TaskIn):

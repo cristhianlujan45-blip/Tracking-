@@ -14,12 +14,13 @@ import trimesh
 
 from ..geometry import GeometryError, load_scene
 from .animations import DEFAULT_PRESETS, PRESETS, Clip, preset_clip, retarget_bvh
+from . import mocap
 from .gltf_writer import Primitive, write_glb
 from .skeleton import (DEFORM_JOINTS, JOINT_INDEX, MARKER_LABELS, MARKERS, RigError, Skeleton, build_skeleton,
                        estimate_markers, guess_yaw, mirror_markers, yaw_matrix)
 from .skinning import compute_skin, limit_influences
 
-__all__ = ["PRESETS", "DEFAULT_PRESETS", "MARKERS", "MARKER_LABELS", "RigError", "RigResult", "prepare", "auto_markers",
+__all__ = ["mocap", "PRESETS", "DEFAULT_PRESETS", "MARKERS", "MARKER_LABELS", "RigError", "RigResult", "prepare", "auto_markers",
            "rig", "mirror_markers"]
 
 
@@ -113,7 +114,15 @@ def rig(glb: bytes, markers: dict | None = None, yaw: int | None = None, presets
         primitives.append(_primitive(mesh, deform_index[idx], w, i))
         start += n
 
-    clips: list[Clip] = [preset_clip(skeleton, name) for name in (presets if presets is not None else DEFAULT_PRESETS)]
+    clips: list[Clip] = []
+    for name in presets if presets is not None else DEFAULT_PRESETS:
+        if name in PRESETS:
+            clips.append(preset_clip(skeleton, name))
+        elif name in mocap.catalogue():  # bundled motion capture
+            clips.append(retarget_bvh(skeleton, mocap.clip_text(name), name=mocap.catalogue()[name]["label"],
+                                      in_place=in_place))
+        else:
+            raise RigError(f"Animación desconocida: {name}")
     for name, text in bvh or []:
         clips.append(retarget_bvh(skeleton, text, name=name, in_place=in_place))
     return RigResult(write_glb(primitives, skeleton, clips), used_markers, prep.yaw, skeleton.as_dict(),

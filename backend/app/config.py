@@ -32,12 +32,9 @@ class Settings:
     max_upload_bytes: int = field(default_factory=lambda: int(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024)
 
     fal_key: str = field(default_factory=lambda: os.getenv("FAL_KEY", ""))
-    fal_image_to_3d_model: str = field(default_factory=lambda: os.getenv("FAL_IMAGE_TO_3D_MODEL", "fal-ai/trellis"))
+    fal_engine: str = field(default_factory=lambda: os.getenv("FAL_ENGINE", "hunyuan3d_v3"))
     fal_text_to_image_model: str = field(
         default_factory=lambda: os.getenv("FAL_TEXT_TO_IMAGE_MODEL", "fal-ai/flux/schnell")
-    )
-    fal_multi_image_model: str = field(
-        default_factory=lambda: os.getenv("FAL_MULTI_IMAGE_MODEL", "fal-ai/trellis/multi")
     )
     fal_depth_model: str = field(default_factory=lambda: os.getenv("FAL_DEPTH_MODEL", "fal-ai/imageutils/depth"))
     fal_timeout_s: float = field(default_factory=lambda: float(os.getenv("FAL_TIMEOUT_S", "600")))

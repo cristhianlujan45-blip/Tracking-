@@ -429,3 +429,22 @@ def test_blender_addon_download(client):
     assert 'filename="forja3d_blender.py"' in resp.headers["content-disposition"]
     assert 'DEFAULT_SERVER = "http://testserver"' in resp.text
     compile(resp.text, "forja3d_blender.py", "exec")  # valid Python
+
+
+def test_enhance_textures_to_hd_with_pbr(client):
+    scene = wait_done(client, client.post("/api/jobs/scene", files={"image": ("f.jpg", _photo(), "image/jpeg")},
+                                          data={"kind": "scene", "resolution": 64}).json()["id"])
+    resp = client.post(f"/api/jobs/{scene['id']}/enhance", json={"target": "2k", "pbr": True})
+    assert resp.status_code == 201, resp.text
+    job = wait_done(client, resp.json()["id"])
+    assert job["status"] == "succeeded", job["error"]
+    assert job["mode"] == "enhance" and job["params"]["method"].startswith("CPU")
+    assert max(job["params"]["sizes"][0]) == 640  # 160 px photo ×4, under the 2K cap
+    gltf = __import__("json").loads(client.get(job["model_url"]).content[20:20 + int.from_bytes(
+        client.get(job["model_url"]).content[12:16], "little")])
+    assert "normalTexture" in gltf["materials"][0]
+    assert "metallicRoughnessTexture" in gltf["materials"][0]["pbrMetallicRoughness"]
+
+    plain = make_job(client, "una roca")  # vertex colours only
+    failed = wait_done(client, client.post(f"/api/jobs/{plain['id']}/enhance", json={}).json()["id"])
+    assert failed["status"] == "failed" and "texturas" in failed["error"]

@@ -9,7 +9,7 @@ from typing import Awaitable, Callable, Protocol
 ProgressCallback = Callable[[int, str], Awaitable[None]]
 
 # What a provider can do; the UI hides features the active provider lacks.
-CAPABILITIES = ("text", "image", "multi_image", "concepts", "retexture", "depth")
+CAPABILITIES = ("text", "image", "multi_image", "concepts", "retexture", "depth", "upscale")
 
 
 @dataclass
@@ -28,6 +28,7 @@ class GenerationRequest:
     symmetry: bool = False
     pose: str = "none"  # "none" | "a-pose" | "t-pose"
     seed: int = 0
+    engine: str | None = None  # provider-specific 3D engine (None = provider default)
 
 
 @dataclass
@@ -60,4 +61,8 @@ class Provider(Protocol):
 
     async def estimate_depth(self, image: InputImage) -> bytes:
         """Monocular depth map as a grayscale PNG, brighter = closer (scenes and reliefs)."""
+        ...
+
+    async def upscale_image(self, png: bytes, scale: int) -> bytes:
+        """AI super-resolution of a texture (Real-ESRGAN), returns PNG/JPEG bytes."""
         ...

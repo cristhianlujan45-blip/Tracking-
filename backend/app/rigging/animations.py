@@ -515,11 +515,26 @@ def retarget_bvh(skeleton: Skeleton, text: str, name: str = "mocap", in_place: b
     scale = tgt_leg / src_leg if src_leg > 1e-9 else skeleton.height / max(np.ptp(src_rest[:, 1]), 1e-9)
     hips = src_index["Hips"]
     offsets = (src_pos[:, hips] - src_pos[0, hips]) * scale
-    offsets[:, 1] += (src_pos[0, hips, 1] - src_rest[hips, 1]) * scale  # keep crouched starts crouched
+    # vertical: hips height above the floor (y=0 in BVH space) versus the source's standing height,
+    # so crouches, jumps and sitting keep their real height whatever the root OFFSET convention
+    feet = [src_index[n] for n in ("LeftFoot", "RightFoot", "LeftToeBase", "RightToeBase") if n in src_index]
+    standing = src_rest[hips, 1] - (src_rest[feet, 1].min() if feet else 0.0)
+    offsets[:, 1] = (src_pos[:, hips, 1] - standing) * scale
     if in_place:
         offsets[:, [0, 2]] = 0.0
     times = np.arange(frames) / FPS
+    calibrate_floor(skeleton, rotations, offsets)
+    ground_feet(skeleton, rotations, offsets, "clamp")
     return Clip(name, times, rotations, offsets, loop=False)
+
+
+def calibrate_floor(skeleton: Skeleton, rotations: np.ndarray, offsets: np.ndarray) -> None:
+    """Shift the clip vertically so the feet's contact level (5th percentile of the lowest foot)
+    matches the character's floor: mocap floors are rarely exactly at y=0."""
+    floor = skeleton.positions[FOOT_JOINTS, 1].min()
+    sample = range(0, len(rotations), max(1, len(rotations) // 60))
+    lowest = [forward_kinematics(skeleton, rotations[i], offsets[i])[FOOT_JOINTS, 1].min() for i in sample]
+    offsets[:, 1] -= np.percentile(lowest, 5) - floor
 
 
 # ---------------------------------------------------------------- forward kinematics (tests, previews)

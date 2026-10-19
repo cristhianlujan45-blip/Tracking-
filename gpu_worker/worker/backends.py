@@ -14,6 +14,7 @@ from __future__ import annotations
 import gc
 import io
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
@@ -56,6 +57,10 @@ class Backend(Protocol):
         """Grayscale depth map (mode L or I;16), brighter = closer."""
         ...
 
+    def upscale(self, image: Image.Image, scale: int) -> Image.Image:
+        """Super-resolution ×2/×4 of a texture."""
+        ...
+
 
 def png_bytes(img: Image.Image) -> bytes:
     out = io.BytesIO()
@@ -77,7 +82,7 @@ class DummyBackend:
         self.multiview = multiview
 
     def capabilities(self) -> set[str]:
-        caps = {"text", "image", "concepts", "depth"}
+        caps = {"text", "image", "concepts", "depth", "upscale"}
         if self.multiview:
             caps.add("multi_image")
         if self.texture:
@@ -86,6 +91,10 @@ class DummyBackend:
 
     def info(self) -> dict:
         return {"gpu": "ninguna (dummy)", "vram_gb": 0, "models": ["dummy"]}
+
+    def upscale(self, image: Image.Image, scale: int) -> Image.Image:
+        time.sleep(self.delay / 2)
+        return image.convert("RGB").resize((image.width * scale, image.height * scale), Image.BICUBIC)
 
     def estimate_depth(self, image: Image.Image) -> Image.Image:
         time.sleep(self.delay / 2)
@@ -160,6 +169,7 @@ class HunyuanBackend:
         self.image_model = image_model
         self.depth_model = depth_model
         self._depth = None
+        self._esrgan = None
         self.texture = texture
         self.multiview = multiview
         self.device = device
@@ -169,7 +179,7 @@ class HunyuanBackend:
     # ------------------------------------------------------------ meta
 
     def capabilities(self) -> set[str]:
-        caps = {"text", "image", "concepts", "depth"}
+        caps = {"text", "image", "concepts", "depth", "upscale"}
         if self.multiview:
             caps.add("multi_image")
         if self.texture:
@@ -328,6 +338,42 @@ class HunyuanBackend:
         depth = (depth - depth.min()) / max(float(depth.max() - depth.min()), 1e-6)
         img = Image.fromarray((depth * 65535).astype(np.uint16))  # 16-bit keeps smooth gradients for reliefs
         return img.resize(image.size, Image.BILINEAR) if img.size != image.size else img
+
+    ESRGAN_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+
+    def upscale(self, image: Image.Image, scale: int) -> Image.Image:
+        """Real-ESRGAN ×4 (spandrel) in overlapping 256 px tiles so 8 GB of VRAM is plenty."""
+        import torch
+        from spandrel import ModelLoader
+
+        if self._esrgan is None:
+            path = os.path.join(torch.hub.get_dir(), "forja3d", "RealESRGAN_x4plus.pth")
+            if not os.path.exists(path):
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                log.info("Descargando Real-ESRGAN …")
+                torch.hub.download_url_to_file(self.ESRGAN_URL, path)
+            self._esrgan = ModelLoader().load_from_file(path).model.eval()
+        if self.device != "cpu":
+            self._activate("none")  # free the big pipelines; the upscaler itself is ~70 MB
+        dtype = torch.float16 if self.device != "cpu" else torch.float32
+        model = self._esrgan.to(self.device, dtype)
+        src = torch.from_numpy(np.asarray(image.convert("RGB"), dtype=np.float32) / 255).permute(2, 0, 1)[None]
+        _, _, h, w = src.shape
+        tile, pad, s = 256, 16, 4
+        out = torch.zeros((1, 3, h * s, w * s))
+        with torch.inference_mode():
+            for y in range(0, h, tile):
+                for x in range(0, w, tile):
+                    y0, x0 = max(y - pad, 0), max(x - pad, 0)
+                    y1, x1 = min(y + tile + pad, h), min(x + tile + pad, w)
+                    piece = model(src[:, :, y0:y1, x0:x1].to(self.device, dtype)).float().cpu()
+                    th, tw = min(tile, h - y), min(tile, w - x)
+                    out[:, :, y * s:(y + th) * s, x * s:(x + tw) * s] = piece[
+                        :, :, (y - y0) * s:(y - y0 + th) * s, (x - x0) * s:(x - x0 + tw) * s]
+        result = Image.fromarray((out[0].clamp(0, 1).permute(1, 2, 0).numpy() * 255).astype(np.uint8))
+        if scale != 4:
+            result = result.resize((w * scale, h * scale), Image.LANCZOS)
+        return result
 
     def texture_mesh(self, job: MeshJob, progress: Progress) -> bytes:
         import trimesh

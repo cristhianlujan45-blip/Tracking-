@@ -58,7 +58,7 @@ def test_config_reports_worker(client):
     cfg = client.get("/api/config").json()
     assert cfg["provider"] == "local"
     assert cfg["provider_info"]["gpu"] == "ninguna (dummy)"
-    assert set(cfg["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth"}
+    assert set(cfg["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth", "upscale"}
 
 
 def test_text_to_3d_keeps_reference_image(client):
@@ -104,3 +104,17 @@ def test_scene_uses_worker_depth(client):
     job = wait_done(client, job["id"])
     assert job["status"] == "succeeded", job["error"]
     assert client.get(job["depth_url"]).status_code == 200
+
+
+def test_enhance_uses_worker_upscaler(client):
+    import io as _io
+
+    from PIL import Image as _Image
+
+    out = _io.BytesIO()
+    _Image.new("RGB", (64, 48), (90, 140, 200)).save(out, format="PNG")
+    scene = wait_done(client, client.post("/api/jobs/scene", files={"image": ("f.png", out.getvalue(), "image/png")},
+                                          data={"kind": "scene", "resolution": 32}).json()["id"])
+    job = wait_done(client, client.post(f"/api/jobs/{scene['id']}/enhance", json={"target": "2k"}).json()["id"])
+    assert job["status"] == "succeeded", job["error"]
+    assert job["params"]["method"] == "IA local (Real-ESRGAN)" and job["params"]["sizes"] == [[256, 192]]

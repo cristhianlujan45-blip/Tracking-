@@ -36,7 +36,7 @@ def wait(client, task_id, timeout=10):
 def test_health(client):
     body = client.get("/health").json()
     assert body["backend"] == "dummy"
-    assert set(body["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth"}
+    assert set(body["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth", "upscale"}
 
 
 def test_images(client):
@@ -103,3 +103,11 @@ def test_depth(client):
     assert resp.status_code == 200
     depth = Image.open(io.BytesIO(base64.b64decode(resp.json()["depth"])))
     assert depth.size == (64, 64) and depth.mode == "L"
+
+
+def test_upscale(client):
+    resp = client.post("/upscale", json={"image": b64_png(), "scale": 4})
+    assert resp.status_code == 200
+    img = Image.open(io.BytesIO(base64.b64decode(resp.json()["image"])))
+    assert img.size == (256, 256)
+    assert client.post("/upscale", json={"image": b64_png(), "scale": 8}).status_code == 422

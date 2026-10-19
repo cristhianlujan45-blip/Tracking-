@@ -276,3 +276,30 @@ def test_markers_auto_on_rigged_character(client, character):
     assert fresh["markers"]["chin"][1] > 1.3 and fresh["view_yaw"] == 0
     turned = client.post(f"/api/jobs/{rigged['id']}/rig/markers", json={"yaw": 90, "auto": True}).json()
     assert turned["yaw"] == 90 and turned["view_yaw"] == 90
+
+
+def test_mocap_library_clips(client, character):
+    library = client.get("/api/rig/presets").json()["library"]
+    assert len(library) >= 60 and {"Caminar", "Baile", "Combate"} <= {c["category"] for c in library}
+    walk = next(c for c in library if c["label"] == "Caminar triste")
+    job = wait_done(client, client.post(f"/api/jobs/{character['id']}/rig",
+                                        json={"animations": ["idle", walk["id"], "cmu_17_10"]}).json()["id"])
+    assert job["status"] == "succeeded", job["error"]
+    assert job["params"]["clips"] == ["idle", "Caminar triste", "Boxeo"]
+    names = [a["name"] for a in gltf_json(client.get(job["model_url"]).content)["animations"]]
+    assert names == ["idle", "Caminar triste", "Boxeo"]
+
+
+def test_every_library_clip_retargets_with_feet_on_floor():
+    from app.rigging import mocap
+    from app.rigging.animations import FOOT_JOINTS
+
+    mesh = humanoid()
+    sk = build_skeleton(mesh.vertices, estimate_markers(mesh))
+    floor = sk.positions[FOOT_JOINTS, 1].min()
+    for clip_id, entry in mocap.catalogue().items():
+        clip = retarget_bvh(sk, mocap.clip_text(clip_id), name=entry["label"])
+        lows = [forward_kinematics(sk, clip.rotations[i], clip.hips_offset[i])[FOOT_JOINTS, 1].min()
+                for i in range(0, len(clip.times), max(1, len(clip.times) // 60))]
+        assert min(lows) >= floor - 1e-6, clip_id
+        assert np.percentile(lows, 5) == pytest.approx(floor, abs=0.03 * sk.height), clip_id
