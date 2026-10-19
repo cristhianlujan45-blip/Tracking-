@@ -664,7 +664,11 @@ $("#btnCopyLink").addEventListener("click", async () => {
   try {
     state.config = await api("/api/config");
     const el = $("#provider");
-    el.textContent = state.config.provider === "mock" ? "Modo demo (sin IA)" : `IA: ${state.config.provider}`;
+    const gpu = state.config.provider_info?.gpu;
+    el.textContent =
+      state.config.provider === "mock" ? "Modo demo (sin IA)"
+      : state.config.provider === "local" ? (gpu ? `IA local · ${gpu}` : "IA local · worker sin conexión")
+      : `IA: ${state.config.provider}`;
     el.classList.toggle("real", state.config.provider !== "mock");
   } catch {
     $("#provider").textContent = "sin conexión";

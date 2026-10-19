@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import random
@@ -17,13 +18,14 @@ from typing import Literal
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 from pydantic import BaseModel, Field
 
 from . import geometry, pipelines
 from .config import Settings, get_settings
 from .db import JobStore
 from .jobs import JobRunner
-from .providers import GenerationError, GenerationRequest, InputImage, build_provider
+from .providers import GenerationError, GenerationRequest, InputImage, Provider, build_provider
 from .styles import POSES, STYLES
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
@@ -154,7 +156,7 @@ def new_seed() -> int:
 # ---------------------------------------------------------------- app
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, provider: Provider | None = None) -> FastAPI:
     settings = settings or get_settings()
     concepts_dir = settings.files_dir / "concepts"
 
@@ -164,7 +166,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store = JobStore(settings.db_path)
         store.fail_interrupted()
         app.state.store = store
-        app.state.provider = build_provider(settings)
+        app.state.provider = provider or build_provider(settings)
+        if hasattr(app.state.provider, "start"):
+            await app.state.provider.start()
         app.state.runner = JobRunner(store, settings.files_dir, settings.max_concurrent_jobs)
         yield
         await app.state.runner.shutdown()
@@ -256,6 +260,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(413, f"La imagen supera {settings.max_upload_bytes // (1024 * 1024)} MB")
         if not data:
             raise HTTPException(400, "La imagen está vacía")
+        try:
+            with Image.open(io.BytesIO(data)) as img:
+                img.verify()
+        except Exception as exc:  # noqa: BLE001 - PIL raises many types for corrupt files
+            raise HTTPException(400, "La imagen está dañada o no es válida") from exc
         return InputImage(data, mime)
 
     # ------------------------------------------------------------ meta
@@ -267,8 +276,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/config")
     async def config(request: Request):
         provider = request.app.state.provider
+        if hasattr(provider, "start") and not provider.info:  # worker was down at startup: retry
+            await provider.start()
         return {
             "provider": provider.name,
+            "provider_info": getattr(provider, "info", {}),
             "capabilities": sorted(provider.capabilities),
             "styles": [{"id": k, "label": v[0]} for k, v in STYLES.items()],
             "poses": [{"id": k, "label": v[0]} for k, v in POSES.items()],

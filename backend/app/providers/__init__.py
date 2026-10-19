@@ -3,6 +3,7 @@ from __future__ import annotations
 from ..config import Settings
 from .base import CAPABILITIES, GenerationError, GenerationRequest, GenerationResult, InputImage, Provider
 from .fal import FalProvider
+from .local import LocalProvider
 from .mock import MockProvider
 
 __all__ = [
@@ -27,4 +28,8 @@ def build_provider(settings: Settings) -> Provider:
             multi_image_model=settings.fal_multi_image_model,
             timeout_s=settings.fal_timeout_s,
         )
-    raise ValueError(f"Proveedor desconocido: {settings.provider!r} (usa 'mock' o 'fal')")
+    if settings.provider == "local":
+        return LocalProvider(
+            url=settings.local_worker_url, token=settings.local_worker_token, timeout_s=settings.local_timeout_s
+        )
+    raise ValueError(f"Proveedor desconocido: {settings.provider!r} (usa 'mock', 'local' o 'fal')")

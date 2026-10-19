@@ -13,10 +13,15 @@ from app.main import create_app
 from app.providers.base import GenerationRequest
 from app.providers.mock import KEYWORDS, MockProvider, pick_color, pick_kind
 
-PNG_1PX = bytes.fromhex(
-    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
-    "1f15c4890000000d49444154789c6360f8cf00000301010018dd8db00000000049454e44ae426082"
-)
+def _png(color=(180, 40, 40)):
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (32, 32), color).save(out, format="PNG")
+    return out.getvalue()
+
+
+PNG_1PX = _png()
 
 
 @pytest.fixture
@@ -110,6 +115,8 @@ def test_image_validation(client):
     too_big = client.post("/api/jobs/image", files={"images": ("a.png", b"x" * (1024 * 1024 + 1), "image/png")})
     assert too_big.status_code == 413
     assert client.post("/api/jobs/image", data={"quality": "draft"}).status_code == 400
+    corrupt = client.post("/api/jobs/image", files={"images": ("a.png", b"\x89PNG broken", "image/png")})
+    assert corrupt.status_code == 400
     five = [("images", (f"v{i}.png", PNG_1PX, "image/png")) for i in range(5)]
     assert client.post("/api/jobs/image", files=five).status_code == 400
 

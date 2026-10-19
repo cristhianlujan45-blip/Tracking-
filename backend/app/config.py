@@ -41,6 +41,10 @@ class Settings:
     )
     fal_timeout_s: float = field(default_factory=lambda: float(os.getenv("FAL_TIMEOUT_S", "600")))
 
+    local_worker_url: str = field(default_factory=lambda: os.getenv("LOCAL_WORKER_URL", "http://127.0.0.1:8001"))
+    local_worker_token: str = field(default_factory=lambda: os.getenv("LOCAL_WORKER_TOKEN", ""))
+    local_timeout_s: float = field(default_factory=lambda: float(os.getenv("LOCAL_TIMEOUT_S", "1800")))
+
     mock_step_delay: float = field(default_factory=lambda: float(os.getenv("MOCK_STEP_DELAY", "0.6")))
 
     @property

@@ -43,6 +43,7 @@ Aplicación web propia para crear, editar y preparar modelos 3D con IA, al estil
 | STL/3MF listos para slicer, a escala en mm | ✅ | ✅ |
 | Vídeo 360°, AR, iframe | ✅ | parcial |
 | Subir y convertir tus propios modelos | ✅ | ✅ |
+| IA en tu propia GPU, sin coste por modelo | ✅ (8 GB bastan) | ❌ |
 | Autoalojado, sin suscripción, el código es tuyo | ✅ | ❌ |
 | Rigging y animación automáticos | ❌ (el visor sí reproduce animaciones) | ✅ |
 | Exportar FBX / USDZ, mapas PBR separados | ❌ | ✅ |
@@ -52,6 +53,7 @@ Aplicación web propia para crear, editar y preparar modelos 3D con IA, al estil
 
 Se eligen con `GEN_PROVIDER` en `.env`:
 
+- **`local`**: IA real **en tu propia GPU NVIDIA** (desde 8 GB de VRAM, RTX serie 50 incluidas), gratis y privada. Usa Hunyuan3D-2mini para la forma y SD-Turbo para los conceptos; varias vistas y texturas son opcionales. Ver [gpu_worker/README.md](gpu_worker/README.md).
 - **`mock`** (por defecto): sin GPU ni clave. Genera figuras procedurales y conceptos dibujados, y respeta colores, estilos y semillas. Sirve para desarrollar y hacer demos.
 - **`fal`**: IA real a través de [fal.ai](https://fal.ai):
   - imagen → 3D: **TRELLIS** (`fal-ai/trellis`) o **Hunyuan3D-2** (`fal-ai/hunyuan3d/v2`)
@@ -62,6 +64,15 @@ Se eligen con `GEN_PROVIDER` en `.env`:
 Todas las herramientas de geometría (remallado, estilos low-poly/vóxel/escultura, reparación, división, exportación) se ejecutan **en local** con cualquier proveedor.
 
 ## Arranque rápido
+
+**Windows con GPU NVIDIA** (IA local):
+
+```bat
+scripts\windows\instalar.bat
+scripts\windows\iniciar.bat
+```
+
+**Modo demo** (cualquier sistema, sin GPU):
 
 ```bash
 python3 -m venv .venv
@@ -81,11 +92,13 @@ docker build -t forja3d .
 docker run -p 8000:8000 --env-file .env -v forja3d-data:/data forja3d
 ```
 
-**Tests:** `cd backend && ../.venv/bin/python -m pytest`
+**Tests:** `cd backend && ../.venv/bin/python -m pytest` y `cd gpu_worker && ../.venv/bin/python -m pytest tests`
 
 ## Arquitectura
 
 ```
+gpu_worker/            servidor de IA local en tu GPU (Hunyuan3D-2mini, SD-Turbo)
+scripts/windows/       instalar.bat / iniciar.bat
 frontend/              HTML + JS sin build (three.js y model-viewer desde CDN)
   index.html, app.js   estudio: crear, galería, herramientas
   viewer.js            visor: modos, luces, animación, captura, vídeo 360°
@@ -97,7 +110,7 @@ backend/app/
   geometry.py          remallado, vóxeles, análisis, reparación, corte, exportación
   styles.py            estilos y construcción de prompts
   db.py                SQLite con migraciones automáticas
-  providers/           mock.py (offline) · fal.py (fal.ai) · base.py (interfaz)
+  providers/           local.py (tu GPU) · fal.py (fal.ai) · mock.py (demo) · base.py
 ```
 
 ### API
