@@ -1,17 +1,20 @@
-"""Offline provider: builds a procedural, vertex-colored mesh so the whole app works without a GPU or API key.
+"""Offline provider: builds procedural, vertex-colored meshes so the whole app works without a GPU or API key.
 
-The shape is picked from keywords in the prompt (or from a hash of the input), so the same input
-always gives the same model.
+The shape is picked from keywords in the prompt (or from a hash of the input) and the seed varies
+the details, so the same input + seed always gives the same model.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 
 import numpy as np
 import trimesh
+from PIL import Image, ImageDraw, ImageFilter
 
+from .. import geometry
 from .base import GenerationRequest, GenerationResult, ProgressCallback
 
 KEYWORDS = {
@@ -117,24 +120,105 @@ def pick_kind(prompt: str | None, seed: int) -> str:
     return FALLBACKS[seed % len(FALLBACKS)]
 
 
+def _seed_hue(req: GenerationRequest, salt: bytes = b"") -> tuple[int, np.ndarray]:
+    images = b"".join(img.data for img in req.images)
+    digest = hashlib.sha256((req.prompt or "").encode() + images + req.seed.to_bytes(8, "little") + salt).digest()
+    seed = int.from_bytes(digest[:8], "little")
+    hue = pick_color(req.prompt)
+    if hue is None:
+        hue = np.array([digest[8], digest[9], digest[10]], dtype=float) / 255 * 0.7 + 0.25
+    return seed, hue
+
+
+def draw_concept(kind: str, hue: np.ndarray, rng: np.random.Generator, size: int = 512) -> bytes:
+    """A flat illustration of the shape, standing in for a text -> image model."""
+    img = Image.new("RGB", (size, size), (246, 246, 248))
+    d = ImageDraw.Draw(img)
+    c = tuple(int(x * 255) for x in hue)
+    dark = tuple(int(x * 255 * 0.6) for x in hue)
+    s, j = size, lambda: int(rng.integers(-18, 18))
+    d.ellipse((s * 0.2, s * 0.84, s * 0.8, s * 0.92), fill=(225, 225, 230))  # shadow
+    if kind == "tree":
+        d.rectangle((s * 0.45, s * 0.65, s * 0.55, s * 0.87), fill=(115, 72, 40))
+        for k, y in enumerate((0.62, 0.47, 0.32)):
+            w = 0.3 - k * 0.06
+            d.polygon([(s * (0.5 - w), s * y + 60), (s * (0.5 + w), s * y + 60), (s * 0.5 + j(), s * (y - 0.2))],
+                      fill=(40, 140 + 20 * k, 60))
+    elif kind == "mushroom":
+        d.rectangle((s * 0.42, s * 0.5, s * 0.58, s * 0.87), fill=(238, 228, 205))
+        d.pieslice((s * 0.15 + j(), s * 0.18, s * 0.85, s * 0.78), 180, 360, fill=c)
+        for _ in range(5):
+            x, y = rng.uniform(0.28, 0.7) * s, rng.uniform(0.28, 0.44) * s
+            d.ellipse((x, y, x + 30, y + 24), fill=(250, 250, 250))
+    elif kind == "snowman":
+        for r, y in ((0.2, 0.68), (0.14, 0.42), (0.1, 0.22)):
+            d.ellipse((s * (0.5 - r), s * (y - r), s * (0.5 + r), s * (y + r)), fill=(255, 255, 255), outline=(200, 205, 215), width=3)
+        d.polygon([(s * 0.5, s * 0.22), (s * 0.5, s * 0.25), (s * 0.62, s * 0.235)], fill=(255, 130, 30))
+        d.rounded_rectangle((s * 0.36, s * 0.3, s * 0.64, s * 0.34), radius=8, fill=c)  # scarf
+        d.rectangle((s * 0.56 + j() / 2, s * 0.32, s * 0.61, s * 0.44), fill=c)
+    elif kind == "donut":
+        d.ellipse((s * 0.2, s * 0.3, s * 0.8, s * 0.8), fill=c)
+        d.ellipse((s * 0.42, s * 0.47, s * 0.58, s * 0.63), fill=(246, 246, 248))
+    elif kind == "cube":
+        a, b, h = s * 0.5, s * 0.3, s * 0.25
+        d.polygon([(a, b), (a + h, b + h * 0.5), (a, b + h), (a - h, b + h * 0.5)], fill=c)
+        d.polygon([(a - h, b + h * 0.5), (a, b + h), (a, b + h * 2.1), (a - h, b + h * 1.6)], fill=dark)
+        d.polygon([(a + h, b + h * 0.5), (a, b + h), (a, b + h * 2.1), (a + h, b + h * 1.6)],
+                  fill=tuple(int(v * 0.8) for v in c))
+    else:  # rock
+        angles = np.sort(rng.uniform(0, 2 * np.pi, 11))
+        radius = rng.uniform(0.22, 0.32, 11) * s
+        d.polygon([(s * 0.5 + r * np.cos(t), s * 0.58 + r * 0.7 * np.sin(t)) for t, r in zip(angles, radius)], fill=c)
+    img = img.filter(ImageFilter.SMOOTH)
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
 class MockProvider:
     name = "mock"
+    capabilities = frozenset({"text", "image", "multi_image", "concepts", "retexture"})
 
     def __init__(self, step_delay: float = 0.6):
         self.step_delay = step_delay
 
-    async def generate(self, req: GenerationRequest, on_progress: ProgressCallback) -> GenerationResult:
-        digest = hashlib.sha256((req.prompt or "").encode() + (req.image_bytes or b"")).digest()
-        seed = int.from_bytes(digest[:8], "little")
-        rng = np.random.default_rng(seed)
-        hue = pick_color(req.prompt)
-        if hue is None:
-            hue = np.array([digest[8], digest[9], digest[10]], dtype=float) / 255 * 0.7 + 0.25
-
-        for i, stage in enumerate(STAGES):
-            await on_progress(int(i / len(STAGES) * 100), stage)
+    async def _stages(self, on_progress: ProgressCallback, stages: list[str]) -> None:
+        for i, stage in enumerate(stages):
+            await on_progress(int(i / len(stages) * 100), stage)
             await asyncio.sleep(self.step_delay)
 
-        mesh = build_shape(pick_kind(req.prompt, seed), rng, hue)
-        glb = trimesh.Scene(mesh).export(file_type="glb")
+    async def generate(self, req: GenerationRequest, on_progress: ProgressCallback) -> GenerationResult:
+        seed, hue = _seed_hue(req)
+        await self._stages(on_progress, STAGES)
+        mesh = build_shape(pick_kind(req.prompt, seed), np.random.default_rng(seed), hue)
+        glb = geometry.mesh_to_glb(mesh)
         return GenerationResult(model_glb=glb)
+
+    async def generate_images(self, req: GenerationRequest, count: int) -> list[bytes]:
+        images = []
+        for i in range(count):
+            seed, hue = _seed_hue(req, salt=bytes([i]))
+            images.append(draw_concept(pick_kind(req.prompt, seed), hue, np.random.default_rng(seed)))
+        await asyncio.sleep(self.step_delay)
+        return images
+
+    async def retexture(self, glb: bytes, req: GenerationRequest, on_progress: ProgressCallback) -> bytes:
+        seed, hue = _seed_hue(req, salt=b"retexture")
+        await self._stages(on_progress, ["Analizando UVs", "Pintando textura", "Horneando materiales"])
+        mesh = geometry.to_color_mesh(geometry.load_scene(glb))
+        rng = np.random.default_rng(seed)
+        if req.style == "sculpture":
+            return geometry.mesh_to_glb(geometry.recolor(mesh, geometry.CLAY, rng))
+        out = geometry.recolor(mesh, hue, rng)
+        text = (req.prompt or "").lower()
+        colors = out.visual.vertex_colors.astype(float)
+        if any(w in text for w in ("rayas", "rayado", "stripes", "striped")):
+            band = (np.floor(out.vertices[:, 1] / (out.extents[1] / 10)) % 2 == 0)
+            colors[band, :3] = colors[band, :3] * 0.35 + 255 * 0.65
+        elif any(w in text for w in ("lunares", "puntos", "manchas", "spots", "dots")):
+            centers = out.vertices[rng.choice(len(out.vertices), size=min(25, len(out.vertices)), replace=False)]
+            radius = out.extents.max() * 0.06
+            near = np.min(np.linalg.norm(out.vertices[:, None] - centers[None], axis=2), axis=1) < radius
+            colors[near, :3] = 250
+        out.visual.vertex_colors = colors.astype(np.uint8)
+        return geometry.mesh_to_glb(out)

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from ..config import Settings
-from .base import GenerationError, GenerationRequest, GenerationResult, Provider
+from .base import CAPABILITIES, GenerationError, GenerationRequest, GenerationResult, InputImage, Provider
 from .fal import FalProvider
 from .mock import MockProvider
 
-__all__ = ["GenerationError", "GenerationRequest", "GenerationResult", "Provider", "build_provider"]
+__all__ = [
+    "CAPABILITIES",
+    "GenerationError",
+    "GenerationRequest",
+    "GenerationResult",
+    "InputImage",
+    "Provider",
+    "build_provider",
+]
 
 
 def build_provider(settings: Settings) -> Provider:
@@ -16,6 +24,7 @@ def build_provider(settings: Settings) -> Provider:
             api_key=settings.fal_key,
             image_to_3d_model=settings.fal_image_to_3d_model,
             text_to_image_model=settings.fal_text_to_image_model,
+            multi_image_model=settings.fal_multi_image_model,
             timeout_s=settings.fal_timeout_s,
         )
     raise ValueError(f"Proveedor desconocido: {settings.provider!r} (usa 'mock' o 'fal')")

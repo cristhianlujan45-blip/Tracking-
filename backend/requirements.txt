@@ -4,3 +4,12 @@ httpx>=0.27
 python-multipart>=0.0.9
 trimesh>=4.4
 numpy>=1.26
+scipy>=1.11
+pillow>=10
+# trimesh extras: decimation, 3MF export, plane slicing with caps, components
+fast-simplification>=0.1.7
+networkx>=3
+lxml>=5
+shapely>=2
+rtree>=1.2
+mapbox-earcut>=1.0

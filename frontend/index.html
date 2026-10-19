@@ -21,73 +21,239 @@
   </header>
 
   <main class="layout">
+    <!-- ============ CREATE ============ -->
     <aside class="panel create">
       <div class="tabs" role="tablist">
-        <button class="tab active" data-mode="text" role="tab">Texto a 3D</button>
-        <button class="tab" data-mode="image" role="tab">Imagen a 3D</button>
+        <button class="tab active" data-mode="text" role="tab">Texto</button>
+        <button class="tab" data-mode="image" role="tab">Imagen</button>
+        <button class="tab" data-mode="multi" role="tab" data-cap="multi_image">Multi-vista</button>
+        <button class="tab" data-mode="upload" role="tab">Subir</button>
       </div>
 
-      <form id="form">
-        <section class="mode mode-text">
+      <form id="form" autocomplete="off">
+        <section class="mode" data-for="text">
           <label for="prompt">Describe tu objeto</label>
-          <textarea id="prompt" rows="5" maxlength="500"
-            placeholder="Ej.: un cofre del tesoro de madera con remaches dorados, estilo low-poly"></textarea>
+          <textarea id="prompt" rows="4" maxlength="500"
+            placeholder="Ej.: un cofre del tesoro de madera con remaches dorados"></textarea>
           <div class="chips" id="examples"></div>
         </section>
 
-        <section class="mode mode-image" hidden>
+        <section class="mode" data-for="image" hidden>
           <label>Imagen de referencia</label>
-          <label class="dropzone" id="dropzone">
-            <input type="file" id="file" accept="image/png,image/jpeg,image/webp" hidden />
-            <img id="preview" alt="" hidden />
-            <span id="dropText">Arrastra una imagen o haz clic<br /><small>PNG, JPG o WEBP · máx. 10 MB · fondo limpio funciona mejor</small></span>
+          <label class="dropzone" id="dropImage">
+            <input type="file" accept="image/png,image/jpeg,image/webp" hidden />
+            <img alt="" hidden />
+            <span class="hint">Arrastra una imagen o haz clic<br /><small>PNG, JPG o WEBP · fondo limpio funciona mejor</small></span>
           </label>
+          <label for="imagePrompt">Descripción (opcional)</label>
+          <input id="imagePrompt" type="text" maxlength="500" placeholder="Ayuda a nombrar y guiar el modelo" />
         </section>
 
-        <label for="quality">Calidad</label>
-        <select id="quality">
-          <option value="draft">Borrador (rápido)</option>
-          <option value="standard" selected>Estándar</option>
-          <option value="high">Alta (lento)</option>
-        </select>
+        <section class="mode" data-for="multi" hidden>
+          <label>De 2 a 4 vistas del mismo objeto</label>
+          <div class="slots" id="slots"></div>
+          <p class="muted small">Frente, lateral, espalda… Más vistas = geometría más fiel por detrás.</p>
+        </section>
 
-        <button type="submit" class="primary" id="submit">Generar modelo 3D</button>
+        <section class="mode" data-for="upload" hidden>
+          <label>Tu modelo 3D</label>
+          <label class="dropzone" id="dropModel">
+            <input type="file" accept=".glb,.gltf,.obj,.stl,.ply,.off,.3mf" hidden />
+            <span class="hint">Arrastra un archivo 3D o haz clic<br /><small>GLB, OBJ, STL, PLY, OFF o 3MF</small></span>
+          </label>
+          <p class="muted small">Úsalo para ver, convertir, remallar, retexturizar o preparar para impresión.</p>
+        </section>
+
+        <section class="gen-options" data-for="text image multi">
+          <div data-for="text image">
+            <label>Estilo</label>
+            <div class="styles" id="styles"></div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="quality">Calidad</label>
+              <select id="quality">
+                <option value="draft">Borrador</option>
+                <option value="standard" selected>Estándar</option>
+                <option value="high">Alta (HD)</option>
+              </select>
+            </div>
+            <div>
+              <label>Variantes</label>
+              <div class="segmented" id="variants">
+                <button type="button" class="on" data-v="1">1</button><button type="button" data-v="2">2</button><button type="button" data-v="3">3</button><button type="button" data-v="4">4</button>
+              </div>
+            </div>
+          </div>
+
+          <details class="advanced" data-for="text">
+            <summary>Opciones avanzadas</summary>
+            <label class="check"><input type="checkbox" id="symmetry" /> Forzar simetría</label>
+            <label for="pose">Pose (personajes)</label>
+            <select id="pose"></select>
+            <label for="seed">Semilla</label>
+            <input id="seed" type="number" min="0" max="2147483647" placeholder="Aleatoria" />
+          </details>
+        </section>
+
+        <div class="actions">
+          <button type="button" class="secondary" id="btnConcepts" data-for="text" data-cap="concepts">✦ Ver conceptos</button>
+          <button type="submit" class="primary" id="submit">Generar modelo 3D</button>
+        </div>
         <p class="error" id="formError" hidden></p>
+
+        <section class="concepts" id="concepts" hidden>
+          <div class="concepts-head">
+            <label>Elige un concepto</label>
+            <button type="button" class="link" id="btnConceptsMore">↻ Otros</button>
+          </div>
+          <div class="concept-grid" id="conceptGrid"></div>
+          <button type="button" class="primary" id="btnConceptTo3d" disabled>Convertir concepto en 3D</button>
+        </section>
       </form>
     </aside>
 
-    <section class="panel stage">
-      <div class="viewer-wrap">
-        <canvas id="viewer"></canvas>
-        <div class="viewer-empty" id="viewerEmpty">Genera o selecciona un modelo para verlo aquí</div>
-        <div class="viewer-loading" id="viewerLoading" hidden><div class="spinner"></div></div>
+    <!-- ============ STAGE ============ -->
+    <section class="stage">
+      <div class="panel viewer-panel">
+        <div class="viewer-wrap">
+          <canvas id="viewer"></canvas>
+          <div class="viewer-empty" id="viewerEmpty">Genera o selecciona un modelo para verlo aquí</div>
+          <div class="viewer-loading" id="viewerLoading" hidden><div class="spinner"></div><div id="viewerProgress"></div></div>
+          <div class="viewer-hud">
+            <div class="segmented" id="viewModes" title="Modo de vista">
+              <button class="on" data-view="textured">Textura</button><button data-view="clay">Arcilla</button><button data-view="normals">Normales</button><button data-view="wireframe">Malla</button>
+            </div>
+            <select id="lighting" title="Iluminación">
+              <option value="studio">Estudio</option>
+              <option value="outdoor">Exterior</option>
+              <option value="night">Noche</option>
+            </select>
+          </div>
+          <div class="anim-bar" id="animBar" hidden>
+            <select id="animClip"></select>
+            <button class="tool" id="btnAnimPlay">⏸</button>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="title" id="viewerTitle"></div>
+          <button class="tool" id="btnRotate" aria-pressed="true" title="Rotación automática">⟳</button>
+          <button class="tool" id="btnGrid" aria-pressed="true" title="Rejilla">#</button>
+          <button class="tool" id="btnReset" title="Encuadrar">⌖</button>
+          <button class="tool" id="btnShot" title="Captura PNG">📷</button>
+          <button class="tool" id="btnVideo" title="Vídeo 360° (WebM)">🎬 360°</button>
+        </div>
+        <div class="stats" id="stats"></div>
       </div>
-      <div class="toolbar">
-        <div class="title" id="viewerTitle"></div>
-        <button class="tool" id="btnRotate" aria-pressed="true" title="Rotación automática">⟳ Girar</button>
-        <button class="tool" id="btnWire" aria-pressed="false" title="Ver malla">▦ Malla</button>
-        <button class="tool" id="btnReset" title="Encuadrar">⌖ Encuadrar</button>
-        <a class="tool primary-ghost" id="btnDownload" download hidden>⬇ Descargar GLB</a>
+
+      <div class="panel gallery">
+        <div class="gallery-head">
+          <h2>Mis modelos</h2>
+          <div class="segmented small" id="filters">
+            <button class="on" data-f="all">Todos</button><button data-f="fav">★</button><button data-f="gen">IA</button><button data-f="tools">Editados</button><button data-f="active">En curso</button>
+          </div>
+          <input id="search" type="search" placeholder="Buscar…" />
+        </div>
+        <ul id="jobs" class="jobs"></ul>
+        <p class="muted" id="jobsEmpty">Aún no hay modelos.</p>
       </div>
-      <div class="stats" id="stats"></div>
     </section>
 
-    <aside class="panel gallery">
-      <h2>Mis modelos</h2>
-      <ul id="jobs" class="jobs"></ul>
-      <p class="muted" id="jobsEmpty">Aún no hay modelos.</p>
+    <!-- ============ TOOLS ============ -->
+    <aside class="panel tools" id="tools">
+      <p class="muted" id="toolsEmpty">Selecciona un modelo para editarlo, exportarlo o compartirlo.</p>
+      <div id="toolsBody" hidden>
+        <div class="tools-head">
+          <h2 id="toolTitle"></h2>
+          <button class="icon" id="btnFav" title="Favorito">☆</button>
+          <button class="icon" id="btnRename" title="Renombrar">✎</button>
+        </div>
+        <div class="meta-list" id="toolMeta"></div>
+
+        <details open data-need="generative">
+          <summary>Generación</summary>
+          <div class="btn-row">
+            <button class="secondary" id="btnRefine" title="Misma entrada y semilla en calidad alta">⇪ Refinar HD</button>
+            <button class="secondary" id="btnVariations" title="Nuevas semillas">⧉ 3 variaciones</button>
+          </div>
+          <button class="link" id="btnRemix">↺ Cargar parámetros en el formulario</button>
+        </details>
+
+        <details open>
+          <summary>Remallado y estilo</summary>
+          <select id="remeshMode">
+            <option value="decimate">Reducir polígonos</option>
+            <option value="lowpoly">Low-poly facetado</option>
+            <option value="voxel">Vóxeles</option>
+            <option value="smooth">Suavizar</option>
+          </select>
+          <div class="range" id="facesRow">
+            <label for="remeshFaces">Triángulos objetivo <b id="facesValue"></b></label>
+            <input type="range" id="remeshFaces" min="2.3" max="5.3" step="0.05" value="3.7" />
+          </div>
+          <div class="range" id="resRow" hidden>
+            <label for="remeshRes">Resolución <b id="resValue"></b></label>
+            <input type="range" id="remeshRes" min="8" max="96" step="1" value="32" />
+          </div>
+          <button class="secondary wide" id="btnRemesh">Aplicar</button>
+        </details>
+
+        <details data-cap="retexture">
+          <summary>Texturizado IA</summary>
+          <textarea id="retexPrompt" rows="2" maxlength="500" placeholder="Ej.: madera envejecida con rayas doradas"></textarea>
+          <select id="retexStyle"></select>
+          <button class="secondary wide" id="btnRetexture">Retexturizar</button>
+        </details>
+
+        <details>
+          <summary>Impresión 3D</summary>
+          <div id="printReport" class="report muted">Analizando…</div>
+          <div class="btn-row">
+            <button class="secondary" id="btnRepair">🩹 Reparar</button>
+          </div>
+          <div class="row">
+            <select id="splitMode">
+              <option value="height">Cortar por altura</option>
+              <option value="components">Separar piezas</option>
+            </select>
+            <input id="splitParts" type="number" min="2" max="8" value="2" title="Número de cortes" />
+          </div>
+          <button class="secondary wide" id="btnSplit">✂ Dividir</button>
+        </details>
+
+        <details open>
+          <summary>Exportar</summary>
+          <div class="row">
+            <select id="exportFormat"></select>
+            <input id="exportHeight" type="number" min="1" max="10000" placeholder="Alto mm" title="Altura final en milímetros" />
+          </div>
+          <p class="muted small" id="exportHint"></p>
+          <a class="primary wide" id="btnExport" download>⬇ Descargar</a>
+        </details>
+
+        <details>
+          <summary>Compartir</summary>
+          <div class="btn-row">
+            <button class="secondary" id="btnCopyLink">🔗 Copiar enlace</button>
+            <a class="secondary" id="btnOpenShare" target="_blank" rel="noopener">↗ Abrir (AR)</a>
+          </div>
+          <label for="embedCode">Insertar en tu web</label>
+          <textarea id="embedCode" rows="3" readonly></textarea>
+        </details>
+
+        <button class="danger wide" id="btnDelete">Eliminar modelo</button>
+      </div>
     </aside>
   </main>
 
+  <div class="toast" id="toast" hidden></div>
+
   <template id="jobTpl">
     <li class="job">
-      <div class="thumb"></div>
-      <div class="info">
-        <div class="name"></div>
-        <div class="meta"></div>
-        <div class="bar"><span></span></div>
-      </div>
-      <button class="del" title="Eliminar">✕</button>
+      <div class="thumb"><span class="badge"></span><button class="star" title="Favorito">★</button></div>
+      <div class="name"></div>
+      <div class="bar"><span></span></div>
     </li>
   </template>
 

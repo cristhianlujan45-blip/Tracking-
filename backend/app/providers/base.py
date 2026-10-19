@@ -1,21 +1,33 @@
-"""Provider interface: anything that turns a prompt or an image into a 3D mesh."""
+"""Provider interface: anything that turns prompts or images into 3D meshes."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Protocol
 
 # progress (0-100) and a short human readable stage label
 ProgressCallback = Callable[[int, str], Awaitable[None]]
 
+# What a provider can do; the UI hides features the active provider lacks.
+CAPABILITIES = ("text", "image", "multi_image", "concepts", "retexture")
+
+
+@dataclass
+class InputImage:
+    data: bytes
+    mime: str = "image/png"
+
 
 @dataclass
 class GenerationRequest:
-    mode: str  # "text" | "image"
+    mode: str  # "text" | "image" | "multi_image"
     prompt: str | None
     quality: str  # "draft" | "standard" | "high"
-    image_bytes: bytes | None = None
-    image_mime: str | None = None
+    images: list[InputImage] = field(default_factory=list)
+    style: str = "auto"
+    symmetry: bool = False
+    pose: str = "none"  # "none" | "a-pose" | "t-pose"
+    seed: int = 0
 
 
 @dataclass
@@ -32,5 +44,14 @@ class GenerationError(Exception):
 
 class Provider(Protocol):
     name: str
+    capabilities: frozenset[str]
 
     async def generate(self, req: GenerationRequest, on_progress: ProgressCallback) -> GenerationResult: ...
+
+    async def generate_images(self, req: GenerationRequest, count: int) -> list[bytes]:
+        """Concept images for a prompt (text -> image), used to pick a design before going 3D."""
+        ...
+
+    async def retexture(self, glb: bytes, req: GenerationRequest, on_progress: ProgressCallback) -> bytes:
+        """Repaint an existing model from a text prompt, keeping its geometry."""
+        ...

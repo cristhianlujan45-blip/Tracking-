@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -11,7 +12,7 @@ from typing import Any
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id            TEXT PRIMARY KEY,
-    mode          TEXT NOT NULL,          -- 'text' | 'image'
+    mode          TEXT NOT NULL,          -- text | image | multi_image | upload | remesh | retexture | repair | split
     prompt        TEXT,
     quality       TEXT NOT NULL DEFAULT 'standard',
     status        TEXT NOT NULL,          -- queued | running | succeeded | failed
@@ -26,7 +27,16 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 """
 
-UPDATABLE = {"status", "progress", "stage", "error", "input_image", "model_file"}
+# Columns added after the first release; created on startup when missing.
+MIGRATIONS = {
+    "params": "TEXT NOT NULL DEFAULT '{}'",  # JSON: style, seed, remesh settings, input files...
+    "parent_id": "TEXT",
+    "name": "TEXT",
+    "favorite": "INTEGER NOT NULL DEFAULT 0",
+    "thumbnail": "TEXT",
+}
+
+UPDATABLE = {"status", "progress", "stage", "error", "input_image", "model_file", "name", "favorite", "thumbnail"}
 
 
 class JobStore:
@@ -37,6 +47,10 @@ class JobStore:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(SCHEMA)
+            existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(jobs)")}
+            for column, decl in MIGRATIONS.items():
+                if column not in existing:
+                    self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {decl}")
             self._conn.commit()
 
     def close(self) -> None:
@@ -46,6 +60,7 @@ class JobStore:
     def create(self, **fields: Any) -> dict:
         now = time.time()
         fields = {"status": "queued", "progress": 0, "created_at": now, "updated_at": now, **fields}
+        fields["params"] = json.dumps(fields.get("params") or {})
         cols = ", ".join(fields)
         marks = ", ".join("?" for _ in fields)
         with self._lock:
@@ -66,12 +81,12 @@ class JobStore:
     def get(self, job_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        return dict(row) if row else None
+        return _decode(row) if row else None
 
-    def list(self, limit: int = 100) -> list[dict]:
+    def list(self, limit: int = 200) -> list[dict]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-        return [dict(r) for r in rows]
+        return [_decode(r) for r in rows]
 
     def delete(self, job_id: str) -> None:
         with self._lock:
@@ -88,3 +103,10 @@ class JobStore:
             )
             self._conn.commit()
         return cur.rowcount
+
+
+def _decode(row: sqlite3.Row) -> dict:
+    job = dict(row)
+    job["params"] = json.loads(job.get("params") or "{}")
+    job["favorite"] = bool(job.get("favorite"))
+    return job

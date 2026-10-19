@@ -36,6 +36,9 @@ class Settings:
     fal_text_to_image_model: str = field(
         default_factory=lambda: os.getenv("FAL_TEXT_TO_IMAGE_MODEL", "fal-ai/flux/schnell")
     )
+    fal_multi_image_model: str = field(
+        default_factory=lambda: os.getenv("FAL_MULTI_IMAGE_MODEL", "fal-ai/trellis/multi")
+    )
     fal_timeout_s: float = field(default_factory=lambda: float(os.getenv("FAL_TIMEOUT_S", "600")))
 
     mock_step_delay: float = field(default_factory=lambda: float(os.getenv("MOCK_STEP_DELAY", "0.6")))

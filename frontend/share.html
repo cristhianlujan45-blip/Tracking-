@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Modelo 3D — Forja3D</title>
+  <script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+  <style>
+    :root { color-scheme: dark; --bg: #0e0f13; --panel: #161820; --border: #2a2e3a; --text: #e8eaf0; --muted: #8a90a2; --accent: #7c5cff; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; margin: 0; }
+    body { background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; }
+    header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    header h1 { flex: 1; margin: 0; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .brand { color: var(--muted); text-decoration: none; font-weight: 700; }
+    .brand span { color: var(--accent); }
+    model-viewer { flex: 1; width: 100%; background: radial-gradient(circle at 50% 40%, #222634, #0e0f13 70%); --poster-color: transparent; }
+    .btn { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 7px 12px; border-radius: 9px; text-decoration: none; font-size: 13px; cursor: pointer; }
+    .ar { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--accent); border: 0; color: white; padding: 10px 18px; border-radius: 99px; font-weight: 600; }
+    .msg { margin: auto; color: var(--muted); padding: 20px; text-align: center; }
+    body.embed header { display: none; }
+    .credit { position: absolute; right: 10px; bottom: 8px; font-size: 11px; color: var(--muted); text-decoration: none; }
+    body:not(.embed) .credit { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="brand" href="/"><span>◆</span> Forja3D</a>
+    <h1 id="title"></h1>
+    <a class="btn" id="download" download hidden>⬇ GLB</a>
+  </header>
+  <div class="msg" id="msg">Cargando…</div>
+  <model-viewer id="mv" hidden camera-controls auto-rotate shadow-intensity="1" exposure="1"
+    environment-image="neutral" ar ar-modes="webxr scene-viewer quick-look" touch-action="pan-y" alt="Modelo 3D">
+    <button slot="ar-button" class="ar">👋 Ver en tu espacio (AR)</button>
+    <a class="credit" href="/" target="_blank" rel="noopener">Hecho con Forja3D</a>
+  </model-viewer>
+
+  <script type="module">
+    const params = new URLSearchParams(location.search);
+    if (params.get("embed")) document.body.classList.add("embed");
+    const msg = document.getElementById("msg");
+    const id = params.get("id");
+    try {
+      if (!id) throw new Error("Falta el identificador del modelo");
+      const resp = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
+      if (!resp.ok) throw new Error("Este modelo no existe o fue eliminado");
+      const job = await resp.json();
+      if (job.status !== "succeeded") throw new Error("El modelo aún no está listo");
+      document.title = `${job.title} — Forja3D`;
+      document.getElementById("title").textContent = job.title;
+      const mv = document.getElementById("mv");
+      mv.src = job.model_url;
+      if (job.thumbnail_url) mv.poster = job.thumbnail_url;
+      mv.hidden = false;
+      const dl = document.getElementById("download");
+      dl.href = job.model_url;
+      dl.hidden = false;
+      msg.hidden = true;
+    } catch (err) {
+      msg.textContent = err.message;
+    }
+  </script>
+</body>
+</html>
