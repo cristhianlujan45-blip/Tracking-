@@ -68,6 +68,8 @@ class JobRunner:
             job_dir.mkdir(parents=True, exist_ok=True)
             (job_dir / "model.glb").write_bytes(result.model_glb)
             fields = {"status": "succeeded", "progress": 100, "stage": "Completado", "model_file": "model.glb"}
+            for name, data in result.extra_files.items():
+                (job_dir / name).write_bytes(data)
             if result.reference_image:
                 name = f"reference.{result.reference_image_ext}"
                 (job_dir / name).write_bytes(result.reference_image)

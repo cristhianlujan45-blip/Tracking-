@@ -14,8 +14,19 @@ const STYLE_ICONS = { auto: "✧", realistic: "◉", cartoon: "☺", handpainted
 const MODE_LABEL = {
   text: "Texto", image: "Imagen", multi_image: "Multi-vista", upload: "Subido",
   remesh: "Remallado", retexture: "Retexturizado", repair: "Reparado", split: "Piezas",
+  scene: "Escena", relief: "Relieve", lithophane: "Litofanía", text3d: "Texto 3D",
 };
-const MODE_ICON = { text: "✎", image: "▣", multi_image: "▤", upload: "⇪", remesh: "◇", retexture: "✺", repair: "✚", split: "✂" };
+const MODE_ICON = {
+  text: "✎", image: "▣", multi_image: "▤", upload: "⇪", remesh: "◇", retexture: "✺", repair: "✚", split: "✂",
+  scene: "⛰", relief: "▨", lithophane: "◐", text3d: "A",
+};
+const TOOL_MODES = ["remesh", "retexture", "repair", "split"];
+const FLAT_MODES = ["relief", "lithophane"]; // plaques: size them by the longest side, not the thickness
+const SCENE_INFO = {
+  scene: ["Profundidad", "Malla 3D con la foto como textura. Ideal como fondo o entorno en Blender, Unity o Unreal."],
+  relief: ["Relieve", "Placa sólida con la escena en relieve (bajorrelieve). Lista para imprimir en 3D."],
+  lithophane: ["Grosor", "Placa fina: al iluminarla por detrás aparece la foto. Imprime en blanco, de pie, al 100 % de relleno."],
+};
 const STATUS_LABEL = { queued: "En cola", running: "Generando", succeeded: "", failed: "Error" };
 const QUALITY_LABEL = { draft: "Borrador", standard: "Estándar", high: "Alta" };
 const GENERATIVE = ["text", "image", "multi_image"];
@@ -25,7 +36,9 @@ const FORMAT_INFO = {
   stl: ["STL", "Impresión 3D: Z hacia arriba, en milímetros, apoyado en la cama."],
   "3mf": ["3MF", "Impresión 3D moderna (Bambu Studio, PrusaSlicer, OrcaSlicer, Cura)."],
   ply: ["PLY", "Colores por vértice; útil para MeshLab y escaneo."],
+  usdz: ["USDZ (iPhone / Apple)", "AR Quick Look en iPhone/iPad. Se genera en tu navegador; conserva texturas, no colores por vértice."],
 };
+const CLIENT_FORMATS = ["usdz"];
 const SLOT_LABELS = ["Frente", "Lateral", "Espalda", "Otra vista"];
 
 const state = {
@@ -36,6 +49,9 @@ const state = {
   imageFile: null,
   multiFiles: [null, null, null, null],
   modelFile: null,
+  sceneFile: null,
+  sceneKind: "scene",
+  textStyle: "letters",
   concepts: [],
   conceptPick: null,
   jobs: [],
@@ -134,7 +150,9 @@ function buildForm() {
     $("#retexStyle").append(new Option(`Estilo: ${label}`, id));
   }
   for (const { id, label } of state.config.poses) $("#pose").append(new Option(label, id));
-  for (const f of state.config.export_formats) $("#exportFormat").append(new Option(FORMAT_INFO[f]?.[0] || f, f));
+  for (const f of [...state.config.export_formats, ...CLIENT_FORMATS]) {
+    $("#exportFormat").append(new Option(FORMAT_INFO[f]?.[0] || f, f));
+  }
 
   SLOT_LABELS.forEach((label, i) => {
     const zone = document.createElement("label");
@@ -144,6 +162,11 @@ function buildForm() {
     $("#slots").append(zone);
   });
   setupDropzone($("#dropImage"), { accept: isImage, onFile: (f) => ((state.imageFile = f), previewInto($("#dropImage"), f)) });
+  setupDropzone($("#dropScene"), { accept: isImage, onFile: (f) => ((state.sceneFile = f), previewInto($("#dropScene"), f)) });
+  segmented("#sceneKind", "kind", (kind) => ((state.sceneKind = kind), updateSceneUi()));
+  segmented("#textStyle", "style", (style) => ((state.textStyle = style), ($("#plateColorRow").hidden = style === "letters")));
+  ["sceneRes", "sceneStrength", "textDepth"].forEach((id) => $(`#${id}`).addEventListener("input", updateSceneUi));
+  updateSceneUi();
   setupDropzone($("#dropModel"), {
     accept: (f) => state.config.upload_types.includes(f.name.split(".").pop().toLowerCase()),
     onFile: (f) => ((state.modelFile = f), previewInto($("#dropModel"), f)),
@@ -168,6 +191,25 @@ function buildForm() {
   setMode("text");
 }
 
+function segmented(selector, key, onChange) {
+  $$(`${selector} button`).forEach((b) =>
+    b.addEventListener("click", () => {
+      $$(`${selector} button`).forEach((x) => x.classList.toggle("on", x === b));
+      onChange(b.dataset[key]);
+    }),
+  );
+}
+
+function updateSceneUi() {
+  const [label, hint] = SCENE_INFO[state.sceneKind];
+  $("#sceneHint").textContent = hint;
+  $("#sceneStrengthLabel").textContent = label;
+  $("#sceneCutRow").hidden = state.sceneKind !== "scene";
+  $("#sceneResValue").textContent = `${$("#sceneRes").value} px`;
+  $("#sceneStrengthValue").textContent = `${Math.round(Number($("#sceneStrength").value) * 100)} %`;
+  $("#textDepthValue").textContent = `${Math.round(Number($("#textDepth").value) * 100)} %`;
+}
+
 function setStyle(id) {
   state.style = id;
   $$("#styles .style").forEach((b) => b.classList.toggle("on", b.dataset.style === id));
@@ -181,7 +223,8 @@ function setMode(mode) {
     el.hidden = !visible;
   });
   $("#concepts").hidden = mode !== "text" || !state.concepts.length;
-  $("#submit").textContent = mode === "upload" ? "Importar modelo" : "Generar modelo 3D";
+  $("#submit").textContent =
+    mode === "upload" ? "Importar modelo" : ["scene", "text3d"].includes(mode) ? "Crear modelo 3D" : "Generar modelo 3D";
   showFormError("");
 }
 
@@ -243,6 +286,25 @@ $("#form").addEventListener("submit", (e) => {
       const body = imageForm({ ...opts, style: "auto" });
       files.forEach((f) => body.append("images", f));
       created = await api("/api/jobs/image", { method: "POST", body });
+    } else if (state.mode === "scene") {
+      if (!state.sceneFile) throw new Error("Selecciona una foto");
+      const body = new FormData();
+      body.append("image", state.sceneFile);
+      body.append("kind", state.sceneKind);
+      body.append("resolution", $("#sceneRes").value);
+      body.append("strength", $("#sceneStrength").value);
+      body.append("cut_edges", $("#sceneCut").checked);
+      created = await api("/api/jobs/scene", { method: "POST", body });
+    } else if (state.mode === "text3d") {
+      const text = $("#text3d").value.trim();
+      if (!text) throw new Error("Escribe algún texto");
+      created = await api("/api/jobs/text3d", {
+        method: "POST",
+        json: {
+          text, style: state.textStyle, font: $("#textFont").value, bold: $("#textBold").checked,
+          depth: Number($("#textDepth").value), color: $("#textColor").value, plate_color: $("#plateColor").value,
+        },
+      });
     } else {
       if (!state.modelFile) throw new Error("Selecciona un archivo 3D");
       const body = new FormData();
@@ -312,7 +374,7 @@ function matchesFilter(job) {
   const f = state.filter;
   if (f === "fav" && !job.favorite) return false;
   if (f === "gen" && !GENERATIVE.includes(job.mode)) return false;
-  if (f === "tools" && GENERATIVE.includes(job.mode)) return false;
+  if (f === "tools" && !TOOL_MODES.includes(job.mode)) return false;
   if (f === "active" && !["queued", "running"].includes(job.status)) return false;
   return !state.search || job.title.toLowerCase().includes(state.search);
 }
@@ -496,6 +558,7 @@ function metaChips(job) {
     if (p.refined) chips.push("<span>HD</span>");
   }
   if (job.mode === "remesh") chips.push(`<span>${p.mode}</span>`);
+  if (job.depth_url) chips.push(`<span><a href="${job.depth_url}" target="_blank" rel="noopener">mapa de profundidad</a>${p.depth_source === "ia" ? " · IA" : ""}</span>`);
   if (job.parent_id) {
     const parent = state.jobs.find((j) => j.id === job.parent_id);
     chips.push(parent ? `<span>de <a data-goto="${parent.id}">${escapeHtml(parent.title).slice(0, 28)}</a></span>` : "<span>de (eliminado)</span>");
@@ -520,6 +583,7 @@ function renderTools(job) {
   $("#btnFav").classList.toggle("on", job.favorite);
   $("#toolMeta").innerHTML = metaChips(job);
   $$("#toolMeta [data-goto]").forEach((a) => (a.onclick = () => selectJob(a.dataset.goto)));
+  renderHistory(job);
 
   const key = `${job.id}|${job.status}`;
   if (state.toolsKey === key) return;
@@ -528,6 +592,8 @@ function renderTools(job) {
   const ready = job.status === "succeeded";
   $("#tools").classList.toggle("disabled-tools", !ready);
   $$('#toolsBody details[data-need="generative"]').forEach((d) => (d.hidden = !GENERATIVE.includes(job.mode)));
+  const flat = FLAT_MODES.includes(job.mode) || (job.mode === "text3d" && job.params?.style !== "letters");
+  $("#exportFit").value = flat ? "max" : "height";
   updateExportLink();
   const share = `${location.origin}/share.html?id=${job.id}`;
   $("#btnOpenShare").href = share;
@@ -562,17 +628,51 @@ $("#printReport").closest("details").addEventListener("toggle", (e) => {
   if (e.target.open && job?.status === "succeeded") loadAnalysis(job);
 });
 
+function renderHistory(job) {
+  const byId = Object.fromEntries(state.jobs.map((j) => [j.id, j]));
+  const chain = [];
+  for (let cur = job; cur; cur = byId[cur.parent_id]) chain.unshift(cur);
+  const rows = chain.map((j, depth) => [j, depth]);
+  const children = state.jobs.filter((j) => j.parent_id === job.id).reverse();
+  children.forEach((c) => rows.push([c, chain.length]));
+  $("#historySection").hidden = rows.length < 2;
+  $("#history").replaceChildren(
+    ...rows.map(([j, depth]) => {
+      const li = document.createElement("li");
+      li.classList.toggle("current", j.id === job.id);
+      li.innerHTML = `<span class="lvl">${depth ? "  ".repeat(depth - 1) + "└ " : ""}</span>${MODE_ICON[j.mode] || "◆"} `;
+      li.append(document.createTextNode(j.title));
+      if (j.id !== job.id) li.onclick = () => selectJob(j.id);
+      return li;
+    }),
+  );
+}
+
 function updateExportLink() {
   const job = selectedJob();
   if (!job) return;
   const fmt = $("#exportFormat").value;
-  const h = Number($("#exportHeight").value);
+  const size = Number($("#exportHeight").value);
+  const fit = $("#exportFit").value;
   const isPrint = fmt === "stl" || fmt === "3mf";
-  $("#exportHint").textContent = FORMAT_INFO[fmt]?.[1] + (isPrint && !h ? " Alto por defecto: 100 mm." : "");
-  $("#btnExport").href = `/api/jobs/${job.id}/export?format=${fmt}${h > 0 ? `&height_mm=${h}` : ""}`;
+  const fitLabel = $("#exportFit").selectedOptions[0].textContent.toLowerCase();
+  $("#exportHint").textContent = FORMAT_INFO[fmt]?.[1] + (isPrint && !size ? ` ${fitLabel[0].toUpperCase() + fitLabel.slice(1)} por defecto: 100 mm.` : "");
+  const client = CLIENT_FORMATS.includes(fmt);
+  $("#exportFit").disabled = $("#exportHeight").disabled = client;
+  $("#btnExport").href = client ? "#" : `/api/jobs/${job.id}/export?format=${fmt}${size > 0 ? `&size_mm=${size}&fit=${fit}` : `&fit=${fit}`}`;
 }
-$("#exportFormat").addEventListener("change", updateExportLink);
+["exportFormat", "exportFit"].forEach((id) => $(`#${id}`).addEventListener("change", updateExportLink));
 $("#exportHeight").addEventListener("input", updateExportLink);
+$("#btnExport").addEventListener("click", async (e) => {
+  if (!CLIENT_FORMATS.includes($("#exportFormat").value)) return;
+  e.preventDefault();
+  if (!viewer.model) return toast("Espera a que el modelo cargue en el visor", true);
+  try {
+    downloadBlob(await viewer.exportUSDZ(), `${slug(selectedJob()?.title)}.usdz`);
+  } catch (err) {
+    toast(`No se pudo crear el USDZ: ${err.message}`, true);
+  }
+});
 
 // remesh controls: faces slider is logarithmic (200 .. 200k)
 const facesFromSlider = () => Math.round(10 ** Number($("#remeshFaces").value) / 100) * 100;

@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from . import geometry, pipelines
+from . import creations, geometry, pipelines
 from .config import Settings, get_settings
 from .db import JobStore
 from .jobs import JobRunner
@@ -29,6 +29,7 @@ from .providers import GenerationError, GenerationRequest, InputImage, Provider,
 from .styles import POSES, STYLES
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+BLENDER_ADDON = Path(__file__).resolve().parents[2] / "integrations" / "blender" / "forja3d_blender.py"
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 MIME_BY_EXT = {ext: mime for mime, ext in IMAGE_TYPES.items()}
 GENERATIVE_MODES = ("text", "image", "multi_image")
@@ -49,7 +50,13 @@ MODE_LABELS = {
     "retexture": "Retexturizado",
     "repair": "Reparado",
     "split": "Dividido",
+    "scene": "Escena 3D",
+    "relief": "Relieve",
+    "lithophane": "Litofanía",
+    "text3d": "Texto 3D",
 }
+SCENE_KINDS = ("scene", "relief", "lithophane")
+HEX_COLOR = r"^#[0-9a-fA-F]{6}$"
 REMESH_LABELS = {"decimate": "reducido", "lowpoly": "low-poly", "voxel": "vóxel", "smooth": "suavizado"}
 
 logging.basicConfig(level=logging.INFO)
@@ -106,6 +113,20 @@ class VariationsIn(BaseModel):
     count: int = Field(3, ge=1, le=4)
 
 
+class Text3DIn(BaseModel):
+    text: str = Field(min_length=1, max_length=80)
+    font: Literal["sans", "serif", "mono"] = "sans"
+    bold: bool = True
+    style: Literal["letters", "plate", "keychain"] = "letters"
+    depth: float = Field(0.25, ge=0.02, le=2.0)
+    color: str = Field("#7c5cff", pattern=HEX_COLOR)
+    plate_color: str = Field("#f0f0f0", pattern=HEX_COLOR)
+
+
+def hex_rgb(value: str) -> tuple[int, int, int]:
+    return tuple(int(value[i : i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
+
+
 class JobOut(BaseModel):
     id: str
     mode: str
@@ -126,6 +147,7 @@ class JobOut(BaseModel):
     model_url: str | None
     image_url: str | None
     thumbnail_url: str | None
+    depth_url: str | None = None
 
 
 def job_title(job: dict) -> str:
@@ -141,6 +163,7 @@ def to_out(job: dict) -> JobOut:
         model_url=f"{base}/model.glb?v={version}" if job["model_file"] else None,
         image_url=f"{base}/image" if job["input_image"] else None,
         thumbnail_url=f"{base}/thumbnail?v={version}" if job.get("thumbnail") else None,
+        depth_url=f"{base}/depth" if job["params"].get("has_depth") and job["status"] == "succeeded" else None,
     )
 
 
@@ -289,6 +312,17 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             "max_upload_mb": settings.max_upload_bytes // (1024 * 1024),
         }
 
+    @app.get("/api/integrations/blender")
+    async def blender_addon(request: Request):
+        """The Blender add-on, preconfigured with the address this app is being reached at."""
+        if not BLENDER_ADDON.is_file():
+            raise HTTPException(404, "Complemento no disponible")
+        source = BLENDER_ADDON.read_text(encoding="utf-8")
+        base = str(request.base_url).rstrip("/").replace('"', "")
+        source = source.replace('DEFAULT_SERVER = "http://localhost:8000"', f'DEFAULT_SERVER = "{base}"', 1)
+        return Response(source, media_type="text/x-python",
+                        headers={"Content-Disposition": 'attachment; filename="forja3d_blender.py"'})
+
     # ------------------------------------------------------------ concepts (text -> image)
 
     @app.post("/api/concepts")
@@ -372,6 +406,58 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         state.runner.submit(job["id"], pipelines.upload(data, file_type))
         return to_out(job)
 
+    # ------------------------------------------------------------ scenes, reliefs, lithophanes, 3D text
+
+    @app.post("/api/jobs/scene", response_model=JobOut, status_code=201)
+    async def create_scene_job(
+        request: Request,
+        image: UploadFile = File(...),
+        kind: Literal["scene", "relief", "lithophane"] = Form("scene"),
+        resolution: int = Form(256, ge=32, le=512),
+        strength: float = Form(0.4, ge=0.02, le=2.0),
+        cut_edges: bool = Form(True),
+        name: str | None = Form(None, max_length=120),
+    ):
+        img = await read_image(image)
+        state = request.app.state
+        if kind == "scene":
+            opts = {"resolution": resolution, "strength": strength, "cut_edges": cut_edges}
+        elif kind == "relief":
+            opts = {"resolution": min(resolution, 400), "strength": strength}
+        else:
+            opts = {"resolution": min(resolution, 400), "thickness_ratio": 0.03 * max(strength / 0.4, 0.25)}
+        job_id = uuid.uuid4().hex
+        job_dir(job_id).mkdir(parents=True)
+        input_name = f"input_0.{IMAGE_TYPES[img.mime]}"
+        (job_dir(job_id) / input_name).write_bytes(img.data)
+        uses_depth = kind != "lithophane"
+        params = {
+            **opts, "kind": kind, "inputs": [input_name], "has_depth": uses_depth,
+            "depth_source": ("ia" if "depth" in state.provider.capabilities else "heurística") if uses_depth else None,
+        }
+        job = state.store.create(
+            id=job_id, mode=kind, prompt=None, provider=state.provider.name, input_image=input_name,
+            params=params, name=(name or "").strip() or None,
+        )
+        state.runner.submit(job_id, pipelines.scene(state.provider, img, kind, **opts))
+        return to_out(job)
+
+    @app.post("/api/jobs/text3d", response_model=JobOut, status_code=201)
+    async def create_text3d_job(request: Request, body: Text3DIn):
+        if body.text.count("\n") > 3:
+            raise HTTPException(422, "Máximo 4 líneas de texto")
+        state = request.app.state
+        params = body.model_dump()
+        work = pipelines.compute(
+            "Construyendo letras", creations.text3d, text=body.text, font=body.font, bold=body.bold,
+            style=body.style, depth=body.depth, color=hex_rgb(body.color), plate_color=hex_rgb(body.plate_color),
+        )
+        job = state.store.create(
+            id=uuid.uuid4().hex, mode="text3d", prompt=body.text.strip(), provider="local", params=params,
+        )
+        state.runner.submit(job["id"], work)
+        return to_out(job)
+
     # ------------------------------------------------------------ jobs CRUD
 
     @app.get("/api/jobs", response_model=list[JobOut])
@@ -414,6 +500,14 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             raise HTTPException(404, "Este trabajo no tiene imagen")
         return FileResponse(job_dir(job_id) / job["input_image"])
 
+    @app.get("/api/jobs/{job_id}/depth")
+    async def get_depth(request: Request, job_id: str):
+        get_job_or_404(request, job_id)
+        path = job_dir(job_id) / "depth.png"
+        if not path.is_file():
+            raise HTTPException(404, "Este trabajo no tiene mapa de profundidad")
+        return FileResponse(path, media_type="image/png")
+
     @app.get("/api/jobs/{job_id}/thumbnail")
     async def get_thumbnail(request: Request, job_id: str):
         job = get_job_or_404(request, job_id)
@@ -452,11 +546,17 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         request: Request,
         job_id: str,
         format: ExportFormat = "glb",
-        height_mm: float | None = Query(None, gt=0, le=10_000),
+        size_mm: float | None = Query(None, gt=0, le=10_000),
+        fit: Literal["height", "width", "depth", "max"] = "height",
+        height_mm: float | None = Query(None, gt=0, le=10_000, description="alias de size_mm con fit=height"),
     ):
         job, path = ready_model(request, job_id)
+        if size_mm is None and height_mm is not None:
+            size_mm, fit = height_mm, "height"
         try:
-            data, ext, media_type = await asyncio.to_thread(geometry.export, path.read_bytes(), format, height_mm)
+            data, ext, media_type = await asyncio.to_thread(
+                geometry.export, path.read_bytes(), format, size_mm, fit
+            )
         except geometry.GeometryError as exc:
             raise HTTPException(422, str(exc)) from exc
         filename = f"{slugify(job_title(job))}.{ext}"

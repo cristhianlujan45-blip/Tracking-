@@ -39,6 +39,7 @@ class Settings:
     fal_multi_image_model: str = field(
         default_factory=lambda: os.getenv("FAL_MULTI_IMAGE_MODEL", "fal-ai/trellis/multi")
     )
+    fal_depth_model: str = field(default_factory=lambda: os.getenv("FAL_DEPTH_MODEL", "fal-ai/imageutils/depth"))
     fal_timeout_s: float = field(default_factory=lambda: float(os.getenv("FAL_TIMEOUT_S", "600")))
 
     local_worker_url: str = field(default_factory=lambda: os.getenv("LOCAL_WORKER_URL", "http://127.0.0.1:8001"))

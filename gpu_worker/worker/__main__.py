@@ -18,6 +18,8 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--image-model", default="stabilityai/sd-turbo",
                         help="modelo texto→imagen (stabilityai/sd-turbo o stabilityai/sdxl-turbo)")
+    parser.add_argument("--depth-model", default="depth-anything/Depth-Anything-V2-Small-hf",
+                        help="profundidad para escenas/relieves (…-Base-hf = más detalle, ~400 MB de VRAM)")
     parser.add_argument("--shape-model", default="tencent/Hunyuan3D-2mini")
     parser.add_argument("--shape-subfolder", default="hunyuan3d-dit-v2-mini")
     parser.add_argument("--texture", action="store_true",
@@ -32,7 +34,8 @@ def main() -> None:
     else:
         backend = build_backend(
             "hunyuan", shape_model=args.shape_model, shape_subfolder=args.shape_subfolder,
-            image_model=args.image_model, texture=args.texture, multiview=args.multiview,
+            image_model=args.image_model, depth_model=args.depth_model,
+            texture=args.texture, multiview=args.multiview,
         )
     info = backend.info()
     logging.info("Backend %s · GPU: %s (%s GB) · capacidades: %s", backend.name, info["gpu"], info["vram_gb"],

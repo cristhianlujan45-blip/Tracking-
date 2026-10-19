@@ -58,7 +58,7 @@ def test_config_reports_worker(client):
     cfg = client.get("/api/config").json()
     assert cfg["provider"] == "local"
     assert cfg["provider_info"]["gpu"] == "ninguna (dummy)"
-    assert set(cfg["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture"}
+    assert set(cfg["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth"}
 
 
 def test_text_to_3d_keeps_reference_image(client):
@@ -96,3 +96,11 @@ def test_worker_down_gives_clear_error(tmp_path):
         assert c.get("/api/config").json()["provider_info"] == {}
         job = wait_done(c, c.post("/api/jobs/text", json={"prompt": "una roca"}).json()[0]["id"])
         assert job["status"] == "failed" and "worker" in job["error"]
+
+
+def test_scene_uses_worker_depth(client):
+    job = client.post("/api/jobs/scene", files={"image": ("f.png", PNG, "image/png")}, data={"kind": "relief"}).json()
+    assert job["params"]["depth_source"] == "ia"
+    job = wait_done(client, job["id"])
+    assert job["status"] == "succeeded", job["error"]
+    assert client.get(job["depth_url"]).status_code == 200

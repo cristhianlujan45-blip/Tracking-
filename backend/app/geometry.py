@@ -331,20 +331,28 @@ def split_parts(glb: bytes, mode: str = "height", parts: int = 2) -> bytes:
 # ---------------------------------------------------------------- export
 
 
-def export(glb: bytes, fmt: str, height_mm: float | None = None) -> tuple[bytes, str, str]:
-    """Return (data, file extension, media type). Print formats are Z-up, in mm, resting on the bed."""
+FIT_AXES = {"width": 0, "height": 1, "depth": 2}
+
+
+def export(glb: bytes, fmt: str, size_mm: float | None = None, fit: str = "height") -> tuple[bytes, str, str]:
+    """Return (data, file extension, media type). Print formats are Z-up, in mm, resting on the bed.
+
+    `size_mm` is the final size of the dimension named by `fit` (width / height / depth, or `max`
+    for the longest side), measured on the model as shown in the viewer (Y up).
+    """
     if fmt not in EXPORT_FORMATS:
         raise GeometryError(f"Formato no soportado: {fmt}")
     ext, media_type, is_print = EXPORT_FORMATS[fmt]
     scene = load_scene(glb)
 
-    height = float(scene.extents[1]) or 1.0
+    extents = scene.extents
+    current = float(extents.max() if fit == "max" else extents[FIT_AXES.get(fit, 1)]) or float(extents.max()) or 1.0
     if is_print:
-        scene.apply_scale((height_mm or DEFAULT_PRINT_HEIGHT_MM) / height)
+        scene.apply_scale((size_mm or DEFAULT_PRINT_HEIGHT_MM) / current)
         scene.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))
         scene.apply_translation([0, 0, -scene.bounds[0][2]])
-    elif height_mm:
-        scene.apply_scale(height_mm / 1000 / height)  # glTF units are metres
+    elif size_mm:
+        scene.apply_scale(size_mm / 1000 / current)  # glTF units are metres
 
     if fmt == "glb":
         return scene.export(file_type="glb", include_normals=True), ext, media_type

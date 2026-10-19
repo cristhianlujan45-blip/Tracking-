@@ -15,7 +15,8 @@ import trimesh
 from PIL import Image, ImageDraw, ImageFilter
 
 from .. import geometry
-from .base import GenerationRequest, GenerationResult, ProgressCallback
+from ..creations import pseudo_depth
+from .base import GenerationRequest, GenerationResult, InputImage, ProgressCallback
 
 KEYWORDS = {
     "tree": ("tree", "árbol", "arbol", "pino", "pine"),
@@ -177,7 +178,7 @@ def draw_concept(kind: str, hue: np.ndarray, rng: np.random.Generator, size: int
 
 class MockProvider:
     name = "mock"
-    capabilities = frozenset({"text", "image", "multi_image", "concepts", "retexture"})
+    capabilities = frozenset({"text", "image", "multi_image", "concepts", "retexture", "depth"})
 
     def __init__(self, step_delay: float = 0.6):
         self.step_delay = step_delay
@@ -222,3 +223,7 @@ class MockProvider:
             colors[near, :3] = 250
         out.visual.vertex_colors = colors.astype(np.uint8)
         return geometry.mesh_to_glb(out)
+
+    async def estimate_depth(self, image: InputImage) -> bytes:
+        await asyncio.sleep(self.step_delay)
+        return await asyncio.to_thread(pseudo_depth, image.data)

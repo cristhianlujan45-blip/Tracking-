@@ -13,3 +13,4 @@ lxml>=5
 shapely>=2
 rtree>=1.2
 mapbox-earcut>=1.0
+matplotlib>=3.8

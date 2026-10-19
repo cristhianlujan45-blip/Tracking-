@@ -36,7 +36,7 @@ def wait(client, task_id, timeout=10):
 def test_health(client):
     body = client.get("/health").json()
     assert body["backend"] == "dummy"
-    assert set(body["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture"}
+    assert set(body["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth"}
 
 
 def test_images(client):
@@ -96,3 +96,10 @@ def test_disabled_capabilities():
         two = [b64_png(), b64_png((0, 255, 0))]
         task = wait(c, c.post("/tasks", json={"images": two}).json()["id"])
         assert task["status"] == "succeeded"  # extra views are ignored, not an error
+
+
+def test_depth(client):
+    resp = client.post("/depth", json={"image": b64_png()})
+    assert resp.status_code == 200
+    depth = Image.open(io.BytesIO(base64.b64decode(resp.json()["depth"])))
+    assert depth.size == (64, 64) and depth.mode == "L"

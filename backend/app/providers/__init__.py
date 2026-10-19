@@ -26,6 +26,7 @@ def build_provider(settings: Settings) -> Provider:
             image_to_3d_model=settings.fal_image_to_3d_model,
             text_to_image_model=settings.fal_text_to_image_model,
             multi_image_model=settings.fal_multi_image_model,
+            depth_model=settings.fal_depth_model,
             timeout_s=settings.fal_timeout_s,
         )
     if settings.provider == "local":

@@ -38,6 +38,10 @@ class ImagesIn(BaseModel):
     negative: str = ""
 
 
+class DepthIn(BaseModel):
+    image: str  # base64
+
+
 class TaskIn(BaseModel):
     kind: Literal["mesh", "texture"] = "mesh"
     images: list[str] = Field(min_length=1, max_length=4)  # base64 (PNG/JPG/WEBP)
@@ -136,6 +140,19 @@ def create_app(backend: Backend, token: str | None = None) -> FastAPI:
             log.exception("Generación de imágenes falló")
             raise HTTPException(500, friendly_error(exc)) from exc
         return {"images": [base64.b64encode(png_bytes(img)).decode() for img in result]}
+
+    @app.post("/depth")
+    async def depth(body: DepthIn):
+        if "depth" not in backend.capabilities():
+            raise HTTPException(400, "Este worker no estima profundidad")
+        image = decode_image(body.image)
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(gpu, backend.estimate_depth, image)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Estimación de profundidad falló")
+            raise HTTPException(500, friendly_error(exc)) from exc
+        return {"depth": base64.b64encode(png_bytes(result)).decode()}
 
     @app.post("/tasks", status_code=202)
     async def create_task(body: TaskIn):

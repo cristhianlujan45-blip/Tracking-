@@ -224,6 +224,20 @@ export class Viewer {
     return new Promise((resolve) => out.toBlob(resolve, type, 0.88));
   }
 
+  // USDZ for Apple AR Quick Look, built in the browser from the loaded model.
+  async exportUSDZ() {
+    if (!this.model) throw new Error("No hay modelo cargado");
+    const { USDZExporter } = await import("three/addons/exporters/USDZExporter.js");
+    const mode = this.viewMode;
+    this.setViewMode("textured"); // export the real materials, not the clay/normals overrides
+    try {
+      const data = await new USDZExporter().parseAsync(this.model);
+      return new Blob([data], { type: "model/vnd.usdz+zip" });
+    } finally {
+      this.setViewMode(mode);
+    }
+  }
+
   // One full revolution of the model recorded as WebM.
   async recordTurntable(seconds = 6) {
     if (!this.model || !window.MediaRecorder) throw new Error("Grabación no soportada en este navegador");

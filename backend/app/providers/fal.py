@@ -44,7 +44,7 @@ def _image_ext(data: bytes) -> str:
 
 class FalProvider:
     name = "fal"
-    capabilities = frozenset({"text", "image", "multi_image", "concepts"})
+    capabilities = frozenset({"text", "image", "multi_image", "concepts", "depth"})
 
     def __init__(
         self,
@@ -52,6 +52,7 @@ class FalProvider:
         image_to_3d_model: str,
         text_to_image_model: str,
         multi_image_model: str = "fal-ai/trellis/multi",
+        depth_model: str = "fal-ai/imageutils/depth",
         timeout_s: float = 600,
     ):
         if not api_key:
@@ -60,6 +61,7 @@ class FalProvider:
         self.image_to_3d_model = image_to_3d_model
         self.text_to_image_model = text_to_image_model
         self.multi_image_model = multi_image_model
+        self.depth_model = depth_model
         self.timeout_s = timeout_s
 
     # ------------------------------------------------------------ public API
@@ -113,6 +115,15 @@ class FalProvider:
 
     async def retexture(self, glb: bytes, req: GenerationRequest, on_progress: ProgressCallback) -> bytes:
         raise GenerationError("El retexturizado no está disponible con fal.ai; usa otro proveedor")
+
+    async def estimate_depth(self, image: InputImage) -> bytes:
+        async with httpx.AsyncClient(headers=self.headers, timeout=120) as client:
+            resp = await client.post(f"{SYNC_URL}/{self.depth_model}", json={"image_url": _data_uri(image)})
+            self._raise_for(resp, self.depth_model)
+            url = (resp.json().get("image") or {}).get("url")
+            if not url:
+                raise GenerationError("El modelo de profundidad no devolvió ningún mapa")
+            return await self._download(client, url)
 
     # ------------------------------------------------------------ helpers
 

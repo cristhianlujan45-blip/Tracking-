@@ -59,7 +59,7 @@ def load_glb(content):
 def test_health_and_config(client):
     assert client.get("/api/health").json() == {"status": "ok", "provider": "mock"}
     cfg = client.get("/api/config").json()
-    assert set(cfg["capabilities"]) == {"text", "image", "multi_image", "concepts", "retexture"}
+    assert set(cfg["capabilities"]) == {"text", "image", "multi_image", "concepts", "retexture", "depth"}
     assert {s["id"] for s in cfg["styles"]} >= {"auto", "lowpoly", "voxel", "sculpture"}
     assert set(cfg["export_formats"]) == {"glb", "obj", "stl", "3mf", "ply"}
 
@@ -356,3 +356,76 @@ def test_glb_outputs_include_normals(client):
         length = struct.unpack("<I", content[12:16])[0]
         gltf = _json.loads(content[20:20 + length])
         assert all("NORMAL" in prim["attributes"] for mesh in gltf["meshes"] for prim in mesh["primitives"])
+
+
+# ---------------------------------------------------------------- scenes, reliefs, text
+
+
+def _photo():
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (160, 120), (120, 170, 230))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle((0, 80, 160, 120), fill=(90, 140, 60))
+    draw.ellipse((60, 40, 100, 85), fill=(200, 60, 40))
+    out = io.BytesIO()
+    img.save(out, format="JPEG")
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("kind", ["scene", "relief", "lithophane"])
+def test_scene_kinds(client, kind):
+    resp = client.post("/api/jobs/scene", files={"image": ("foto.jpg", _photo(), "image/jpeg")},
+                       data={"kind": kind, "resolution": 96})
+    assert resp.status_code == 201, resp.text
+    job = wait_done(client, resp.json()["id"])
+    assert job["status"] == "succeeded", job
+    assert job["mode"] == kind and job["image_url"]
+    report = client.get(f"/api/jobs/{job['id']}/analysis").json()
+    if kind == "scene":
+        assert job["depth_url"] and client.get(job["depth_url"]).content[:4] == b"\x89PNG"
+        scene = load_glb(client.get(job["model_url"]).content)
+        assert next(iter(scene.geometry.values())).visual.kind == "texture"  # photo as texture
+    else:
+        assert report["watertight"] and report["printable"] and report["bodies"] == 1
+    if kind == "lithophane":
+        assert job["depth_url"] is None
+
+
+def test_relief_prints_flat_at_requested_width(client):
+    job = wait_done(client, client.post("/api/jobs/scene", files={"image": ("f.jpg", _photo(), "image/jpeg")},
+                                        data={"kind": "relief", "resolution": 64}).json()["id"])
+    stl = client.get(f"/api/jobs/{job['id']}/export", params={"format": "stl", "size_mm": 120, "fit": "width"})
+    mesh = trimesh.load(io.BytesIO(stl.content), file_type="stl")
+    assert mesh.extents[0] == pytest.approx(120, rel=1e-3)
+    assert mesh.extents[2] < mesh.extents[1] / 5  # thin plaque lying on the bed
+    assert mesh.bounds[0][2] == pytest.approx(0, abs=1e-6)
+
+
+@pytest.mark.parametrize("style", ["letters", "plate", "keychain"])
+def test_text3d(client, style):
+    resp = client.post("/api/jobs/text3d", json={"text": "Hola\nÑandú 3D", "style": style, "color": "#ff0000"})
+    assert resp.status_code == 201, resp.text
+    job = wait_done(client, resp.json()["id"])
+    assert job["status"] == "succeeded", job
+    report = client.get(f"/api/jobs/{job['id']}/analysis").json()
+    assert report["watertight"]
+    assert job["depth_url"] is None  # "depth" here is letter thickness, not a depth map
+    colors = load_glb(client.get(job["model_url"]).content).to_geometry().visual.vertex_colors
+    assert (colors[:, :3] == [255, 0, 0]).all(axis=1).any()
+
+
+def test_text3d_validation(client):
+    assert client.post("/api/jobs/text3d", json={"text": ""}).status_code == 422
+    assert client.post("/api/jobs/text3d", json={"text": "hola", "color": "red"}).status_code == 422
+    assert client.post("/api/jobs/text3d", json={"text": "a\nb\nc\nd\ne"}).status_code == 422
+    job = wait_done(client, client.post("/api/jobs/text3d", json={"text": "   "}).json()["id"])
+    assert job["status"] == "failed"
+
+
+def test_blender_addon_download(client):
+    resp = client.get("/api/integrations/blender")
+    assert resp.status_code == 200
+    assert 'filename="forja3d_blender.py"' in resp.headers["content-disposition"]
+    assert 'DEFAULT_SERVER = "http://testserver"' in resp.text
+    compile(resp.text, "forja3d_blender.py", "exec")  # valid Python

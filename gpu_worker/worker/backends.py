@@ -52,6 +52,10 @@ class Backend(Protocol):
 
     def texture_mesh(self, job: MeshJob, progress: Progress) -> bytes: ...
 
+    def estimate_depth(self, image: Image.Image) -> Image.Image:
+        """Grayscale depth map (mode L or I;16), brighter = closer."""
+        ...
+
 
 def png_bytes(img: Image.Image) -> bytes:
     out = io.BytesIO()
@@ -73,7 +77,7 @@ class DummyBackend:
         self.multiview = multiview
 
     def capabilities(self) -> set[str]:
-        caps = {"text", "image", "concepts"}
+        caps = {"text", "image", "concepts", "depth"}
         if self.multiview:
             caps.add("multi_image")
         if self.texture:
@@ -82,6 +86,12 @@ class DummyBackend:
 
     def info(self) -> dict:
         return {"gpu": "ninguna (dummy)", "vram_gb": 0, "models": ["dummy"]}
+
+    def estimate_depth(self, image: Image.Image) -> Image.Image:
+        time.sleep(self.delay / 2)
+        gray = np.asarray(image.convert("L"), dtype=float)
+        rows = np.linspace(0, 255, gray.shape[0])[:, None]
+        return Image.fromarray((0.6 * rows + 0.4 * gray).astype(np.uint8), "L")
 
     def generate_images(self, prompt: str, count: int, seed: int, negative: str = "") -> list[Image.Image]:
         images = []
@@ -139,6 +149,7 @@ class HunyuanBackend:
         shape_model: str = "tencent/Hunyuan3D-2mini",
         shape_subfolder: str = "hunyuan3d-dit-v2-mini",
         image_model: str = "stabilityai/sd-turbo",
+        depth_model: str = "depth-anything/Depth-Anything-V2-Small-hf",
         texture: bool = False,
         multiview: bool = False,
         device: str = "cuda",
@@ -147,6 +158,8 @@ class HunyuanBackend:
 
         self.shape_model, self.shape_subfolder = shape_model, shape_subfolder
         self.image_model = image_model
+        self.depth_model = depth_model
+        self._depth = None
         self.texture = texture
         self.multiview = multiview
         self.device = device
@@ -156,7 +169,7 @@ class HunyuanBackend:
     # ------------------------------------------------------------ meta
 
     def capabilities(self) -> set[str]:
-        caps = {"text", "image", "concepts"}
+        caps = {"text", "image", "concepts", "depth"}
         if self.multiview:
             caps.add("multi_image")
         if self.texture:
@@ -170,7 +183,7 @@ class HunyuanBackend:
         if torch.cuda.is_available():
             props = torch.cuda.get_device_properties(0)
             gpu, vram = props.name, round(props.total_memory / 1024**3, 1)
-        models = [f"{self.shape_model}/{self.shape_subfolder}", self.image_model]
+        models = [f"{self.shape_model}/{self.shape_subfolder}", self.image_model, self.depth_model]
         if self.multiview:
             models.append("tencent/Hunyuan3D-2mv")
         if self.texture:
@@ -299,6 +312,22 @@ class HunyuanBackend:
             progress(85, "Texturizando (puede tardar)")
             mesh = self._load_paint()(mesh, image=images[0])
         return mesh.export(file_type="glb")
+
+    def estimate_depth(self, image: Image.Image) -> Image.Image:
+        """Depth Anything V2. Small (~25 M params) stays on the GPU next to whatever else is loaded."""
+        import torch
+
+        if self._depth is None:
+            from transformers import pipeline
+
+            log.info("Cargando %s …", self.depth_model)
+            self._depth = pipeline("depth-estimation", model=self.depth_model, device=0 if torch.cuda.is_available() else -1)
+        with torch.inference_mode():
+            result = self._depth(image.convert("RGB"))
+        depth = result["predicted_depth"].squeeze().float().cpu().numpy()  # relative inverse depth: higher = closer
+        depth = (depth - depth.min()) / max(float(depth.max() - depth.min()), 1e-6)
+        img = Image.fromarray((depth * 65535).astype(np.uint16))  # 16-bit keeps smooth gradients for reliefs
+        return img.resize(image.size, Image.BILINEAR) if img.size != image.size else img
 
     def texture_mesh(self, job: MeshJob, progress: Progress) -> bytes:
         import trimesh

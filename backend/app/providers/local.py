@@ -90,6 +90,11 @@ class LocalProvider:
             payload = {"kind": "texture", "images": [_b64(image)], "mesh_glb": _b64(glb), "seed": req.seed % 2**32}
             return await self._run_task(client, payload, on_progress, (15, 97))
 
+    async def estimate_depth(self, image: InputImage) -> bytes:
+        async with self._client() as client:
+            resp = await self._call(client.post("/depth", json={"image": _b64(image.data)}, timeout=300))
+            return base64.b64decode(resp.json()["depth"])
+
     # ------------------------------------------------------------ helpers
 
     async def _call(self, coro):

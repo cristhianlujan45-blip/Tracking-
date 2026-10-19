@@ -9,7 +9,7 @@ from typing import Awaitable, Callable, Protocol
 ProgressCallback = Callable[[int, str], Awaitable[None]]
 
 # What a provider can do; the UI hides features the active provider lacks.
-CAPABILITIES = ("text", "image", "multi_image", "concepts", "retexture")
+CAPABILITIES = ("text", "image", "multi_image", "concepts", "retexture", "depth")
 
 
 @dataclass
@@ -36,6 +36,8 @@ class GenerationResult:
     # Reference image produced along the way (e.g. text -> image step), if any.
     reference_image: bytes | None = None
     reference_image_ext: str = "png"
+    # other files to keep next to the model, e.g. {"depth.png": ...}
+    extra_files: dict[str, bytes] = field(default_factory=dict)
 
 
 class GenerationError(Exception):
@@ -54,4 +56,8 @@ class Provider(Protocol):
 
     async def retexture(self, glb: bytes, req: GenerationRequest, on_progress: ProgressCallback) -> bytes:
         """Repaint an existing model from a text prompt, keeping its geometry."""
+        ...
+
+    async def estimate_depth(self, image: InputImage) -> bytes:
+        """Monocular depth map as a grayscale PNG, brighter = closer (scenes and reliefs)."""
         ...

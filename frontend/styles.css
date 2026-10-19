@@ -62,7 +62,7 @@ textarea:focus, select:focus, input:focus { outline: 2px solid var(--accent); ou
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; }
 .tools .row { grid-template-columns: 1fr 96px; margin-top: 6px; }
 
-.tabs { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--panel-2); border-radius: 10px; padding: 4px; margin-bottom: 6px; }
+.tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; background: var(--panel-2); border-radius: 10px; padding: 4px; margin-bottom: 6px; }
 .tab { background: none; border: 0; color: var(--muted); padding: 7px 4px; border-radius: 8px; cursor: pointer; font-size: 13px; }
 .tab.active { background: var(--accent); color: white; }
 .tab:disabled { opacity: .35; cursor: not-allowed; }
@@ -224,3 +224,14 @@ textarea:focus, select:focus, input:focus { outline: 2px solid var(--accent); ou
   .layout { grid-template-columns: 1fr; padding: 8px; }
   .stage { grid-template-rows: 420px 210px; }
 }
+
+/* ---------- v3 additions ---------- */
+.wide-seg { display: flex; width: 100%; }
+.wide-seg button { flex: 1; }
+input[type="color"] { width: 100%; height: 38px; padding: 2px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; }
+.history { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.history li { display: flex; gap: 6px; align-items: center; padding: 4px 6px; border-radius: 8px; cursor: pointer; }
+.history li:hover { background: var(--panel-2); }
+.history li.current { color: var(--accent); cursor: default; font-weight: 600; }
+.history li .lvl { color: var(--muted); font-family: ui-monospace, monospace; white-space: pre; }
+#btnBlender { display: block; margin-top: 4px; }

@@ -27,6 +27,8 @@
         <button class="tab active" data-mode="text" role="tab">Texto</button>
         <button class="tab" data-mode="image" role="tab">Imagen</button>
         <button class="tab" data-mode="multi" role="tab" data-cap="multi_image">Multi-vista</button>
+        <button class="tab" data-mode="scene" role="tab">Escena / relieve</button>
+        <button class="tab" data-mode="text3d" role="tab">Texto 3D</button>
         <button class="tab" data-mode="upload" role="tab">Subir</button>
       </div>
 
@@ -53,6 +55,56 @@
           <label>De 2 a 4 vistas del mismo objeto</label>
           <div class="slots" id="slots"></div>
           <p class="muted small">Frente, lateral, espalda… Más vistas = geometría más fiel por detrás.</p>
+        </section>
+
+        <section class="mode" data-for="scene" hidden>
+          <label>Tipo</label>
+          <div class="segmented wide-seg" id="sceneKind">
+            <button type="button" class="on" data-kind="scene">Escena 2.5D</button><button type="button" data-kind="relief">Relieve</button><button type="button" data-kind="lithophane">Litofanía</button>
+          </div>
+          <p class="muted small" id="sceneHint"></p>
+          <label class="dropzone" id="dropScene">
+            <input type="file" accept="image/png,image/jpeg,image/webp" hidden />
+            <img alt="" hidden />
+            <span class="hint">Arrastra una foto (paisaje, habitación, retrato…)<br /><small>PNG, JPG o WEBP</small></span>
+          </label>
+          <div class="range">
+            <label for="sceneRes">Detalle <b id="sceneResValue"></b></label>
+            <input type="range" id="sceneRes" min="64" max="400" step="8" value="256" />
+          </div>
+          <div class="range">
+            <label for="sceneStrength"><span id="sceneStrengthLabel">Profundidad</span> <b id="sceneStrengthValue"></b></label>
+            <input type="range" id="sceneStrength" min="0.1" max="1.5" step="0.05" value="0.4" />
+          </div>
+          <label class="check" id="sceneCutRow"><input type="checkbox" id="sceneCut" checked /> Separar objetos del fondo (cortar bordes)</label>
+        </section>
+
+        <section class="mode" data-for="text3d" hidden>
+          <label for="text3d">Texto (hasta 4 líneas)</label>
+          <textarea id="text3d" rows="2" maxlength="80" placeholder="Tu nombre, un logo, un cartel…"></textarea>
+          <label>Formato</label>
+          <div class="segmented wide-seg" id="textStyle">
+            <button type="button" class="on" data-style="letters">Letras</button><button type="button" data-style="plate">Placa</button><button type="button" data-style="keychain">Llavero</button>
+          </div>
+          <div class="row">
+            <div>
+              <label for="textFont">Fuente</label>
+              <select id="textFont">
+                <option value="sans">Sans</option>
+                <option value="serif">Serif</option>
+                <option value="mono">Monoespaciada</option>
+              </select>
+            </div>
+            <label class="check"><input type="checkbox" id="textBold" checked /> Negrita</label>
+          </div>
+          <div class="range">
+            <label for="textDepth">Grosor de letra <b id="textDepthValue"></b></label>
+            <input type="range" id="textDepth" min="0.05" max="1" step="0.05" value="0.25" />
+          </div>
+          <div class="row">
+            <div><label for="textColor">Color letras</label><input type="color" id="textColor" value="#7c5cff" /></div>
+            <div id="plateColorRow" hidden><label for="plateColor">Color base</label><input type="color" id="plateColor" value="#f0f0f0" /></div>
+          </div>
         </section>
 
         <section class="mode" data-for="upload" hidden>
@@ -224,12 +276,24 @@
 
         <details open>
           <summary>Exportar</summary>
+          <select id="exportFormat"></select>
           <div class="row">
-            <select id="exportFormat"></select>
-            <input id="exportHeight" type="number" min="1" max="10000" placeholder="Alto mm" title="Altura final en milímetros" />
+            <select id="exportFit" title="Qué medida fijar">
+              <option value="height">Alto</option>
+              <option value="width">Ancho</option>
+              <option value="depth">Fondo</option>
+              <option value="max">Lado mayor</option>
+            </select>
+            <input id="exportHeight" type="number" min="1" max="10000" placeholder="mm" title="Medida final en milímetros" />
           </div>
           <p class="muted small" id="exportHint"></p>
           <a class="primary wide" id="btnExport" download>⬇ Descargar</a>
+          <a class="link" id="btnBlender" href="/api/integrations/blender" download>🧩 Complemento para Blender (importar con un clic)</a>
+        </details>
+
+        <details id="historySection">
+          <summary>Historial de versiones</summary>
+          <ul class="history" id="history"></ul>
         </details>
 
         <details>
