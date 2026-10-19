@@ -1,6 +1,8 @@
 // Settings dialog: pick the AI engine (cloud fal.ai, your own GPU, demo), keys and Blender path.
 // Saved on the server (user data folder) so the desktop app remembers them between launches.
 
+import { t, tr } from "./i18n.js";
+
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
@@ -34,19 +36,19 @@ export async function openSettings(welcome = false) {
   $("#settingsLocked").hidden = !current.locked;
   $("#settingsForm").querySelectorAll("input, select, #provCards button, #btnSaveSettings")
     .forEach((el) => (el.disabled = current.locked));
-  $("#falEngine").replaceChildren(...current.fal_engines.map((e) => new Option(e.label, e.id)));
+  $("#falEngine").replaceChildren(...current.fal_engines.map((e) => new Option(tr(e.label), e.id)));
   $("#falEngine").value = current.fal_engine;
   $("#falKey").value = "";
   $("#falKey").placeholder = current.fal_key_set
-    ? `Clave guardada (${current.fal_key_hint}) — déjalo vacío para mantenerla`
-    : "Pega tu clave (fal.ai/dashboard/keys)";
+    ? t("Clave guardada ({h}) — déjalo vacío para mantenerla", { h: current.fal_key_hint })
+    : t("Pega tu clave (fal.ai/dashboard/keys)");
   $("#workerUrl").value = current.local_worker_url || "";
   $("#workerToken").value = "";
   $("#blenderPath").value = current.blender_path || "";
   $("#blenderStatus").textContent = current.blender_found
-    ? `✔ Blender encontrado: ${current.blender_found}`
-    : "Blender no encontrado: instálalo (gratis, blender.org) para exportar FBX y .blend.";
-  showError(current.provider_error ? `El motor guardado no arrancó: ${current.provider_error}` : "");
+    ? t("✔ Blender encontrado: {p}", { p: current.blender_found })
+    : t("Blender no encontrado: instálalo (gratis, blender.org) para exportar FBX y .blend.");
+  showError(current.provider_error ? t("El motor guardado no arrancó: {e}", { e: tr(current.provider_error) }) : "");
   pick(welcome ? "fal" : current.provider);
   engineHint();
   const dlg = $("#settingsDlg");
@@ -62,7 +64,7 @@ function pick(p) {
 
 function engineHint() {
   const engine = current?.fal_engines.find((e) => e.id === $("#falEngine").value);
-  $("#falEngineHint").textContent = engine ? engine.description : "";
+  $("#falEngineHint").textContent = engine ? tr(engine.description) : "";
 }
 
 function showError(msg) {
@@ -74,7 +76,7 @@ async function save() {
   const body = { provider, blender_path: $("#blenderPath").value.trim() };
   if (provider === "fal") {
     const key = $("#falKey").value.trim();
-    if (!key && !current.fal_key_set) return showError("Pega tu clave de fal.ai para usar la nube");
+    if (!key && !current.fal_key_set) return showError(t("Pega tu clave de fal.ai para usar la nube"));
     body.fal_key = key;
     body.fal_engine = $("#falEngine").value;
   }
@@ -88,10 +90,10 @@ async function save() {
   try {
     await ctx.api("/api/settings", { method: "PUT", json: body });
     $("#settingsDlg").close();
-    ctx.toast("¡Ajustes guardados! 準備完了");
+    ctx.toast(t("¡Ajustes guardados!"));
     setTimeout(() => location.reload(), 900); // engines and capabilities may have changed
   } catch (err) {
-    showError(err.message);
+    showError(tr(err.message));
   } finally {
     button.disabled = false;
   }

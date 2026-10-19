@@ -2,6 +2,8 @@
 // (front view for people, side view for animals), procedural clips, the bundled mocap library,
 // BVH mocap, skeleton and skin-weight inspection.
 
+import { t, tr } from "./i18n.js";
+
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 const NOT_RIGGABLE = ["scene", "relief", "lithophane", "text3d", "split"];
@@ -25,17 +27,17 @@ export async function initRig(context) {
   presets.quadruped ||= { presets: [], default: [], markers: [] };
 
   const cats = [...new Set(presets.library.map((c) => c.category))];
-  $("#libCat").append(...cats.map((c) => new Option(c, c)));
+  $("#libCat").append(...cats.map((c) => new Option(tr(c), c)));
   $("#libList").replaceChildren(
     ...cats.flatMap((cat) => {
       const head = document.createElement("h4");
-      head.textContent = cat;
+      head.textContent = tr(cat);
       head.dataset.cat = cat;
       const rows = presets.library.filter((c) => c.category === cat).map((c) => {
         const label = document.createElement("label");
         label.dataset.cat = cat;
         label.innerHTML = `<input type="checkbox" value="${c.id}" /> `;
-        label.append(document.createTextNode(c.label));
+        label.append(document.createTextNode(tr(c.label)));
         label.insertAdjacentHTML("beforeend", `<small>${c.seconds.toFixed(1)} s</small>`);
         return label;
       });
@@ -48,6 +50,7 @@ export async function initRig(context) {
 
   $$("#rigTemplate button").forEach((b) => b.addEventListener("click", () => setTemplate(b.dataset.t)));
   $("#btnAutoRig").addEventListener("click", () => run($("#btnAutoRig"), autoRigOrAnimate));
+  $("#btnCharacter").addEventListener("click", () => run($("#btnCharacter"), fullCharacter));
   $("#btnMarkers").addEventListener("click", () => run($("#btnMarkers"), () => openEditor()));
   $("#btnRotateModel").addEventListener("click", () => run($("#btnRotateModel"), () => openEditor((editing.yaw + 90) % 360, true)));
   $("#btnResetMarkers").addEventListener("click", () => run($("#btnResetMarkers"), () => openEditor(editing.yaw, true)));
@@ -63,7 +66,7 @@ export async function initRig(context) {
 // Spanish label for a baked clip name (procedural presets are stored by id)
 export function clipLabel(name) {
   const all = [...presets.presets, ...presets.quadruped.presets];
-  return all.find((p) => p.id === name)?.label || name;
+  return tr(all.find((p) => p.id === name)?.label || name);
 }
 
 async function run(button, fn) {
@@ -95,7 +98,7 @@ function filterLibrary() {
 
 function countLibrary() {
   const n = $$("#libList input:checked").length;
-  $("#libCount").textContent = `${n ? `${n} elegidas · ` : ""}${presets.library.length} clips`;
+  $("#libCount").textContent = `${n ? t("{n} elegidas · ", { n }) : ""}${t("{n} clips", { n: presets.library.length })}`;
 }
 
 // Fill the clip lists for the current body type, ticking `checked` (or that type's defaults).
@@ -106,8 +109,8 @@ function renderLists(checked) {
     ...set.presets.map((p) => {
       const label = document.createElement("label");
       label.innerHTML = `<input type="checkbox" value="${p.id}" ${ticked.has(p.id) ? "checked" : ""} /> `;
-      label.append(document.createTextNode(p.label));
-      label.title = `${p.duration.toFixed(1)} s${p.loop ? " · bucle" : ""}`;
+      label.append(document.createTextNode(tr(p.label)));
+      label.title = `${p.duration.toFixed(1)} s${p.loop ? ` · ${t("bucle")}` : ""}`;
       return label;
     }),
   );
@@ -130,17 +133,18 @@ function updateTexts() {
   const params = job?.params || {};
   const rigTpl = params.template || "humanoid";
   const changing = isRig && template !== "auto" && template !== rigTpl;
-  $("#btnAutoRig").textContent = !isRig ? "⚡ Auto-rig" : changing ? "⚡ Re-riggear" : "↻ Actualizar animaciones";
-  $("#btnMarkers").textContent = isRig ? "◎ Reajustar" : "◎ Marcadores";
+  $("#btnAutoRig").textContent = t(!isRig ? "⚡ Solo rig" : changing ? "⚡ Re-riggear" : "↻ Actualizar animaciones");
+  $("#btnMarkers").textContent = t(isRig ? "◎ Reajustar" : "◎ Marcadores");
+  $("#charBox").hidden = isRig;
   $("#rigHint").textContent = isRig
-    ? `Esqueleto ${TEMPLATE_LABEL[rigTpl]} de ${Object.keys(params.skeleton || {}).length || "—"} huesos · ` +
-      `${(params.clips || []).length} animaciones. ` +
-      (changing ? "Se creará un rig nuevo con el otro tipo de cuerpo." : "Añade movimientos, sube mocap BVH o reajusta las articulaciones.")
-    : isQuad()
+    ? t("Esqueleto {t} de {n} huesos · {c} animaciones. ", { t: t(TEMPLATE_LABEL[rigTpl]),
+      n: Object.keys(params.skeleton || {}).length || "—", c: (params.clips || []).length }) +
+      t(changing ? "Se creará un rig nuevo con el otro tipo de cuerpo." : "Añade movimientos, sube mocap BVH o reajusta las articulaciones.")
+    : t(isQuad()
       ? "Animales de cuatro patas (perro, gato, caballo, dragón…) de perfil, de pie. Andar, trotar, galopar, sentarse…"
       : template === "humanoid"
         ? "Personajes de pie (pose A o T), mirando al frente. Esqueleto Mixamo compatible con Unity, Unreal y Blender."
-        : "Detecta si es una persona o un animal de cuatro patas. Los clips que no encajen se ignoran.";
+        : "Detecta si es una persona o un animal de cuatro patas. Los clips que no encajen se ignoran.");
 }
 
 export function renderRig(next) {
@@ -167,13 +171,13 @@ export function renderRig(next) {
   );
   $("#rigView").hidden = !isRig || job.status !== "succeeded";
   $("#showBones").checked = false;
-  $("#weightBone").replaceChildren(new Option("Pesos: ninguno", ""));
+  $("#weightBone").replaceChildren(new Option(t("Pesos: ninguno"), ""));
 }
 
 function fillBones() {
   const select = $("#weightBone");
   if (select.options.length > 1) return;
-  for (const name of ctx.viewer.boneNames()) select.append(new Option(`Pesos: ${name}`, name));
+  for (const name of ctx.viewer.boneNames()) select.append(new Option(t("Pesos: {b}", { b: name }), name));
 }
 
 async function autoRigOrAnimate() {
@@ -191,16 +195,24 @@ async function autoRigOrAnimate() {
   body.append("in_place", $("#inPlace").checked);
   for (const file of $("#bvhFiles").files) body.append("bvh", file);
   if (!animations.length && !body.getAll("bvh").length && !body.get("keep_bvh")) {
-    throw new Error("Elige al menos una animación o sube un BVH");
+    throw new Error(t("Elige al menos una animación o sube un BVH"));
   }
   ctx.onCreated(await ctx.api(`/api/jobs/${current.id}/animate`, { method: "POST", body }));
+}
+
+// one click: HD/PBR textures (when the model has textures) → skeleton → the ticked clips
+async function fullCharacter() {
+  const current = ctx.selectedJob();
+  if (!current || current.mode === "rig") return;
+  const json = { target: $("#charTarget").value, pbr: true, template, animations: selectedAnimations(), in_place: true };
+  ctx.onCreated(await ctx.api(`/api/jobs/${current.id}/character`, { method: "POST", json }), { last: true });
 }
 
 // fresh: estimate again from the mesh (instead of a rigged character's saved markers)
 async function openEditor(yaw, fresh = false) {
   const current = ctx.selectedJob();
   if (!current || current.status !== "succeeded") return;
-  if (!ctx.viewer.model) throw new Error("Espera a que el modelo cargue en el visor");
+  if (!ctx.viewer.model) throw new Error(t("Espera a que el modelo cargue en el visor"));
   const json = { auto: fresh, template: editing?.template || template, ...(yaw === undefined ? {} : { yaw }) };
   const res = await ctx.api(`/api/jobs/${current.id}/rig/markers`, { method: "POST", json });
   const tpl = res.template || "humanoid";
@@ -213,13 +225,15 @@ async function openEditor(yaw, fresh = false) {
   const side = res.view === "side";
   ctx.viewer.setWeightBone(null);
   ctx.viewer.enterMarkerEditor({
-    markers: res.markers, labels: res.labels || Object.fromEntries(presets.markers.map((m) => [m.id, m.label])),
+    markers: res.markers,
+    labels: Object.fromEntries(Object.entries(res.labels || Object.fromEntries(presets.markers.map((m) => [m.id, m.label])))
+      .map(([k, v]) => [k, tr(v)])),
     yaw: res.view_yaw, view: res.view || "front", symmetric: $("#markerSym").checked,
     onChange: (m) => editing && (editing.markers = m),
   });
-  $("#markerHelp").textContent = side
+  $("#markerHelp").textContent = t(side
     ? "Vista lateral: cabeza a la derecha. Arrastra los puntos al hocico, lomo, cola y patas del lado visible."
-    : "Arrastra los puntos a las articulaciones (vista frontal; rueda = zoom)";
+    : "Arrastra los puntos a las articulaciones (vista frontal; rueda = zoom)");
   $("#markerSymRow").hidden = side;
   $("#rigEditorBar").hidden = false;
   $("#viewModes").hidden = true;

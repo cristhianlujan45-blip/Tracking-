@@ -119,6 +119,31 @@ class FORJA_OT_refresh(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def arrange_clips(objects, gap: int = 10) -> int:
+    """Put every animation clip on its own numbered NLA track ("01 idle", "02 walk"…), one after
+    another on the timeline, so all of them play and stay editable. Returns the number of clips."""
+    count, last = 0, 1
+    for obj in objects:
+        ad = obj.animation_data if obj.type == "ARMATURE" else None
+        if ad is None or not ad.nla_tracks:
+            continue
+        # the glTF importer adds one muted track per clip, newest on top: reverse for file order
+        actions = [s.action for t in reversed(list(ad.nla_tracks)) for s in t.strips if s.action]
+        for track in list(ad.nla_tracks):
+            ad.nla_tracks.remove(track)
+        start = 1
+        for i, action in enumerate(actions, 1):
+            track = ad.nla_tracks.new()
+            track.name = f"{i:02d} {action.name}"
+            strip = track.strips.new(track.name, start, action)
+            start = int(strip.frame_end) + gap
+        ad.action = None
+        count, last = max(count, len(actions)), max(last, start - gap)
+    if count:
+        bpy.context.scene.frame_start, bpy.context.scene.frame_end = 1, last
+    return count
+
+
 class FORJA_OT_import(bpy.types.Operator):
     bl_idname = "forja.import_model"
     bl_label = "Importar"
@@ -168,7 +193,8 @@ class FORJA_OT_import(bpy.types.Operator):
                 obj.name = title[:60]
         if roots:
             context.view_layer.objects.active = roots[0]
-        self.report({"INFO"}, f"Importado: {title}")
+        clips = arrange_clips(new_objects)
+        self.report({"INFO"}, f"Importado: {title}" + (f" · {clips} animaciones en pistas NLA" if clips else ""))
         return {"FINISHED"}
 
 

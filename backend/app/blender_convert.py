@@ -30,6 +30,33 @@ for obj in bpy.data.objects:
 for shape in shapes:
     bpy.data.objects.remove(shape, do_unlink=True)
 
+
+def arrange_clips(objects, gap: int = 10) -> int:
+    """Put every animation clip on its own numbered NLA track ("01 idle", "02 walk"…), one after
+    another on the timeline, so all of them play and stay editable. Returns the number of clips."""
+    count, last = 0, 1
+    for obj in objects:
+        ad = obj.animation_data if obj.type == "ARMATURE" else None
+        if ad is None or not ad.nla_tracks:
+            continue
+        # the glTF importer adds one muted track per clip, newest on top: reverse for file order
+        actions = [s.action for t in reversed(list(ad.nla_tracks)) for s in t.strips if s.action]
+        for track in list(ad.nla_tracks):
+            ad.nla_tracks.remove(track)
+        start = 1
+        for i, action in enumerate(actions, 1):
+            track = ad.nla_tracks.new()
+            track.name = f"{i:02d} {action.name}"
+            strip = track.strips.new(track.name, start, action)
+            start = int(strip.frame_end) + gap
+        ad.action = None
+        count, last = max(count, len(actions)), max(last, start - gap)
+    if count:
+        bpy.context.scene.frame_start, bpy.context.scene.frame_end = 1, last
+    return count
+
+
+
 if dst.lower().endswith(".fbx"):
     bpy.ops.export_scene.fbx(
         filepath=dst,
@@ -44,5 +71,6 @@ if dst.lower().endswith(".fbx"):
         axis_up="Y",
     )
 else:
+    arrange_clips(bpy.data.objects)  # .blend: clips laid out as NLA strips, ready to edit
     bpy.ops.wm.save_as_mainfile(filepath=dst, compress=True)
 print("forja3d-convert: ok")

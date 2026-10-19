@@ -21,6 +21,38 @@ const LIGHTING = {
            rim: [0x6c8cff, 2.0], grid: [0x1c2a50, 0x11131c] },
 };
 
+// which channel of each map to show in the material inspector (-1 = all colours)
+const MAP_CHANNEL = { map: -1, normalMap: -1, roughnessMap: 1, metalnessMap: 2, aoMap: 0 };
+
+function channelMaterial(texture, channel, isColor) {
+  return new THREE.ShaderMaterial({
+    uniforms: { map: { value: texture }, channel: { value: channel } },
+    defines: isColor ? { IS_COLOR: "" } : {},
+    vertexShader: `
+      #include <common>
+      #include <skinning_pars_vertex>
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        #include <skinbase_vertex>
+        #include <begin_vertex>
+        #include <skinning_vertex>
+        #include <project_vertex>
+      }`,
+    fragmentShader: `
+      uniform sampler2D map;
+      uniform int channel;
+      varying vec2 vUv;
+      void main() {
+        vec4 c = texture2D(map, vUv);
+        gl_FragColor = vec4(channel < 0 ? c.rgb : vec3(c[channel]), 1.0);
+        #ifdef IS_COLOR
+        #include <colorspace_fragment>
+        #endif
+      }`,
+  });
+}
+
 function gradientTexture(stops) {
   const canvas = Object.assign(document.createElement("canvas"), { width: 4, height: 256 });
   const g = canvas.getContext("2d");
@@ -66,6 +98,8 @@ export class Viewer {
     this.clips = [];
     this.action = null;
     this.viewMode = "textured";
+    this.mapView = "";
+    this.wireMaterial = new THREE.MeshBasicMaterial({ color: 0xd4ff5a, wireframe: true, transparent: true, opacity: 0.35 });
     this.overrides = {
       clay: new THREE.MeshStandardMaterial({ color: 0xd9d3cc, roughness: 0.85, metalness: 0 }),
       normals: new THREE.MeshNormalMaterial(),
@@ -138,6 +172,7 @@ export class Viewer {
     this.exitMarkerEditor();
     this.setSkeletonVisible(false);
     this.weightBone = null;
+    this.mapView = "";
     this.mixer?.stopAllAction();
     this.mixer = null;
     this.action = null;
@@ -182,15 +217,64 @@ export class Viewer {
     this.scene.add(this.grid);
   }
 
-  // textured | clay | normals | wireframe
+  // textured | wireover (texture + wireframe on top) | clay | normals | wireframe
   setViewMode(mode) {
     this.viewMode = mode;
-    this.model?.traverse((o) => {
-      if (!o.isMesh) return;
+    const meshes = [];
+    this.model?.traverse((o) => o.isMesh && !o.userData.isOverlay && meshes.push(o));
+    for (const o of meshes) {
       const original = o.userData.original;
-      o.material = this.overrides[mode] || original;
+      o.material = this.overrides[mode] || this._mapMaterial(o) || original;
       [].concat(original).forEach((m) => (m.wireframe = mode === "wireframe"));
+      if (mode === "wireover" && !o.userData.overlay) {
+        const overlay = o.isSkinnedMesh ? new THREE.SkinnedMesh(o.geometry, this.wireMaterial) : new THREE.Mesh(o.geometry, this.wireMaterial);
+        if (o.isSkinnedMesh) overlay.bind(o.skeleton, o.bindMatrix);
+        overlay.userData.isOverlay = true;
+        overlay.renderOrder = 1;
+        o.add(overlay); // same transform as the mesh it outlines
+        o.userData.overlay = overlay;
+      } else if (mode !== "wireover" && o.userData.overlay) {
+        o.remove(o.userData.overlay);
+        delete o.userData.overlay;
+      }
+    }
+  }
+
+  // Material inspector: show one map (colour, normal, roughness, metal, AO) instead of the shaded result.
+  setMapView(key) {
+    this.mapView = key || "";
+    this.setViewMode(this.viewMode === "clay" || this.viewMode === "normals" ? "textured" : this.viewMode);
+  }
+
+  _mapMaterial(mesh) {
+    if (!this.mapView) return null;
+    const source = [].concat(mesh.userData.original)[0];
+    const texture = source?.[this.mapView];
+    if (!texture) return null;
+    mesh.userData.mapMaterials ||= {};
+    return (mesh.userData.mapMaterials[this.mapView] ||= channelMaterial(texture, MAP_CHANNEL[this.mapView], this.mapView === "map"));
+  }
+
+  availableMaps() {
+    const found = new Set();
+    this.model?.traverse((o) => {
+      if (!o.isMesh || o.userData.isOverlay) return;
+      [].concat(o.userData.original || o.material).forEach((m) => Object.keys(MAP_CHANNEL).forEach((k) => m?.[k] && found.add(k)));
     });
+    return [...found];
+  }
+
+  // largest texture side in pixels (0 when the model has no textures)
+  textureSize() {
+    let size = 0;
+    this.model?.traverse((o) => {
+      if (!o.isMesh || o.userData.isOverlay) return;
+      [].concat(o.userData.original || o.material).forEach((m) => {
+        const img = m?.map?.image;
+        if (img) size = Math.max(size, img.width || 0, img.height || 0);
+      });
+    });
+    return size;
   }
 
   setLighting(preset) {
@@ -273,7 +357,7 @@ export class Viewer {
 
   skinnedMeshes() {
     const out = [];
-    this.model?.traverse((o) => o.isSkinnedMesh && out.push(o));
+    this.model?.traverse((o) => o.isSkinnedMesh && !o.userData.isOverlay && out.push(o));
     return out;
   }
 

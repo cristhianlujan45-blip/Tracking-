@@ -159,6 +159,14 @@ class RigIn(BaseModel):
     in_place: bool = True
 
 
+class CharacterIn(BaseModel):
+    target: Literal["none", "2k", "4k", "8k"] = "4k"
+    pbr: bool = True
+    template: Literal["auto", "humanoid", "quadruped"] = "auto"
+    animations: list[str] = Field(default_factory=lambda: list(rigging.DEFAULT_PRESETS), max_length=40)
+    in_place: bool = True
+
+
 class MarkersIn(BaseModel):
     template: Literal["auto", "humanoid", "quadruped"] = "auto"
     yaw: Literal[0, 90, 180, 270] | None = None
@@ -794,7 +802,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         return {**result, "source_id": source["id"], "view_yaw": (result["yaw"] - shown_yaw) % 360}
 
     def submit_rig(request: Request, parent: dict, body: RigIn, bvh: list[tuple[str, str, bytes]],
-                   keep_bvh: list[str]) -> JobOut:
+                   keep_bvh: list[str], after: str | None = None) -> JobOut:
+        """`after`: a job (HD textures) whose model, if it succeeds, is rigged instead of the parent's."""
         known = set(rigging.PRESETS) | set(rigging.quadruped.QUAD_PRESETS) | set(rigging.mocap.catalogue())
         unknown = [a for a in body.animations if a not in known]
         if unknown:
@@ -826,6 +835,12 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                  for item in bvh_files]
 
         async def work(on_progress):
+            nonlocal source, path
+            if after:
+                dep = request.app.state.store.get(after)
+                if dep and dep["status"] == "succeeded":
+                    source, path = dep, job_dir(after) / dep["model_file"]
+                    request.app.state.store.update_params(job_id, {"source_id": after})
             await on_progress(10, "Colocando esqueleto y calculando pesos")
             try:
                 result = await asyncio.to_thread(rigging.rig, path.read_bytes(), markers, body.yaw, body.animations,
@@ -843,9 +858,28 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         state = request.app.state
         title = job_title(source)
         job = state.store.create(id=job_id, mode="rig", prompt=source.get("prompt"), quality=source["quality"],
-                                 provider="local", params=params, parent_id=parent["id"], name=f"{title} · rig"[:120])
-        state.runner.submit(job_id, work)
+                                 provider="local", params=params, parent_id=after or parent["id"],
+                                 name=f"{title} · rig"[:120])
+        state.runner.submit(job_id, work, after=after)
         return to_out(job)
+
+    @app.post("/api/jobs/{job_id}/character", response_model=list[JobOut], status_code=201)
+    async def full_character(request: Request, job_id: str, body: CharacterIn):
+        """One click, like a studio pipeline: HD/PBR textures (when the model has textures), then the
+        skeleton, skin weights and animation clips, ready for Blender, Unity, Unreal or Godot."""
+        parent, path = ready_model(request, job_id)
+        if parent["mode"] == "rig":
+            raise HTTPException(400, "Este personaje ya tiene rig: usa «Actualizar animaciones»")
+        out, after = [], None
+        if body.target != "none":
+            has_textures = bool(await asyncio.to_thread(textures.textured_images, path.read_bytes()))
+            if has_textures:
+                hd = await enhance(request, job_id, EnhanceIn(target=body.target, pbr=body.pbr))
+                out.append(hd)
+                after = hd.id
+        rig_body = RigIn(template=body.template, animations=body.animations, in_place=body.in_place)
+        out.append(submit_rig(request, parent, rig_body, [], [], after))
+        return out
 
     def keep_bvh_items(parent: dict, names: list[str]) -> list[dict]:
         if parent["mode"] != "rig":

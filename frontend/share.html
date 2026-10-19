@@ -26,7 +26,7 @@
 </head>
 <body>
   <header>
-    <a class="brand" href="/"><span>鍛</span> Forja3D</a>
+    <a class="brand" href="/"><span>▲</span> Forja3D</a>
     <h1 id="title"></h1>
     <a class="btn" id="download" download hidden>⬇ GLB</a>
   </header>
@@ -38,18 +38,20 @@
   </model-viewer>
 
   <script type="module">
+    import { applyI18n, t, title } from "./i18n.js";
+    applyI18n();
     const params = new URLSearchParams(location.search);
     if (params.get("embed")) document.body.classList.add("embed");
     const msg = document.getElementById("msg");
     const id = params.get("id");
     try {
-      if (!id) throw new Error("Falta el identificador del modelo");
+      if (!id) throw new Error(t("Falta el identificador del modelo"));
       const resp = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
-      if (!resp.ok) throw new Error("Este modelo no existe o fue eliminado");
+      if (!resp.ok) throw new Error(t("Este modelo no existe o fue eliminado"));
       const job = await resp.json();
-      if (job.status !== "succeeded") throw new Error("El modelo aún no está listo");
-      document.title = `${job.title} — Forja3D`;
-      document.getElementById("title").textContent = job.title;
+      if (job.status !== "succeeded") throw new Error(t("El modelo aún no está listo"));
+      document.title = `${title(job.title)} — Forja3D`;
+      document.getElementById("title").textContent = title(job.title);
       const mv = document.getElementById("mv");
       mv.src = job.model_url;
       if (job.thumbnail_url) mv.poster = job.thumbnail_url;

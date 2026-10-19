@@ -1,18 +1,30 @@
+import { applyI18n, lang, t, title, tr } from "./i18n.js";
 import { clipLabel, initRig, renderRig } from "./rig.js";
 import { initSettings } from "./settings.js";
 import { Viewer } from "./viewer.js";
 
+applyI18n(); // translate the static page before anything else renders
+
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
-const EXAMPLES = [
-  "una guerrera samurái con armadura roja",
-  "un zorro kitsune de nueve colas",
-  "un robot mecha compacto",
-  "un templo japonés con cerezos",
-  "una katana con funda lacada",
-  "un dragón chibi",
-];
+// prompt ideas by category, in the interface language (the engines understand both)
+const EXAMPLES = {
+  es: {
+    Personaje: ["una guerrera samurái con armadura roja", "un orco guardián con armadura de bronce", "un robot mecha compacto", "una maga con capa y bastón"],
+    Criatura: ["un zorro kitsune de nueve colas", "un dragón chibi", "un lobo de cristal", "un gato astronauta"],
+    Arma: ["una katana con funda lacada", "un martillo de guerra rúnico", "una pistola de plasma sci-fi", "un arco élfico"],
+    Edificio: ["un templo japonés con cerezos", "una taberna medieval", "una torre cyberpunk con neones", "una cabaña en el bosque"],
+    Accesorio: ["un cofre del tesoro con remaches dorados", "una poción mágica brillante", "un casco de samurái", "una linterna de papel"],
+  },
+  en: {
+    Personaje: ["a samurai warrior with red armour", "an orc guardian in bronze armour", "a compact mecha robot", "a mage with a cloak and staff"],
+    Criatura: ["a nine-tailed kitsune fox", "a chibi dragon", "a crystal wolf", "an astronaut cat"],
+    Arma: ["a katana with a lacquered sheath", "a runic war hammer", "a sci-fi plasma pistol", "an elven bow"],
+    Edificio: ["a Japanese temple with cherry trees", "a medieval tavern", "a cyberpunk neon tower", "a cabin in the woods"],
+    Accesorio: ["a treasure chest with gold rivets", "a glowing magic potion", "a samurai helmet", "a paper lantern"],
+  },
+}[lang === "es" ? "es" : "en"];
 const STYLE_ICONS = { auto: "✧", realistic: "◉", cartoon: "☺", handpainted: "✎", lowpoly: "◆", voxel: "▦", sculpture: "◍" };
 const MODE_LABEL = {
   text: "Texto", image: "Imagen", multi_image: "Multi-vista", upload: "Subido",
@@ -22,7 +34,7 @@ const MODE_LABEL = {
 };
 const MODE_ICON = {
   text: "✎", image: "▣", multi_image: "▤", upload: "⇪", remesh: "◇", retexture: "✺", repair: "✚", split: "✂",
-  scene: "⛰", relief: "▨", lithophane: "◐", text3d: "A", rig: "骨", enhance: "✦",
+  scene: "⛰", relief: "▨", lithophane: "◐", text3d: "A", rig: "⚡", enhance: "✦",
 };
 const TOOL_MODES = ["remesh", "retexture", "repair", "split", "enhance"];
 const FLAT_MODES = ["relief", "lithophane"]; // plaques: size them by the longest side, not the thickness
@@ -43,12 +55,30 @@ const FORMAT_INFO = {
   "3mf_color": ["3MF multicolor (AMS / MMU)", "Un filamento por color, ya pintado: Bambu Studio, OrcaSlicer, PrusaSlicer."],
   stl_colors: ["STL por color (.zip)", "Un STL por color para cualquier laminador (asigna un extrusor a cada pieza)."],
   fbx: ["FBX (Unity, Unreal, Maya, 3ds Max)", "Convertido con Blender; conserva esqueleto, pesos y animaciones."],
-  blend: ["Blender (.blend)", "Archivo de Blender listo para abrir, con armadura y acciones."],
+  blend: ["Blender (.blend)", "Archivo de Blender listo para abrir: armadura, materiales PBR y cada animación en su pista NLA."],
   usdz: ["USDZ (iPhone / Apple)", "AR Quick Look en iPhone/iPad. Se genera en tu navegador; conserva texturas, no colores por vértice."],
 };
 const CLIENT_FORMATS = ["usdz"];
 const COLOR_FORMATS = ["3mf_color", "stl_colors"];
 const SLOT_LABELS = ["Frente", "Lateral", "Espalda", "Otra vista"];
+// export destinations: pick the best format available for each tool (FBX/.blend need Blender)
+const TARGETS = [
+  { id: "blender", label: "Blender", pick: (f) => (f.includes("blend") ? "blend" : "glb"),
+    hint: (f) => (f.includes("blend") ? "Abre el .blend: armadura, materiales PBR y cada animación en su pista NLA (01, 02…)."
+      : "Sin Blender instalado se descarga GLB: en Blender usa Archivo → Importar → glTF (o el complemento).") },
+  { id: "unity", label: "Unity", pick: (f) => (f.includes("fbx") ? "fbx" : "glb"),
+    hint: (f) => (f.includes("fbx") ? "FBX con esqueleto Humanoid y una toma por animación. En Unity: Rig → Humanoid."
+      : "GLB: arrástralo a Unity con glTFast (o instala Blender para obtener FBX).") },
+  { id: "unreal", label: "Unreal", pick: (f) => (f.includes("fbx") ? "fbx" : "glb"),
+    hint: (f) => (f.includes("fbx") ? "FBX para Unreal: impórtalo como Skeletal Mesh con sus animaciones."
+      : "GLB: Unreal 5 lo importa con Interchange (o instala Blender para FBX).") },
+  { id: "godot", label: "Godot", pick: () => "glb", hint: () => "GLB: Godot 4 lo importa directamente con esqueleto y animaciones." },
+  { id: "roblox", label: "Roblox", pick: (f) => (f.includes("fbx") ? "fbx" : "obj"),
+    hint: (f) => (f.includes("fbx") ? "FBX: Roblox Studio → Importador 3D (personajes con rig incluidos)."
+      : "OBJ: Roblox Studio → Importador 3D (instala Blender para FBX con rig).") },
+  { id: "web", label: "Web / AR", pick: () => "glb", hint: () => "GLB para la web y USDZ para AR en iPhone." },
+  { id: "print", label: "Impresora 3D", pick: () => "3mf", hint: () => "3MF en milímetros, apoyado en la cama. Indica la medida final." },
+];
 
 const state = {
   config: { capabilities: [], styles: [], poses: [], export_formats: [] },
@@ -71,6 +101,8 @@ const state = {
   toolsKey: null,
   analysis: {},
   pollTimer: null,
+  target: null,
+  exampleCat: "Personaje",
 };
 const viewer = new Viewer($("#viewer"));
 
@@ -88,7 +120,7 @@ async function api(path, { json, ...options } = {}) {
       const body = await resp.json();
       msg = typeof body.detail === "string" ? body.detail : body.detail?.[0]?.msg || msg;
     } catch {}
-    throw new Error(msg);
+    throw new Error(tr(msg));
   }
   return resp.status === 204 ? null : resp.json();
 }
@@ -122,7 +154,7 @@ function setupDropzone(zone, { accept, onFile }) {
   ["dragleave", "drop"].forEach((ev) => zone.addEventListener(ev, (e) => (e.preventDefault(), zone.classList.remove("drag"))));
   zone.addEventListener("drop", (e) => {
     const file = e.dataTransfer.files[0];
-    if (file) accept(file) ? onFile(file) : showFormError("Formato de archivo no soportado");
+    if (file) accept(file) ? onFile(file) : showFormError(t("Formato de archivo no soportado"));
   });
 }
 
@@ -143,39 +175,63 @@ const isImage = (f) => /^image\/(png|jpeg|webp)$/.test(f.type);
 
 // ================================================================ create form
 
+function renderExamples() {
+  $$("#exampleCats button").forEach((b) => b.classList.toggle("on", b.dataset.cat === state.exampleCat));
+  $("#examples").replaceChildren(
+    ...EXAMPLES[state.exampleCat].map((text) => {
+      const chip = Object.assign(document.createElement("button"), { type: "button", className: "chip", textContent: text });
+      chip.onclick = () => ($("#prompt").value = text);
+      return chip;
+    }),
+  );
+}
+
 function buildForm() {
-  for (const text of EXAMPLES) {
-    const chip = Object.assign(document.createElement("button"), { type: "button", className: "chip", textContent: text });
-    chip.onclick = () => ($("#prompt").value = text);
-    $("#examples").append(chip);
-  }
+  $("#exampleCats").replaceChildren(
+    ...Object.keys(EXAMPLES).map((cat) => {
+      const b = Object.assign(document.createElement("button"), { type: "button", textContent: t(cat) });
+      b.dataset.cat = cat;
+      b.onclick = () => ((state.exampleCat = cat), renderExamples());
+      return b;
+    }),
+  );
+  renderExamples();
 
   for (const { id, label } of state.config.styles) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "style" + (id === state.style ? " on" : "");
     b.dataset.style = id;
-    b.innerHTML = `<span class="ico">${STYLE_ICONS[id] || "•"}</span>${label}`;
+    b.innerHTML = `<span class="ico">${STYLE_ICONS[id] || "•"}</span>`;
+    b.append(tr(label));
     b.onclick = () => setStyle(id);
     $("#styles").append(b);
-    $("#retexStyle").append(new Option(`Estilo: ${label}`, id));
+    $("#retexStyle").append(new Option(t("Estilo: {s}", { s: tr(label) }), id));
   }
-  for (const { id, label } of state.config.poses) $("#pose").append(new Option(label, id));
+  for (const { id, label } of state.config.poses) $("#pose").append(new Option(tr(label), id));
   const engines = state.config.engines || [];
-  for (const e of engines) $("#engine").append(new Option(e.label, e.id));
+  for (const e of engines) $("#engine").append(new Option(tr(e.label), e.id));
   $("#engine").value = state.config.default_engine || engines[0]?.id || "";
   $("#engineRow").hidden = engines.length < 2;
-  const engineHint = () => ($("#engineHint").textContent = engines.find((e) => e.id === $("#engine").value)?.description || "");
+  const engineHint = () => ($("#engineHint").textContent = tr(engines.find((e) => e.id === $("#engine").value)?.description || ""));
   $("#engine").addEventListener("change", engineHint);
   engineHint();
   for (const f of [...state.config.export_formats, ...CLIENT_FORMATS]) {
-    $("#exportFormat").append(new Option(FORMAT_INFO[f]?.[0] || f, f));
+    $("#exportFormat").append(new Option(t(FORMAT_INFO[f]?.[0] || f), f));
   }
+  $("#targets").replaceChildren(
+    ...TARGETS.map((target) => {
+      const b = Object.assign(document.createElement("button"), { type: "button", textContent: t(target.label) });
+      b.dataset.target = target.id;
+      b.onclick = () => chooseTarget(target.id);
+      return b;
+    }),
+  );
 
   SLOT_LABELS.forEach((label, i) => {
     const zone = document.createElement("label");
     zone.className = "dropzone";
-    zone.innerHTML = `<input type="file" accept="image/png,image/jpeg,image/webp" hidden /><img alt="" hidden /><span class="hint">${label}</span>`;
+    zone.innerHTML = `<input type="file" accept="image/png,image/jpeg,image/webp" hidden /><img alt="" hidden /><span class="hint">${t(label)}</span>`;
     setupDropzone(zone, { accept: isImage, onFile: (f) => ((state.multiFiles[i] = f), previewInto(zone, f)) });
     $("#slots").append(zone);
   });
@@ -183,9 +239,9 @@ function buildForm() {
   setupDropzone($("#dropScene"), { accept: isImage, onFile: (f) => ((state.sceneFile = f), previewInto($("#dropScene"), f)) });
   segmented("#sceneKind", "kind", (kind) => ((state.sceneKind = kind), updateSceneUi()));
   segmented("#enhanceTarget", "v", () => {});
-  state.enhanceHint = has("upscale")
+  state.enhanceHint = t(has("upscale")
     ? "Amplía las texturas con IA (Real-ESRGAN) y genera mapas PBR: normal, rugosidad y oclusión."
-    : "Amplía las texturas (modo demo: reescalado de alta calidad sin IA) y genera mapas PBR: normal, rugosidad y oclusión.";
+    : "Amplía las texturas (modo demo: reescalado de alta calidad sin IA) y genera mapas PBR: normal, rugosidad y oclusión.");
   $("#enhanceHint").textContent = state.enhanceHint;
   segmented("#textStyle", "style", (style) => ((state.textStyle = style), ($("#plateColorRow").hidden = style === "letters")));
   ["sceneRes", "sceneStrength", "textDepth"].forEach((id) => $(`#${id}`).addEventListener("input", updateSceneUi));
@@ -200,7 +256,7 @@ function buildForm() {
     if (has(el.dataset.cap)) return;
     if (el.classList.contains("tab")) {
       el.disabled = true;
-      el.title = "No disponible con el proveedor actual";
+      el.title = t("No disponible con el proveedor actual");
     } else el.hidden = true;
   });
 
@@ -225,8 +281,8 @@ function segmented(selector, key, onChange) {
 
 function updateSceneUi() {
   const [label, hint] = SCENE_INFO[state.sceneKind];
-  $("#sceneHint").textContent = hint;
-  $("#sceneStrengthLabel").textContent = label;
+  $("#sceneHint").textContent = t(hint);
+  $("#sceneStrengthLabel").textContent = t(label);
   $("#sceneCutRow").hidden = state.sceneKind !== "scene";
   $("#sceneResValue").textContent = `${$("#sceneRes").value} px`;
   $("#sceneStrengthValue").textContent = `${Math.round(Number($("#sceneStrength").value) * 100)} %`;
@@ -246,8 +302,8 @@ function setMode(mode) {
     el.hidden = !visible;
   });
   $("#concepts").hidden = mode !== "text" || !state.concepts.length;
-  $("#submit").textContent =
-    mode === "upload" ? "Importar modelo" : ["scene", "text3d"].includes(mode) ? "Crear modelo 3D" : "Generar modelo 3D";
+  $("#submit").textContent = t(
+    mode === "upload" ? "Importar modelo" : ["scene", "text3d"].includes(mode) ? "Crear modelo 3D" : "Generar modelo 3D");
   showFormError("");
 }
 
@@ -298,21 +354,21 @@ $("#form").addEventListener("submit", (e) => {
     let created;
     if (state.mode === "text") {
       const prompt = $("#prompt").value.trim();
-      if (prompt.length < 3) throw new Error("Escribe una descripción de al menos 3 caracteres");
+      if (prompt.length < 3) throw new Error(t("Escribe una descripción de al menos 3 caracteres"));
       created = await api("/api/jobs/text", { method: "POST", json: { prompt, ...opts } });
     } else if (state.mode === "image") {
-      if (!state.imageFile) throw new Error("Selecciona una imagen primero");
+      if (!state.imageFile) throw new Error(t("Selecciona una imagen primero"));
       const body = imageForm(opts, $("#imagePrompt").value.trim());
       body.append("images", state.imageFile);
       created = await api("/api/jobs/image", { method: "POST", body });
     } else if (state.mode === "multi") {
       const files = state.multiFiles.filter(Boolean);
-      if (files.length < 2) throw new Error("Añade al menos 2 vistas");
+      if (files.length < 2) throw new Error(t("Añade al menos 2 vistas"));
       const body = imageForm({ ...opts, style: "auto" });
       files.forEach((f) => body.append("images", f));
       created = await api("/api/jobs/image", { method: "POST", body });
     } else if (state.mode === "scene") {
-      if (!state.sceneFile) throw new Error("Selecciona una foto");
+      if (!state.sceneFile) throw new Error(t("Selecciona una foto"));
       const body = new FormData();
       body.append("image", state.sceneFile);
       body.append("kind", state.sceneKind);
@@ -322,7 +378,7 @@ $("#form").addEventListener("submit", (e) => {
       created = await api("/api/jobs/scene", { method: "POST", body });
     } else if (state.mode === "text3d") {
       const text = $("#text3d").value.trim();
-      if (!text) throw new Error("Escribe algún texto");
+      if (!text) throw new Error(t("Escribe algún texto"));
       created = await api("/api/jobs/text3d", {
         method: "POST",
         json: {
@@ -331,7 +387,7 @@ $("#form").addEventListener("submit", (e) => {
         },
       });
     } else {
-      if (!state.modelFile) throw new Error("Selecciona un archivo 3D");
+      if (!state.modelFile) throw new Error(t("Selecciona un archivo 3D"));
       const body = new FormData();
       body.append("model", state.modelFile);
       created = await api("/api/jobs/upload", { method: "POST", body });
@@ -341,10 +397,11 @@ $("#form").addEventListener("submit", (e) => {
   });
 });
 
-function onCreated(created) {
+// last: follow the final job of a chain (e.g. textures → rig) instead of the first one
+function onCreated(created, { last = false } = {}) {
   const jobs = [].concat(created);
-  toast(jobs.length > 1 ? `${jobs.length} trabajos en cola` : "Trabajo en cola");
-  state.selected = jobs[0].id;
+  toast(jobs.length > 1 ? t("{n} trabajos en cola", { n: jobs.length }) : t("Trabajo en cola"));
+  state.selected = jobs[last ? jobs.length - 1 : 0].id;
   refreshJobs();
 }
 
@@ -352,7 +409,7 @@ function onCreated(created) {
 
 async function loadConcepts() {
   const prompt = $("#prompt").value.trim();
-  if (prompt.length < 3) return showFormError("Escribe una descripción de al menos 3 caracteres");
+  if (prompt.length < 3) return showFormError(t("Escribe una descripción de al menos 3 caracteres"));
   const opts = generationOptions();
   state.conceptPick = null;
   $("#concepts").hidden = false;
@@ -366,7 +423,7 @@ async function loadConcepts() {
     state.concepts = res.concepts;
     $("#conceptGrid").replaceChildren(
       ...res.concepts.map((c) => {
-        const img = Object.assign(document.createElement("img"), { src: c.url, alt: "Concepto" });
+        const img = Object.assign(document.createElement("img"), { src: c.url, alt: t("Concepto") });
         img.onclick = () => {
           state.conceptPick = c.id;
           $$("#conceptGrid img").forEach((x) => x.classList.toggle("on", x === img));
@@ -402,27 +459,27 @@ function matchesFilter(job) {
   if (f === "tools" && !TOOL_MODES.includes(job.mode)) return false;
   if (f === "active" && !["queued", "running"].includes(job.status)) return false;
   if (f === "rig" && job.mode !== "rig") return false;
-  return !state.search || job.title.toLowerCase().includes(state.search);
+  return !state.search || title(job.title).toLowerCase().includes(state.search);
 }
 
 function renderJobs() {
   const list = $("#jobs");
   const visible = state.jobs.filter(matchesFilter);
   $("#jobsEmpty").hidden = visible.length > 0;
-  $("#jobsEmpty").textContent = state.jobs.length ? "Nada coincide con el filtro." : "Aún no hay modelos.";
+  $("#jobsEmpty").textContent = t(state.jobs.length ? "Nada coincide con el filtro." : "Aún no hay modelos.");
   list.replaceChildren(
     ...visible.map((job) => {
       const li = $("#jobTpl").content.firstElementChild.cloneNode(true);
       li.classList.add(job.status);
       li.classList.toggle("selected", job.id === state.selected);
-      li.title = job.title;
+      li.title = title(job.title);
       const thumb = li.querySelector(".thumb");
       const pic = job.thumbnail_url || job.image_url;
       if (pic) thumb.style.backgroundImage = `url("${pic}")`;
       else thumb.insertAdjacentText("afterbegin", MODE_ICON[job.mode] || "◆");
       li.querySelector(".badge").textContent =
-        job.status === "running" ? `${job.progress}%` : STATUS_LABEL[job.status] || MODE_LABEL[job.mode] || job.mode;
-      li.querySelector(".name").textContent = job.title;
+        job.status === "running" ? `${job.progress}%` : t(STATUS_LABEL[job.status] || MODE_LABEL[job.mode] || job.mode);
+      li.querySelector(".name").textContent = title(job.title);
       li.querySelector(".bar span").style.width = `${job.progress}%`;
       const star = li.querySelector(".star");
       star.classList.toggle("on", job.favorite);
@@ -482,18 +539,23 @@ async function toggleFavorite(job) {
 async function showModel(job) {
   const loading = $("#viewerLoading");
   const empty = $("#viewerEmpty");
-  $("#viewerTitle").textContent = job ? job.title : "";
+  $("#viewerTitle").textContent = job ? title(job.title) : "";
+  const emptyMsg = (msg) => {
+    $("#viewerEmptyMsg").textContent = msg;
+    $("#hero").hidden = !!msg;
+  };
 
   if (!job || job.status !== "succeeded") {
     viewer.clear();
     state.loadedModel = null;
     $("#stats").textContent = "";
     $("#animBar").hidden = true;
+    $("#mapView").hidden = true;
     const failed = job?.status === "failed";
     empty.hidden = !!job && !failed;
-    empty.textContent = failed ? `La generación falló: ${job.error}` : "Genera o selecciona un modelo para verlo aquí";
+    emptyMsg(failed ? t("La generación falló: {e}", { e: tr(job.error) }) : "");
     loading.hidden = !job || failed;
-    if (job && !failed) $("#viewerProgress").textContent = `${job.stage || "En cola"} · ${job.progress}%`;
+    if (job && !failed) $("#viewerProgress").textContent = `${tr(job.stage) || t("En cola")} · ${job.progress}%`;
     return;
   }
 
@@ -501,19 +563,28 @@ async function showModel(job) {
   state.loadedModel = job.model_url;
   empty.hidden = true;
   loading.hidden = false;
-  $("#viewerProgress").textContent = "Cargando modelo…";
+  $("#viewerProgress").textContent = t("Cargando modelo…");
   try {
     const s = await viewer.load(job.model_url);
     if (state.loadedModel !== job.model_url) return; // another model was selected meanwhile
     const dims = s.size ? ` · ${s.size.x.toFixed(2)} × ${s.size.y.toFixed(2)} × ${s.size.z.toFixed(2)} u` : "";
-    $("#stats").textContent = `${s.triangles.toLocaleString()} triángulos · ${s.vertices.toLocaleString()} vértices · ${s.meshes} malla(s)${dims}`;
+    const res = textureLabel(viewer.textureSize());
+    $("#stats").textContent = t("{t} triángulos · {v} vértices · {m} malla(s)",
+      { t: s.triangles.toLocaleString(), v: s.vertices.toLocaleString(), m: s.meshes }) + dims +
+      (res ? ` · ${t("Textura {r}", { r: res })}` : "");
     $("#animBar").hidden = !s.animations.length;
+    $("#btnAnimPlay").textContent = "❚❚";
     $("#animClip").replaceChildren(...s.animations.map((n, i) => new Option(clipLabel(n), i)));
+    const maps = viewer.availableMaps();
+    $("#mapView").hidden = !maps.length;
+    $("#mapView").value = "";
+    [...$("#mapView").options].forEach((o) => (o.hidden = !!o.value && !maps.includes(o.value)));
     updateEnhance();
+    renderFlow(job);
     if (!job.thumbnail_url) setTimeout(() => uploadThumbnail(job.id), 700);
   } catch (err) {
     state.loadedModel = null;
-    empty.textContent = `No se pudo cargar el modelo: ${err.message}`;
+    emptyMsg(t("No se pudo cargar el modelo: {e}", { e: err.message }));
     empty.hidden = false;
   } finally {
     loading.hidden = true;
@@ -549,22 +620,28 @@ $$("#viewModes button").forEach((b) =>
   }),
 );
 $("#lighting").addEventListener("change", (e) => viewer.setLighting(e.target.value));
+$("#mapView").addEventListener("change", (e) => viewer.setMapView(e.target.value));
+
+function textureLabel(px) {
+  if (!px) return "";
+  return px >= 8192 ? "8K" : px >= 4096 ? "4K" : px >= 2048 ? "2K" : px >= 1024 ? "1K" : `${px} px`;
+}
 $("#animClip").addEventListener("change", (e) => viewer.playClip(Number(e.target.value)));
 $("#btnAnimPlay").addEventListener("click", () => ($("#btnAnimPlay").textContent = viewer.toggleAnimation() ? "❚❚" : "▶"));
 $("#btnShot").addEventListener("click", async () => {
-  if (!viewer.model) return toast("Carga un modelo primero", true);
+  if (!viewer.model) return toast(t("Carga un modelo primero"), true);
   downloadBlob(await viewer.snapshot(), `${slug(selectedJob()?.title)}.png`);
 });
 $("#btnVideo").addEventListener("click", async () => {
   const btn = $("#btnVideo");
-  if (!viewer.model) return toast("Carga un modelo primero", true);
+  if (!viewer.model) return toast(t("Carga un modelo primero"), true);
   btn.disabled = true;
   btn.classList.add("recording");
-  btn.textContent = "● Grabando…";
+  btn.textContent = t("● Grabando…");
   try {
     downloadBlob(await viewer.recordTurntable(6), `${slug(selectedJob()?.title)}-360.webm`);
   } catch (err) {
-    toast(err.message, true);
+    toast(t(err.message), true);
   } finally {
     btn.disabled = false;
     btn.classList.remove("recording");
@@ -572,35 +649,95 @@ $("#btnVideo").addEventListener("click", async () => {
   }
 });
 
+// ================================================================ workflow bar: 01 input → 02 textured model → 03 rig → 04 Blender
+
+function lineage(job) {
+  const byId = Object.fromEntries(state.jobs.map((j) => [j.id, j]));
+  const chain = [];
+  for (let cur = job; cur && !chain.includes(cur); cur = byId[cur.parent_id]) chain.unshift(cur);
+  return chain;
+}
+
+function renderFlow(job) {
+  const steps = $$("#flow li");
+  const set = (i, cls, note = "") => {
+    steps[i].className = cls;
+    steps[i].querySelector("small").textContent = note;
+  };
+  if (!job) {
+    set(0, "next", t("siguiente paso →"));
+    [1, 2, 3].forEach((i) => set(i, ""));
+    return;
+  }
+  const chain = lineage(job);
+  const ready = job.status === "succeeded";
+  const rig = chain.find((j) => j.mode === "rig" && j.status === "succeeded");
+  const hd = chain.find((j) => j.mode === "enhance" && j.status === "succeeded");
+  set(0, "done", t(MODE_LABEL[chain[0].mode] || chain[0].mode));
+  let textures = t("pendiente");
+  if (job.status === "failed") textures = t("falló");
+  else if (!ready) textures = t("generando…");
+  else if (hd) textures = t("PBR {r}", { r: (hd.params?.target || "").toUpperCase() });
+  else if (viewer.model && state.loadedModel === job.model_url) {
+    const res = textureLabel(viewer.textureSize());
+    textures = res ? t("texturas {r}", { r: res }) : t("colores por vértice");
+  }
+  set(1, ready ? "done" : "next", textures);
+  set(2, rig ? "done" : ready ? "next" : "", rig ? t("{n} animaciones", { n: (rig.params?.clips || []).length })
+    : ready ? t("siguiente paso →") : "");
+  set(3, rig ? "next" : "", ready ? t("GLB · FBX · .blend") : "");
+}
+
+function openSection(section) {
+  section.hidden = false;
+  section.open = true;
+  section.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+$$("#flow li").forEach((li) =>
+  li.addEventListener("click", () => {
+    const step = Number(li.dataset.step);
+    if (step === 1 || !selectedJob()) {
+      $(".create").scrollIntoView({ behavior: "smooth" });
+      return $("#prompt").focus();
+    }
+    if (step === 2) return openSection($("#enhanceSection").hidden ? $("#rigSection") : $("#enhanceSection"));
+    if (step === 3) return openSection($("#rigSection"));
+    openSection($("#exportSection"));
+    chooseTarget("blender");
+  }),
+);
+
 // ================================================================ tools panel
 
 function metaChips(job) {
   const p = job.params || {};
-  const chips = [`<span>${MODE_LABEL[job.mode] || job.mode}</span>`];
+  const chips = [`<span>${t(MODE_LABEL[job.mode] || job.mode)}</span>`];
   if (GENERATIVE.includes(job.mode)) {
-    chips.push(`<span>${QUALITY_LABEL[job.quality] || job.quality}</span>`);
+    chips.push(`<span>${t(QUALITY_LABEL[job.quality] || job.quality)}</span>`);
     const style = state.config.styles.find((s) => s.id === p.style);
-    if (style && p.style !== "auto") chips.push(`<span>${style.label}</span>`);
-    if (p.seed !== undefined) chips.push(`<span title="Semilla">🎲 ${p.seed}</span>`);
+    if (style && p.style !== "auto") chips.push(`<span>${tr(style.label)}</span>`);
+    if (p.seed !== undefined) chips.push(`<span title="${t("Semilla")}">#${p.seed}</span>`);
     if (p.refined) chips.push("<span>HD</span>");
     const engine = (state.config.engines || []).find((e) => e.id === p.engine);
-    if (engine) chips.push(`<span title="Motor de IA">${escapeHtml(engine.label)}</span>`);
+    if (engine) chips.push(`<span title="${t("Motor de IA usado")}">${escapeHtml(tr(engine.label))}</span>`);
   }
   if (job.mode === "enhance") {
     chips.push(`<span>${(p.target || "").toUpperCase()}${p.pbr ? " · PBR" : ""}</span>`);
-    if (p.method) chips.push(`<span>${escapeHtml(p.method)}</span>`);
+    if (p.method) chips.push(`<span>${escapeHtml(tr(p.method))}</span>`);
     if (p.sizes?.length) chips.push(`<span>${p.sizes.map((s) => s.join("×")).slice(0, 3).join(", ")} px</span>`);
   }
   if (job.mode === "remesh") chips.push(`<span>${p.mode}</span>`);
   if (job.mode === "retexture" && p.resolution) chips.push(`<span>${p.resolution.toUpperCase()}</span>`);
-  if (job.depth_url) chips.push(`<span><a href="${job.depth_url}" target="_blank" rel="noopener">mapa de profundidad</a>${p.depth_source === "ia" ? " · IA" : ""}</span>`);
+  if (job.depth_url) chips.push(`<span><a href="${job.depth_url}" target="_blank" rel="noopener">${t("mapa de profundidad")}</a>${p.depth_source === "ia" ? " · IA" : ""}</span>`);
   if (job.parent_id) {
     const parent = state.jobs.find((j) => j.id === job.parent_id);
-    chips.push(parent ? `<span>de <a data-goto="${parent.id}">${escapeHtml(parent.title).slice(0, 28)}</a></span>` : "<span>de (eliminado)</span>");
+    chips.push(parent ? `<span>${t("de")} <a data-goto="${parent.id}">${escapeHtml(title(parent.title)).slice(0, 28)}</a></span>`
+      : `<span>${t("de (eliminado)")}</span>`);
   }
-  chips.push(`<span>${new Date(job.created_at * 1000).toLocaleString()}</span>`);
-  if (job.status === "failed") chips.push(`<span class="err">${escapeHtml(job.error || "Error")}</span>`);
-  else if (job.status !== "succeeded") chips.push(`<span>${job.stage || "En cola"} · ${job.progress}%</span>`);
+  chips.push(`<span>${new Date(job.created_at * 1000).toLocaleString(lang)}</span>`);
+  if (job.status === "failed") chips.push(`<span class="err">${escapeHtml(tr(job.error) || t("Error"))}</span>`);
+  else if (job.status !== "succeeded") chips.push(`<span>${escapeHtml(tr(job.stage) || t("En cola"))} · ${job.progress}%</span>`);
   return chips.join("");
 }
 
@@ -613,15 +750,17 @@ function renderTools(job) {
   $("#toolsBody").hidden = !job;
   if (!job) {
     renderRig(null);
+    renderFlow(null);
     return (state.toolsKey = null);
   }
 
-  $("#toolTitle").textContent = job.title;
+  $("#toolTitle").textContent = title(job.title);
   $("#btnFav").textContent = job.favorite ? "★" : "☆";
   $("#btnFav").classList.toggle("on", job.favorite);
   $("#toolMeta").innerHTML = metaChips(job);
   $$("#toolMeta [data-goto]").forEach((a) => (a.onclick = () => selectJob(a.dataset.goto)));
   renderHistory(job);
+  renderFlow(job);
 
   const key = `${job.id}|${job.status}`;
   if (state.toolsKey === key) return;
@@ -638,14 +777,14 @@ function renderTools(job) {
   const share = `${location.origin}/share.html?id=${job.id}`;
   $("#btnOpenShare").href = share;
   $("#embedCode").value = `<iframe src="${share}&embed=1" width="640" height="480" style="border:0;border-radius:12px" allow="xr-spatial-tracking; fullscreen" loading="lazy"></iframe>`;
-  $("#printReport").innerHTML = '<span class="muted">Abre esta sección para analizar el modelo.</span>';
+  $("#printReport").innerHTML = `<span class="muted">${t("Abre esta sección para analizar el modelo.")}</span>`;
   if (ready && $("#printReport").closest("details").open) loadAnalysis(job);
 }
 
 async function loadAnalysis(job) {
   const el = $("#printReport");
   if (!state.analysis[job.id]) {
-    el.textContent = "Analizando…";
+    el.textContent = t("Analizando…");
     try {
       state.analysis[job.id] = await api(`/api/jobs/${job.id}/analysis`);
     } catch (err) {
@@ -657,11 +796,11 @@ async function loadAnalysis(job) {
   const a = state.analysis[job.id];
   const [x, y, z] = a.extents.map((v) => v.toFixed(2));
   el.innerHTML = `
-    <div class="${a.printable ? "ok" : "bad"}">${a.printable ? "✔ Listo para imprimir" : "⚠ Necesita reparación"}</div>
-    <div class="muted small">${a.faces.toLocaleString()} triángulos · ${a.bodies} pieza(s) · ${x}×${y}×${z} u${
-      a.volume ? ` · vol. ${a.volume.toFixed(3)} u³` : ""
+    <div class="${a.printable ? "ok" : "bad"}">${t(a.printable ? "✔ Listo para imprimir" : "⚠ Necesita reparación")}</div>
+    <div class="muted small">${t("{f} triángulos · {b} pieza(s) · {x}×{y}×{z} u", { f: a.faces.toLocaleString(), b: a.bodies, x, y, z })}${
+      a.volume ? t(" · vol. {v} u³", { v: a.volume.toFixed(3) }) : ""
     }</div>
-    ${a.issues.length ? `<ul>${a.issues.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>` : ""}`;
+    ${a.issues.length ? `<ul>${a.issues.map((i) => `<li>${escapeHtml(tr(i))}</li>`).join("")}</ul>` : ""}`;
 }
 $("#printReport").closest("details").addEventListener("toggle", (e) => {
   const job = selectedJob();
@@ -681,7 +820,7 @@ function renderHistory(job) {
       const li = document.createElement("li");
       li.classList.toggle("current", j.id === job.id);
       li.innerHTML = `<span class="lvl">${depth ? "  ".repeat(depth - 1) + "└ " : ""}</span>${MODE_ICON[j.mode] || "◆"} `;
-      li.append(document.createTextNode(j.title));
+      li.append(document.createTextNode(title(j.title)));
       if (j.id !== job.id) li.onclick = () => selectJob(j.id);
       return li;
     }),
@@ -699,23 +838,33 @@ function updateExportLink() {
   $("#exportColorsRow").hidden = !colorFmt;
   $("#exportColorsValue").textContent = $("#exportColors").value;
   const fitLabel = $("#exportFit").selectedOptions[0].textContent.toLowerCase();
-  const rigNote = job.mode === "rig" && !["glb", "fbx", "blend"].includes(fmt) ? " (malla estática: sin esqueleto ni animaciones)" : "";
-  $("#exportHint").textContent = FORMAT_INFO[fmt]?.[1] + rigNote + (isPrint && !size ? ` ${fitLabel[0].toUpperCase() + fitLabel.slice(1)} por defecto: 100 mm.` : "");
+  const rigNote = job.mode === "rig" && !["glb", "fbx", "blend"].includes(fmt) ? t(" (malla estática: sin esqueleto ni animaciones)") : "";
+  const target = TARGETS.find((x) => x.id === state.target);
+  $("#exportHint").textContent = (target ? t(target.hint(state.config.export_formats)) : t(FORMAT_INFO[fmt]?.[1] || "")) + rigNote +
+    (isPrint && !size ? t(" {f} por defecto: 100 mm.", { f: fitLabel[0].toUpperCase() + fitLabel.slice(1) }) : "");
   const client = CLIENT_FORMATS.includes(fmt);
   $("#exportFit").disabled = $("#exportHeight").disabled = client;
   $("#btnExport").href = client ? "#" : `/api/jobs/${job.id}/export?format=${fmt}${size > 0 ? `&size_mm=${size}&fit=${fit}` : `&fit=${fit}`}${colorFmt ? `&colors=${$("#exportColors").value}` : ""}`;
 }
-["exportFormat", "exportFit"].forEach((id) => $(`#${id}`).addEventListener("change", updateExportLink));
+function chooseTarget(id) {
+  const target = TARGETS.find((x) => x.id === id);
+  state.target = target ? id : null;
+  $$("#targets button").forEach((b) => b.classList.toggle("on", b.dataset.target === state.target));
+  if (target) $("#exportFormat").value = target.pick(state.config.export_formats);
+  updateExportLink();
+}
+$("#exportFormat").addEventListener("change", () => chooseTarget(null));
+$("#exportFit").addEventListener("change", updateExportLink);
 $("#exportHeight").addEventListener("input", updateExportLink);
 $("#exportColors").addEventListener("input", updateExportLink);
 $("#btnExport").addEventListener("click", async (e) => {
   if (!CLIENT_FORMATS.includes($("#exportFormat").value)) return;
   e.preventDefault();
-  if (!viewer.model) return toast("Espera a que el modelo cargue en el visor", true);
+  if (!viewer.model) return toast(t("Espera a que el modelo cargue en el visor"), true);
   try {
     downloadBlob(await viewer.exportUSDZ(), `${slug(selectedJob()?.title)}.usdz`);
   } catch (err) {
-    toast(`No se pudo crear el USDZ: ${err.message}`, true);
+    toast(t("No se pudo crear el USDZ: {e}", { e: err.message }), true);
   }
 });
 
@@ -754,16 +903,16 @@ $("#btnRemesh").addEventListener("click", (e) =>
 );
 $("#btnRetexture").addEventListener("click", (e) => {
   const prompt = $("#retexPrompt").value.trim();
-  if (prompt.length < 3) return toast("Describe la textura (mín. 3 caracteres)", true);
+  if (prompt.length < 3) return toast(t("Describe la textura (mín. 3 caracteres)"), true);
   derive(e.currentTarget, "retexture", { prompt, style: $("#retexStyle").value, resolution: $("#retexRes").value });
 });
 $("#btnRepair").addEventListener("click", (e) => derive(e.currentTarget, "repair"));
 function updateEnhance() {
   const ok = !viewer.model || viewer.hasTextures();
   $("#btnEnhance").disabled = !ok;
-  $("#btnEnhance").title = ok ? "" : "Este modelo usa colores por vértice: retexturízalo con IA primero";
+  $("#btnEnhance").title = ok ? "" : t("Este modelo usa colores por vértice: retexturízalo con IA primero");
   $("#enhanceHint").textContent = ok ? state.enhanceHint
-    : "Este modelo no tiene texturas (colores por vértice). Usa 「Retexturizado IA」 o un motor con PBR para obtener texturas HD.";
+    : t("Este modelo no tiene texturas (colores por vértice). Usa «Retexturizado IA» o un motor con PBR para obtener texturas HD.");
 }
 $("#btnEnhance").addEventListener("click", (e) =>
   derive(e.currentTarget, "enhance", { target: $("#enhanceTarget .on").dataset.v, pbr: $("#enhancePbr").checked }),
@@ -784,32 +933,32 @@ $("#btnRemix").addEventListener("click", () => {
   $("#pose").value = p.pose || "none";
   $("#seed").value = p.seed ?? "";
   $(".advanced").open = true;
-  toast("Parámetros cargados en el formulario");
+  toast(t("Parámetros cargados en el formulario"));
 });
 
 $("#btnFav").addEventListener("click", () => selectedJob() && toggleFavorite(selectedJob()));
 $("#btnRename").addEventListener("click", async () => {
   const job = selectedJob();
   if (!job) return;
-  const name = prompt("Nuevo nombre:", job.title);
+  const name = prompt(t("Nuevo nombre:"), job.title);
   if (name === null) return;
   await api(`/api/jobs/${job.id}`, { method: "PATCH", json: { name } });
   refreshJobs();
 });
 $("#btnDelete").addEventListener("click", async () => {
   const job = selectedJob();
-  if (!job || !confirm(`¿Eliminar "${job.title}"?`)) return;
+  if (!job || !confirm(t("¿Eliminar \"{t}\"?", { t: title(job.title) }))) return;
   await api(`/api/jobs/${job.id}`, { method: "DELETE" });
-  toast("Modelo eliminado");
+  toast(t("Modelo eliminado"));
   selectJob(null);
   refreshJobs();
 });
 $("#btnCopyLink").addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText($("#btnOpenShare").href);
-    toast("Enlace copiado");
+    toast(t("Enlace copiado"));
   } catch {
-    prompt("Copia el enlace:", $("#btnOpenShare").href);
+    prompt(t("Copia el enlace:"), $("#btnOpenShare").href);
   }
 });
 
@@ -841,14 +990,14 @@ function sakura(count = 14) {
     const gpu = state.config.provider_info?.gpu;
     const engine = (state.config.engines || []).find((e) => e.id === state.config.default_engine);
     el.textContent =
-      state.config.provider === "mock" ? "Modo demo (sin IA) · configurar"
-      : state.config.provider === "local" ? (gpu ? `IA local · ${gpu}` : "IA local · servidor sin conexión")
-      : `IA nube · ${engine?.label || state.config.provider}`;
+      state.config.provider === "mock" ? t("Modo demo (sin IA) · configurar")
+      : state.config.provider === "local" ? (gpu ? `${t("IA local")} · ${gpu}` : t("IA local · servidor sin conexión"))
+      : `${t("IA nube")} · ${tr(engine?.label) || state.config.provider}`;
     el.classList.toggle("real", state.config.provider !== "mock");
     el.classList.toggle("bad", !!state.config.provider_error || (state.config.provider === "local" && !gpu));
-    if (state.config.provider_error) el.title = `No se pudo iniciar el motor elegido: ${state.config.provider_error}`;
+    if (state.config.provider_error) el.title = `${t("No se pudo iniciar el motor elegido")}: ${tr(state.config.provider_error)}`;
   } catch {
-    el.textContent = "sin conexión";
+    el.textContent = t("sin conexión");
     el.classList.add("bad");
   }
   buildForm();

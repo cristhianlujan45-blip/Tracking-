@@ -100,6 +100,10 @@ def _png(image) -> bytes:
     return out.getvalue()
 
 
+_PBR_MAPS = {"normal": "normalTexture", "metallicRoughness": "metallicRoughnessTexture",
+             "occlusion": "occlusionTexture", "emissive": "emissiveTexture"}
+
+
 def _primitive(mesh: trimesh.Trimesh, joints: np.ndarray, weights: np.ndarray, index: int) -> Primitive:
     prim = Primitive(positions=np.asarray(mesh.vertices), normals=np.asarray(mesh.vertex_normals),
                      faces=np.asarray(mesh.faces), joints=joints, weights=weights, name=f"Body{index}")
@@ -110,11 +114,23 @@ def _primitive(mesh: trimesh.Trimesh, joints: np.ndarray, weights: np.ndarray, i
         factor = getattr(material, "baseColorFactor", None)
         if factor is not None:
             prim.base_color = tuple(float(c) / (255.0 if np.max(factor) > 1 else 1.0) for c in factor)
-        if image is not None and visual.uv is not None and len(visual.uv) == len(mesh.vertices):
-            uv = np.asarray(visual.uv, dtype=float).copy()
-            uv[:, 1] = 1.0 - uv[:, 1]  # trimesh flips V on import
-            prim.uv, prim.texture_png = uv, _png(image)
-        elif factor is None:
+        has_uv = visual.uv is not None and len(visual.uv) == len(mesh.vertices)
+        if has_uv:
+            maps = {key: _png(img) for key, attr in _PBR_MAPS.items()
+                    if (img := getattr(material, attr, None)) is not None}
+            if image is not None or maps:
+                uv = np.asarray(visual.uv, dtype=float).copy()
+                uv[:, 1] = 1.0 - uv[:, 1]  # trimesh flips V on import
+                prim.uv, prim.maps = uv, maps or None
+                prim.texture_png = _png(image) if image is not None else None
+        for attr, field in (("metallicFactor", "metallic"), ("roughnessFactor", "roughness")):
+            value = getattr(material, attr, None)
+            if value is not None:
+                setattr(prim, field, float(value))
+        emissive = getattr(material, "emissiveFactor", None)
+        if emissive is not None:
+            prim.emissive = tuple(float(c) for c in np.asarray(emissive, dtype=float)[:3])
+        if prim.uv is None and factor is None:  # no usable texture: keep the look as vertex colours
             try:
                 prim.colors = visual.to_color().vertex_colors
             except Exception:  # noqa: BLE001

@@ -83,6 +83,18 @@ def pbr_maps(albedo: Image.Image, strength: float = 2.5) -> tuple[Image.Image, I
 # ---------------------------------------------------------------- GLB pass
 
 
+def _resized(image: Image.Image | None, size: tuple[int, int]) -> Image.Image | None:
+    if image is None:
+        return None
+    image = image.convert("RGB")
+    return image if image.size == size else image.resize(size, Image.LANCZOS)
+
+
+def _factor(material, name: str, default: float) -> float:
+    value = getattr(material, name, None)
+    return default if value is None else float(value)
+
+
 def textured_images(glb: bytes) -> list[Image.Image]:
     scene = load_scene(glb)
     out = []
@@ -99,7 +111,7 @@ async def enhance(glb: bytes, target: str = "4k", scale: int = 4, add_pbr: bool 
     """Upscale every base-colour texture towards `target` and optionally add PBR maps."""
     scene = load_scene(glb)
     limit = TARGETS.get(target, 4096)
-    cache: dict[int, tuple[Image.Image, Image.Image | None, Image.Image | None]] = {}
+    cache: dict[int, tuple] = {}
     before, after = [], []
     method = method_label if upscaler else "CPU (Lanczos)"
 
@@ -130,19 +142,30 @@ async def enhance(glb: bytes, target: str = "4k", scale: int = 4, add_pbr: bool 
                 big = src
             big = _fit(big, limit)
             after.append(big.size)
-            normal = orm = None
-            if add_pbr:
-                normal, orm, _ = pbr_maps(big)
-            cache[key] = (big, normal, orm)
-        big, normal, orm = cache[key]
+            # maps the engine already made (real PBR from Hunyuan3D, Tripo, Meshy…) are kept and
+            # resized to the new resolution; only the missing ones are estimated from the colour
+            own = {k: _resized(getattr(material, a, None), big.size) for k, a in
+                   (("normal", "normalTexture"), ("orm", "metallicRoughnessTexture"),
+                    ("occlusion", "occlusionTexture"), ("emissive", "emissiveTexture"))}
+            estimated = add_pbr and own["orm"] is None
+            if add_pbr and None in (own["normal"], own["orm"], own["occlusion"]):
+                normal, orm, occlusion = pbr_maps(big)
+                own["normal"] = own["normal"] or normal
+                own["orm"] = own["orm"] or orm
+                own["occlusion"] = own["occlusion"] or occlusion  # glTF reads occlusion from R
+            cache[key] = (big, own, estimated)
+        big, own, estimated = cache[key]
         pbr = trimesh.visual.material.PBRMaterial(
             name=getattr(material, "name", None),
             baseColorTexture=big,
             baseColorFactor=getattr(material, "baseColorFactor", None),
-            metallicFactor=0.0 if add_pbr else getattr(material, "metallicFactor", 0.0),
-            roughnessFactor=1.0 if add_pbr else getattr(material, "roughnessFactor", 0.8),
-            normalTexture=normal,
-            metallicRoughnessTexture=orm,
+            metallicFactor=1.0 if estimated else _factor(material, "metallicFactor", 0.0),
+            roughnessFactor=1.0 if estimated else _factor(material, "roughnessFactor", 0.8),
+            normalTexture=own["normal"],
+            metallicRoughnessTexture=own["orm"],
+            occlusionTexture=own["occlusion"],
+            emissiveTexture=own["emissive"],
+            emissiveFactor=getattr(material, "emissiveFactor", None),
             doubleSided=getattr(material, "doubleSided", False),
         )
         geom.visual = trimesh.visual.TextureVisuals(uv=visual.uv, material=pbr)

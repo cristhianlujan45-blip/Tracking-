@@ -384,3 +384,71 @@ def test_auto_template_ignores_clips_for_the_other_body(client):
     only_human = wait_done(client, client.post(f"/api/jobs/{dog_job['id']}/rig",
                                                json={"animations": ["idle", "walk"]}).json()["id"])
     assert only_human["status"] == "succeeded" and only_human["params"]["clips"]  # falls back to the gaits
+
+
+def _textured_humanoid_glb(with_engine_maps: bool = False) -> bytes:
+    import trimesh as _trimesh
+    from PIL import Image
+
+    mesh = humanoid()
+    xy = mesh.vertices[:, :2]
+    uv = (xy - xy.min(0)) / np.ptp(xy, axis=0)
+    noise = np.random.default_rng(0).random((128, 128, 3))
+    maps = {}
+    if with_engine_maps:  # what Hunyuan3D / Tripo / Meshy deliver: real normal and metal-rough maps
+        maps = {"normalTexture": Image.new("RGB", (64, 64), (128, 128, 255)),
+                "metallicRoughnessTexture": Image.new("RGB", (64, 64), (0, 77, 200))}
+    material = _trimesh.visual.material.PBRMaterial(
+        baseColorTexture=Image.fromarray((noise * 255).astype(np.uint8)), metallicFactor=1.0, roughnessFactor=1.0, **maps)
+    mesh.visual = _trimesh.visual.TextureVisuals(uv=uv, material=material)
+    return geometry.mesh_to_glb(mesh)
+
+
+def test_hd_textures_keep_engine_maps_and_rig_keeps_pbr():
+    import asyncio
+
+    from PIL import Image
+
+    from app import textures
+
+    hd, report = asyncio.run(textures.enhance(_textured_humanoid_glb(True), "2k", 4, True, None, "cpu"))
+    gltf = gltf_json(hd)
+    material = gltf["materials"][0]
+    assert {"normalTexture", "occlusionTexture"} <= set(material)
+    mr_index = material["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"]
+    view = gltf["bufferViews"][gltf["images"][gltf["textures"][mr_index]["source"]]["bufferView"]]
+    n = struct.unpack_from("<I", hd, 12)[0]
+    png = hd[20 + n + 8 + view.get("byteOffset", 0):][:view["byteLength"]]
+    pixel = Image.open(io.BytesIO(png)).convert("RGB").getpixel((5, 5))
+    assert pixel[1:] == (77, 200), "the engine's metal-rough map was replaced"
+    assert report.after[0] == (512, 512)
+
+    rigged = gltf_json(rig(hd, presets=["idle"]).glb)
+    material = rigged["materials"][0]
+    assert "baseColorTexture" in material["pbrMetallicRoughness"]
+    assert "metallicRoughnessTexture" in material["pbrMetallicRoughness"]
+    assert {"normalTexture", "occlusionTexture"} <= set(material)
+    assert len(rigged["images"]) == 4  # base colour, normal, metal-rough, estimated occlusion
+
+
+def test_full_character_one_click(client):
+    up = client.post("/api/jobs/upload", files={"model": ("hero.glb", _textured_humanoid_glb(), "model/gltf-binary")})
+    assert up.status_code == 201, up.text
+    src = wait_done(client, up.json()["id"])
+    jobs = client.post(f"/api/jobs/{src['id']}/character",
+                       json={"target": "2k", "animations": ["idle", "walk", "cmu_16_15"]}).json()
+    assert [j["mode"] for j in jobs] == ["enhance", "rig"]
+    hd, rigged = (wait_done(client, j["id"]) for j in jobs)
+    assert hd["status"] == "succeeded" and rigged["status"] == "succeeded", rigged["error"]
+    assert rigged["parent_id"] == hd["id"] and rigged["params"]["source_id"] == hd["id"]
+    assert len(rigged["params"]["clips"]) == 3
+    material = gltf_json(client.get(rigged["model_url"]).content)["materials"][0]
+    assert "normalTexture" in material and "metallicRoughnessTexture" in material["pbrMetallicRoughness"]
+    # re-rigging later starts from the HD model, not the original
+    again = wait_done(client, client.post(f"/api/jobs/{rigged['id']}/rig", json={"animations": ["idle"]}).json()["id"])
+    assert again["params"]["source_id"] == hd["id"]
+    # untextured model: no texture step, straight to the rig
+    plain = wait_done(client, client.post("/api/jobs/text", json={"prompt": "un personaje", "quality": "draft"}).json()[0]["id"])
+    only = client.post(f"/api/jobs/{plain['id']}/character", json={}).json()
+    assert [j["mode"] for j in only] == ["rig"] and wait_done(client, only[0]["id"])["status"] == "succeeded"
+    assert client.post(f"/api/jobs/{rigged['id']}/character", json={}).status_code == 400

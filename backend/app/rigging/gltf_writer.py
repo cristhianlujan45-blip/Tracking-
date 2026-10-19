@@ -37,6 +37,11 @@ class Primitive:
     texture_png: bytes | None = None
     base_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
     name: str = "Body"
+    # extra PBR maps (PNG) sharing TEXCOORD_0: "normal", "metallicRoughness", "occlusion", "emissive"
+    maps: dict[str, bytes] | None = None
+    metallic: float = 0.0
+    roughness: float = 0.8
+    emissive: tuple[float, float, float] | None = None
 
 
 class _Buffer:
@@ -83,6 +88,30 @@ def _continuous(quats: np.ndarray) -> np.ndarray:
     return q
 
 
+def tangents(positions: np.ndarray, normals: np.ndarray, uv: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """Per-vertex tangents (xyz + handedness w) from UV derivatives (Lengyel), for normal mapping."""
+    p0, p1, p2 = (positions[faces[:, i]] for i in range(3))
+    t0, t1, t2 = (uv[faces[:, i]] for i in range(3))
+    e1, e2 = p1 - p0, p2 - p0
+    d1, d2 = t1 - t0, t2 - t0
+    det = d1[:, 0] * d2[:, 1] - d2[:, 0] * d1[:, 1]
+    r = np.where(np.abs(det) > 1e-12, 1.0 / np.where(det == 0, 1, det), 0.0)[:, None]
+    sdir = (e1 * d2[:, 1:2] - e2 * d1[:, 1:2]) * r
+    tdir = (e2 * d1[:, 0:1] - e1 * d2[:, 0:1]) * r
+    tan, bit = np.zeros_like(positions, dtype=float), np.zeros_like(positions, dtype=float)
+    for i in range(3):
+        np.add.at(tan, faces[:, i], sdir)
+        np.add.at(bit, faces[:, i], tdir)
+    n = normals / np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-12)
+    t = tan - n * np.sum(n * tan, axis=1, keepdims=True)  # Gram-Schmidt
+    length = np.linalg.norm(t, axis=1, keepdims=True)
+    fallback = np.cross(n, np.where(np.abs(n[:, :1]) < 0.9, [[1.0, 0, 0]], [[0, 1.0, 0]]))
+    t = np.where(length > 1e-12, t / np.maximum(length, 1e-12), fallback / np.linalg.norm(fallback, axis=1, keepdims=True))
+    # glTF UVs have V pointing down, which flips the bitangent relative to the UV derivative
+    w = np.where(np.sum(np.cross(n, t) * bit, axis=1) < 0, 1.0, -1.0)
+    return np.hstack([t, w[:, None]])
+
+
 def write_glb(primitives: list[Primitive], skeleton: Skeleton, clips: list[Clip],
               deform_joints: list[str] | None = None) -> bytes:
     buf = _Buffer()
@@ -108,7 +137,16 @@ def write_glb(primitives: list[Primitive], skeleton: Skeleton, clips: list[Clip]
 
     # ---------------- meshes & materials
     materials, textures, images = [], [], []
+    image_index: dict[bytes, int] = {}  # identical maps (e.g. one ORM image used twice) are stored once
     gl_prims = []
+
+    def texture(png: bytes) -> int:
+        if png not in image_index:
+            images.append({"bufferView": buf.view(png), "mimeType": "image/png"})
+            textures.append({"source": len(images) - 1, "sampler": 0})
+            image_index[png] = len(textures) - 1
+        return image_index[png]
+
     for prim in primitives:
         attrs = {
             "POSITION": buf.accessor(prim.positions, FLOAT, "VEC3", ARRAY_BUFFER, bounds=True),
@@ -117,14 +155,27 @@ def write_glb(primitives: list[Primitive], skeleton: Skeleton, clips: list[Clip]
             "JOINTS_0": buf.accessor(prim.joints, USHORT, "VEC4", ARRAY_BUFFER),
             "WEIGHTS_0": buf.accessor(prim.weights, FLOAT, "VEC4", ARRAY_BUFFER),
         }
-        material = {"name": f"{prim.name}_material",
-                    "pbrMetallicRoughness": {"baseColorFactor": [float(c) for c in prim.base_color],
-                                             "metallicFactor": 0.0, "roughnessFactor": 0.8}}
-        if prim.uv is not None and prim.texture_png:
+        pbr = {"baseColorFactor": [float(c) for c in prim.base_color],
+               "metallicFactor": float(prim.metallic), "roughnessFactor": float(prim.roughness)}
+        material = {"name": f"{prim.name}_material", "pbrMetallicRoughness": pbr}
+        if prim.uv is not None and (prim.texture_png or prim.maps):
             attrs["TEXCOORD_0"] = buf.accessor(prim.uv, FLOAT, "VEC2", ARRAY_BUFFER)
-            images.append({"bufferView": buf.view(prim.texture_png), "mimeType": "image/png"})
-            textures.append({"source": len(images) - 1, "sampler": 0})
-            material["pbrMetallicRoughness"]["baseColorTexture"] = {"index": len(textures) - 1}
+            if prim.texture_png:
+                pbr["baseColorTexture"] = {"index": texture(prim.texture_png)}
+            maps = prim.maps or {}
+            if "metallicRoughness" in maps:
+                pbr["metallicRoughnessTexture"] = {"index": texture(maps["metallicRoughness"])}
+            if "normal" in maps:
+                material["normalTexture"] = {"index": texture(maps["normal"])}
+                attrs["TANGENT"] = buf.accessor(tangents(prim.positions, prim.normals, prim.uv, prim.faces),
+                                                FLOAT, "VEC4", ARRAY_BUFFER)
+            if "occlusion" in maps:
+                material["occlusionTexture"] = {"index": texture(maps["occlusion"])}
+            if "emissive" in maps:
+                material["emissiveTexture"] = {"index": texture(maps["emissive"])}
+                material["emissiveFactor"] = [float(c) for c in (prim.emissive or (1.0, 1.0, 1.0))]
+        if prim.emissive and "emissiveFactor" not in material and any(prim.emissive):
+            material["emissiveFactor"] = [float(c) for c in prim.emissive]
         if prim.colors is not None:
             attrs["COLOR_0"] = buf.accessor(prim.colors, UBYTE, "VEC4", ARRAY_BUFFER, normalized=True)
         materials.append(material)

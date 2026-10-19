@@ -24,11 +24,15 @@ class JobRunner:
         self.files_dir = files_dir
         self._semaphore = asyncio.Semaphore(max(1, max_concurrent))
         self._tasks: set[asyncio.Task] = set()
+        self._by_job: dict[str, asyncio.Task] = {}
 
-    def submit(self, job_id: str, work: Work) -> None:
-        task = asyncio.create_task(self._run(job_id, work))
+    def submit(self, job_id: str, work: Work, after: str | None = None) -> None:
+        """Run `work` in the background; with `after`, only once that job has finished (either way)."""
+        task = asyncio.create_task(self._run(job_id, work, self._by_job.get(after) if after else None))
         self._tasks.add(task)
+        self._by_job[job_id] = task
         task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(lambda _t: self._by_job.pop(job_id, None))
 
     async def wait_idle(self) -> None:
         while self._tasks:
@@ -39,7 +43,10 @@ class JobRunner:
             task.cancel()
         await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
-    async def _run(self, job_id: str, work: Work) -> None:
+    async def _run(self, job_id: str, work: Work, after: asyncio.Task | None = None) -> None:
+        if after is not None:  # wait outside the semaphore so a chain never blocks itself
+            self.store.update(job_id, stage="Esperando el paso anterior")
+            await asyncio.gather(after, return_exceptions=True)
         async with self._semaphore:
             if self.store.get(job_id) is None:  # deleted while queued
                 return
