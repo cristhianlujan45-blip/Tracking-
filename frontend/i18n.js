@@ -245,7 +245,8 @@ const EN = {
   "Guardar": "Save", "Cerrar": "Close", "¡Ajustes guardados!": "Settings saved!",
 
   // ---------------------------------------------------------------- free local AI
-  "Mi GPU · gratis": "My GPU · free",
+  "Mi GPU · gratis": "My GPU · free", "Opciones avanzadas (opcional)": "Advanced options (optional)",
+  "✔ No hace falta rellenar nada: elige «Mi GPU · gratis» y pulsa Guardar.": "✔ Nothing to fill in: pick “My GPU · free” and press Save.",
   "Texturas con IA de Tencent (beta: más lento con 8 GB)": "AI textures by Tencent (beta: slower with 8 GB)",
   "Texturas con IA activadas: se aplican desde la próxima generación": "AI textures on: they apply from the next generation",
   "Texturas con IA desactivadas": "AI textures off", "Instalando el pintor de texturas con IA": "Installing the AI texture painter",

@@ -557,11 +557,15 @@
           <input id="workerToken" type="password" placeholder="Sólo si lo configuraste" />
         </details>
       </div>
-      <label for="anthropicKey">Agente IA: clave de Anthropic</label>
-      <input id="anthropicKey" type="password" placeholder="Pega tu clave (console.anthropic.com)" />
-      <p class="muted small">Opcional: el agente ya funciona gratis. Con una clave de Anthropic entiende cualquier petición y conversa como un experto.</p>
-      <label for="blenderPath">Blender (para FBX y .blend)</label>
-      <input id="blenderPath" type="text" placeholder="Detección automática" />
+      <p class="muted small ok-note">✔ No hace falta rellenar nada: elige «Mi GPU · gratis» y pulsa Guardar.</p>
+      <details class="ai-advanced">
+        <summary>Opciones avanzadas (opcional)</summary>
+        <label for="anthropicKey">Agente IA: clave de Anthropic</label>
+        <input id="anthropicKey" type="password" placeholder="Pega tu clave (console.anthropic.com)" />
+        <p class="muted small">Opcional: el agente ya funciona gratis. Con una clave de Anthropic entiende cualquier petición y conversa como un experto.</p>
+        <label for="blenderPath">Blender (para FBX y .blend)</label>
+        <input id="blenderPath" type="text" placeholder="Detección automática" />
+      </details>
       <p class="muted small" id="blenderStatus"></p>
       <p class="error" id="settingsError" hidden></p>
       <div class="dlg-actions">

@@ -224,8 +224,10 @@ class LocalAI:
         """Run a command, keep its output in the log; `@@ pct text` lines move the progress bar.
         A thread instead of asyncio subprocesses: works with any event loop (Windows included)."""
         self._say("$ " + " ".join(Path(a).name if i == 0 else a for i, a in enumerate(argv)))
-        workdir = cwd or self.root
-        workdir.mkdir(parents=True, exist_ok=True)  # Windows refuses to start a process in a missing folder
+        self.root.mkdir(parents=True, exist_ok=True)
+        # only pass a working folder when one is asked for and really is a folder: Windows rejects the
+        # whole command ("WinError 267") otherwise, and the install commands work from anywhere
+        workdir = str(cwd) if cwd is not None and Path(cwd).is_dir() else None
 
         def run() -> int:
             proc = subprocess.Popen(argv, cwd=workdir, env=self.env(), stdout=subprocess.PIPE,
