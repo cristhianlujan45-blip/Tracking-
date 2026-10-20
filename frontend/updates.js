@@ -9,9 +9,16 @@ export async function initUpdates(context) {
   ctx = context;
   $("#btnUpdateLater").addEventListener("click", () => ($("#updateBanner").hidden = true));
   $("#btnUpdate").addEventListener("click", install);
+  checkUpdates();
+  setInterval(checkUpdates, 30 * 60 * 1000); // the app often stays open for days
+}
+
+// force: ask GitHub now (e.g. after a failure a newer version may already fix)
+export async function checkUpdates(force = false) {
+  if (!ctx || $("#btnUpdate").disabled) return; // not started, or already updating
   let s;
   try {
-    s = await ctx.api("/api/update");
+    s = await ctx.api(`/api/update${force ? "?force=true" : ""}`);
   } catch {
     return;
   }

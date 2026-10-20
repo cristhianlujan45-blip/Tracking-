@@ -1202,8 +1202,8 @@ function sakura(count = 14) {
   await refreshJobs();
   const first = state.jobs.find((j) => j.status === "succeeded");
   if (first && !state.selected) selectJob(first.id);
-  initLocalAI({ api, toast, openSettings: () => openSettings(), config: () => state.config });
   initUpdates({ api, toast });
+  initLocalAI({ api, toast, openSettings: () => openSettings(), config: () => state.config });
   initSettings({ api, toast });
   initAgent({
     api, onCreated, openSettings: () => openSettings(), config: () => state.config,

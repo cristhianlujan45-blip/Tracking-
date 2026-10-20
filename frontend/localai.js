@@ -2,6 +2,7 @@
 // follows the install (a banner stays visible while it downloads, even with Settings closed).
 
 import { t, tr } from "./i18n.js";
+import { checkUpdates } from "./updates.js";
 
 const $ = (sel) => document.querySelector(sel);
 let ctx;
@@ -59,6 +60,8 @@ async function copyDiagnostics() {
   }
 }
 
+let checkedAfterError = false;
+
 export async function refreshLocalAI() {
   clearTimeout(timer);
   let s;
@@ -68,13 +71,19 @@ export async function refreshLocalAI() {
     return;
   }
   render(s);
+  if (s.error && !checkedAfterError) {
+    checkedAfterError = true;
+    checkUpdates(true);
+  }
   if (s.installing) {
     wasInstalling = true;
     timer = setTimeout(refreshLocalAI, 2000);
   } else if (wasInstalling) {
     wasInstalling = false;
-    if (s.error) ctx.toast(t("La instalación de la IA local falló: {e}", { e: tr(s.error) }), true);
-    else {
+    if (s.error) {
+      ctx.toast(t("La instalación de la IA local falló: {e}", { e: tr(s.error) }), true);
+      checkUpdates(true); // a newer version may already fix it: show its banner
+    } else {
       ctx.toast(t("¡IA local instalada! Ya puedes generar gratis"));
       setTimeout(() => location.reload(), 1500);
     }
