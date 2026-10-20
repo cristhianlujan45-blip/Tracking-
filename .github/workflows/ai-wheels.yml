@@ -19,7 +19,7 @@ env:
 
 jobs:
   rasterizer:
-    runs-on: windows-latest
+    runs-on: windows-2022  # Visual Studio 2022: CUDA 12.8 refuses newer host compilers
     steps:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }

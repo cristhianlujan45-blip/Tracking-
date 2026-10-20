@@ -51,7 +51,13 @@ La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por
 - Imprimibilidad a la medida final (cerrado, agujeros, aristas no-manifold, volumen y gramos de PLA), reparación automática, **dividir para que quepa en la cama** de tu impresora (Bambu, Prusa, Creality, Elegoo, Anycubic, resina) y **abrir en tu laminador** (Bambu Studio, OrcaSlicer, PrusaSlicer, Cura, Creality Print, ElegooSlicer, Lychee…).
 
 **Agente IA**
-- Chat (botón «Agente IA», abajo a la derecha) que crea conceptos y modelos, los anima y revisa si se imprimen, con tarjetas para abrir cada resultado. Funciona **gratis sin clave** con un asistente integrado; con una clave de Anthropic (opcional, Ajustes) entiende cualquier petición y responde como un experto en 3D, Blender e impresión.
+- Chat (botón «Agente IA», abajo a la derecha) que crea conceptos y modelos, los anima y revisa si se imprimen, con tarjetas para abrir cada resultado. Funciona **gratis sin clave**: con la IA local entiende lo que escribes con un modelo de texto pequeño en tu GPU (Qwen2.5-3B), y si no está disponible usa reglas por palabras clave. Con una clave de Anthropic (opcional, Ajustes) entiende cualquier petición y responde como un experto en 3D, Blender e impresión.
+
+**Publicar e instalar**
+- **Kit de publicación** para MakerWorld, Printables y Thingiverse: 3MF y STL a tu medida, cuatro fotos de estudio y la descripción (español e inglés) con ajustes de impresión, y se abre la página de subida.
+- **Actualizaciones automáticas**: la app avisa de la nueva versión, la descarga, la instala sola y se vuelve a abrir (sin el aviso de SmartScreen). Ver [docs/firma-gratis.md](docs/firma-gratis.md) para quitar también el aviso de la primera instalación gratis (Microsoft Store).
+- **Diagnóstico** en Ajustes → Mi GPU: copia el estado de la app, la GPU y los últimos errores para enviarlo.
+- **Plan B** en GPUs pequeñas: si la tarjeta se queda sin memoria, la IA reintenta con Hunyuan3D-2mini y lo recuerda.
 
 **Claude Code / Cursor (MCP)**
 - Servidor **MCP** para manejar Forja3D desde Claude Code, Cursor o Claude Desktop (como el de Meshy): crear conceptos y modelos desde texto o imagen, esperar el resultado, buscar animaciones, riggear y animar personajes, revisar la imprimibilidad y **exportar el archivo directamente a tu proyecto** (GLB, FBX, .blend, STL, 3MF…).
@@ -85,7 +91,8 @@ La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por
 
 ### Pendiente
 
-- Firma de código (Windows y Apple) para que no aparezcan avisos al instalar; versión para Mac Intel.
+- IA local en Mac (Apple Silicon) y versión para Mac Intel.
+- Publicar en la Microsoft Store (todo listo: falta crear la cuenta gratuita, ver docs/firma-gratis.md).
 - Cuentas, galería pública y app móvil.
 
 ## Proveedores de IA
