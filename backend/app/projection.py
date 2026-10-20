@@ -15,7 +15,7 @@ import io
 import numpy as np
 import trimesh
 from PIL import Image
-from scipy import sparse
+from scipy import ndimage, sparse
 
 from .geometry import load_scene, mesh_to_glb
 
@@ -51,6 +51,57 @@ def _sample(img: np.ndarray, u: np.ndarray, v: np.ndarray) -> tuple[np.ndarray, 
     return c[:, :3], c[:, 3]
 
 
+def _smoothstep(x: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    t = np.clip((x - lo) / (hi - lo), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def _align(a: np.ndarray, b: np.ndarray, mask: np.ndarray, box: tuple[int, int, int, int],
+           grid: int = 192) -> tuple[float, float, float, float]:
+    """Fit the mesh's silhouette onto the picture's: returns (sx, sy, cx, cy) so that pixel
+    u = cx + (a - mid_a) * sx, v = cy - (b - mid_b) * sy. Starts from the bounding boxes and refines
+    scale and offset by maximising the overlap (IoU) of the two silhouettes."""
+    x0, y0, x1, y1 = box
+    mid_a, mid_b = (a.max() + a.min()) / 2, (b.max() + b.min()) / 2
+    s0 = (y1 - y0) / max(np.ptp(b), 1e-9)
+    base = (s0, s0, (x0 + x1) / 2, (y0 + y1) / 2)
+    h, w = mask.shape
+    k = grid / max(h, w)  # work on a small copy of the picture
+    small = ndimage.zoom(mask.astype(float), k, order=1) > 0.5
+    gh, gw = small.shape
+    area = small.sum()
+    sub = np.random.default_rng(0).choice(len(a), min(len(a), 40000), replace=False)
+    da, db = a[sub] - mid_a, b[sub] - mid_b
+
+    def iou(sx, sy, cx, cy):
+        u = np.round((cx + da * sx) * k).astype(int)
+        v = np.round((cy - db * sy) * k).astype(int)
+        ok = (u >= 0) & (u < gw) & (v >= 0) & (v < gh)
+        sil = np.zeros_like(small)
+        sil[v[ok], u[ok]] = True
+        sil = ndimage.binary_closing(sil, iterations=2)
+        inter = (sil & small).sum()
+        return inter / max(sil.sum() + area - inter, 1)
+
+    best, best_score = base, iou(*base)
+    span = (y1 - y0)
+    for step in (0.04, 0.015):  # coarse then fine
+        improved = True
+        while improved:
+            improved = False
+            sx, sy, cx, cy = best
+            for cand in ((sx * (1 + step), sy, cx, cy), (sx * (1 - step), sy, cx, cy),
+                         (sx, sy * (1 + step), cx, cy), (sx, sy * (1 - step), cx, cy),
+                         (sx, sy, cx + step * span, cy), (sx, sy, cx - step * span, cy),
+                         (sx, sy, cx, cy + step * span), (sx, sy, cx, cy - step * span)):
+                if not 0.85 < cand[0] / s0 < 1.15 or not 0.9 < cand[1] / s0 < 1.1:
+                    continue
+                score = iou(*cand)
+                if score > best_score + 1e-4:
+                    best, best_score, improved = cand, score, True
+    return best
+
+
 def _visible(pts2d: np.ndarray, depth: np.ndarray, res: int, tol: float) -> np.ndarray:
     """Depth test by splatting vertices into a z-buffer (dense meshes cover every pixel)."""
     lo, hi = pts2d.min(0), pts2d.max(0)
@@ -84,16 +135,20 @@ def project_views(mesh: trimesh.Trimesh, views: dict[str, Image.Image], mirror_s
     for name, image in views.items():
         cam, right = VIEWS[name]
         img = np.asarray(image.convert("RGBA"), dtype=float)
-        x0, y0, x1, y1 = _alpha_box(img)
+        box = _alpha_box(img)
+        mask = img[..., 3] > 128
         a, b = verts @ right, verts @ UP  # image axes in model units
-        # match the silhouette box of the picture to the projected box of the mesh (same height)
-        scale = (y1 - y0) / max(np.ptp(b), 1e-9)
-        u = x0 + (x1 - x0) / 2 + (a - (a.max() + a.min()) / 2) * scale
-        v = y1 - (b - b.min()) * scale
+        sx, sy, cx, cy = _align(a, b, mask, box)
+        u = cx + (a - (a.max() + a.min()) / 2) * sx
+        v = cy - (b - (b.max() + b.min()) / 2) * sy
         rgb, alpha = _sample(img, u, v)
+        # outlines and anti-aliasing live at the edge of the drawing: trust pixels well inside it
+        inside = ndimage.distance_transform_edt(mask)
+        edge = _smoothstep(_sample(np.dstack([inside] * 4), u, v)[1], 1.0, 0.012 * (box[3] - box[1]) + 2)
         facing = normals @ cam
         seen = _visible(np.column_stack([a, b]), verts @ cam, depth_res, 0.012 * size)
-        w = np.clip(facing, 0, 1) ** 2 * (alpha / 255.0) * seen
+        # a picture only describes surfaces it sees squarely; grazing ones would smear its pixels
+        w = _smoothstep(facing, 0.3, 0.8) * facing ** 2 * (alpha / 255.0) * edge * seen
         if name in ("left", "right"):
             w *= 0.8  # side pictures are usually narrower: trust them a little less
         color_sum += rgb * w[:, None]
