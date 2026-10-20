@@ -1,7 +1,8 @@
 """Auto-rigging and animation for humanoid and quadruped characters.
 
 Pipeline: normalise the model (facing +Z, feet on the floor) → markers (automatic or the user's)
-→ skeleton → heat-diffusion skin weights → animation clips (library, mocap, BVH) → skinned GLB.
+→ skeleton (+ fingers and jaw for humanoids) → heat-diffusion skin weights → face blendshapes →
+animation clips (library, mocap, BVH) → skinned GLB.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import trimesh
 from ..geometry import GeometryError, load_scene
 from . import mocap, quadruped
 from .animations import DEFAULT_PRESETS, PRESETS, Clip, preset_clip, retarget_bvh
+from .face import analyse_face
 from .gltf_writer import Primitive, write_glb
 from .skeleton import (HUMANOID, MARKER_LABELS, MARKERS, RigError, Template, build_skeleton, estimate_markers,
                        guess_yaw, mirror_markers, yaw_matrix)
@@ -140,6 +142,26 @@ def _primitive(mesh: trimesh.Trimesh, joints: np.ndarray, weights: np.ndarray, i
     return prim
 
 
+def _vertex_colors(meshes: list[trimesh.Trimesh]) -> np.ndarray | None:
+    """sRGB (n, 4) uint8 colours of all meshes (texture sampled at the vertices), None if none has any."""
+    out, found = [], False
+    for mesh in meshes:
+        colors = None
+        try:
+            if mesh.visual.kind in ("vertex", "face"):
+                colors = np.asarray(mesh.visual.vertex_colors, dtype=np.uint8)
+            elif mesh.visual.kind == "texture":
+                colors = np.asarray(mesh.visual.to_color().vertex_colors, dtype=np.uint8)
+        except Exception:  # noqa: BLE001 - unreadable texture: treat as uncoloured
+            colors = None
+        if colors is None or len(colors) != len(mesh.vertices):
+            colors = np.full((len(mesh.vertices), 4), 128, dtype=np.uint8)
+        else:
+            found = True
+        out.append(colors[:, :4] if colors.shape[1] >= 4 else np.hstack([colors, np.full((len(colors), 1), 255, np.uint8)]))
+    return np.vstack(out) if found else None
+
+
 def rig(glb: bytes, markers: dict | None = None, yaw: int | None = None, presets: list[str] | None = None,
         bvh: list[tuple[str, str]] | None = None, in_place: bool = True, template: str | None = None) -> RigResult:
     """Rig a character and bake the requested clips. `bvh` is a list of (name, file text)."""
@@ -154,12 +176,20 @@ def rig(glb: bytes, markers: dict | None = None, yaw: int | None = None, presets
     tpl = skeleton.template
 
     weights = compute_skin(prep.combined, skeleton)
+    try:
+        face = analyse_face(np.asarray(prep.combined.vertices), np.asarray(prep.combined.vertex_normals),
+                            _vertex_colors(prep.meshes), skeleton)
+    except Exception:  # noqa: BLE001 - blendshapes are a bonus: never fail the rig over them
+        face = None
     deform_index = np.array([tpl.index[n] for n in tpl.deform], dtype=np.uint16)
     primitives, start = [], 0
     for i, mesh in enumerate(prep.meshes):
         n = len(mesh.vertices)
         idx, w = limit_influences(weights[start:start + n])
-        primitives.append(_primitive(mesh, deform_index[idx], w, i))
+        prim = _primitive(mesh, deform_index[idx], w, i)
+        if face is not None:
+            prim.targets = face.targets(np.asarray(mesh.vertices), np.asarray(mesh.vertex_normals))
+        primitives.append(prim)
         start += n
 
     library = presets_for(prep.template)

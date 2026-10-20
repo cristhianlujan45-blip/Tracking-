@@ -6,7 +6,10 @@ checked against the Khronos glTF validator in the tests and imports in Blender, 
 
 Layout: an "Armature" root node holding the joint hierarchy (rest rotations are identity, so each
 joint's translation is its offset from its parent) and a root "Character" node with the skinned
-mesh. One animation per clip, rotations on every deforming joint plus the Hips translation.
+mesh. One animation per clip, rotations on every deforming joint plus the Hips translation (joints
+that do not move in a clip get two keys), and blendshape `weights` on the mesh for face clips.
+Blendshapes are sparse morph targets (only the moved vertices are stored), named in
+`extras.targetNames` as three.js, Blender and Babylon expect.
 """
 
 from __future__ import annotations
@@ -43,6 +46,7 @@ class Primitive:
     metallic: float = 0.0
     roughness: float = 0.8
     emissive: tuple[float, float, float] | None = None
+    targets: dict[str, np.ndarray] | None = None  # blendshape name → (n, 3) position offsets
 
 
 class _Buffer:
@@ -76,6 +80,25 @@ class _Buffer:
             flat = arr.reshape(arr.shape[0], -1)
             acc["min"] = [float(x) for x in flat.min(axis=0)]
             acc["max"] = [float(x) for x in flat.max(axis=0)]
+        self.accessors.append(acc)
+        return len(self.accessors) - 1
+
+    def morph_accessor(self, offsets: np.ndarray | None, count: int) -> int:
+        """Sparse VEC3 accessor: zeros except the moved vertices (bufferless when none moved)."""
+        acc: dict = {"componentType": FLOAT, "count": int(count), "type": "VEC3", "min": [0.0] * 3, "max": [0.0] * 3}
+        if offsets is not None:
+            arr = np.asarray(offsets, dtype=np.float32)
+            moved = np.flatnonzero(np.abs(arr).max(axis=1) > 1e-7)
+            if len(moved):
+                values = arr[moved]
+                lo, hi = values.min(axis=0), values.max(axis=0)
+                if len(moved) < count:  # the untouched vertices are zeros
+                    lo, hi = np.minimum(lo, 0), np.maximum(hi, 0)
+                acc["min"], acc["max"] = [float(x) for x in lo], [float(x) for x in hi]
+                acc["sparse"] = {"count": int(len(moved)),
+                                 "indices": {"bufferView": self.view(moved.astype(np.uint32).tobytes()),
+                                             "componentType": UINT},
+                                 "values": {"bufferView": self.view(np.ascontiguousarray(values).tobytes())}}
         self.accessors.append(acc)
         return len(self.accessors) - 1
 
@@ -148,6 +171,10 @@ def write_glb(primitives: list[Primitive], skeleton: Skeleton, clips: list[Clip]
             image_index[png] = len(textures) - 1
         return image_index[png]
 
+    target_names: list[str] = []
+    for prim in primitives:
+        target_names += [n for n in (prim.targets or {}) if n not in target_names]
+
     for prim in primitives:
         attrs = {
             "POSITION": buf.accessor(prim.positions, FLOAT, "VEC3", ARRAY_BUFFER, bounds=True),
@@ -181,22 +208,38 @@ def write_glb(primitives: list[Primitive], skeleton: Skeleton, clips: list[Clip]
             # glTF vertex colours are linear; the app keeps them in sRGB
             attrs["COLOR_0"] = buf.accessor(srgb_to_linear(prim.colors), UBYTE, "VEC4", ARRAY_BUFFER, normalized=True)
         materials.append(material)
-        gl_prims.append({"attributes": attrs, "material": len(materials) - 1,
-                         "indices": buf.accessor(prim.faces.reshape(-1), UINT, "SCALAR", ELEMENT_ARRAY_BUFFER)})
+        gl_prim = {"attributes": attrs, "material": len(materials) - 1,
+                   "indices": buf.accessor(prim.faces.reshape(-1), UINT, "SCALAR", ELEMENT_ARRAY_BUFFER)}
+        if target_names:  # every primitive of a mesh must have the same targets, in the same order
+            gl_prim["targets"] = [{"POSITION": buf.morph_accessor((prim.targets or {}).get(n), len(prim.positions))}
+                                  for n in target_names]
+            gl_prim["extras"] = {"targetNames": target_names}
+        gl_prims.append(gl_prim)
 
     # ---------------- animations
     animated = [names.index(n) for n in (deform_joints or skeleton.template.deform)]
     animations = []
     for clip in clips:
         times = buf.accessor(clip.times.astype(np.float32), FLOAT, "SCALAR", bounds=True)
+        ends = None  # first and last time, for joints that hold still
         samplers, channels = [], []
         for j in animated:
-            out = buf.accessor(_continuous(clip.rotations[:, j].copy()), FLOAT, "VEC4")
-            samplers.append({"input": times, "output": out, "interpolation": "LINEAR"})
+            quats = _continuous(clip.rotations[:, j].copy())
+            still = len(quats) > 2 and np.allclose(quats, quats[0], atol=1e-7)
+            if still and ends is None:
+                ends = buf.accessor(clip.times[[0, -1]].astype(np.float32), FLOAT, "SCALAR", bounds=True)
+            out = buf.accessor(quats[[0, -1]] if still else quats, FLOAT, "VEC4")
+            samplers.append({"input": ends if still else times, "output": out, "interpolation": "LINEAR"})
             channels.append({"sampler": len(samplers) - 1, "target": {"node": joint_node(j), "path": "rotation"}})
         hips_t = skeleton.positions[0][None] + clip.hips_offset
         samplers.append({"input": times, "output": buf.accessor(hips_t, FLOAT, "VEC3"), "interpolation": "LINEAR"})
         channels.append({"sampler": len(samplers) - 1, "target": {"node": joint_node(0), "path": "translation"}})
+        if clip.morphs and any(n in clip.morphs for n in target_names):
+            zero = np.zeros(len(clip.times))
+            weights = np.column_stack([np.clip(clip.morphs.get(n, zero), 0, 1) for n in target_names])
+            samplers.append({"input": times, "output": buf.accessor(weights.reshape(-1), FLOAT, "SCALAR"),
+                             "interpolation": "LINEAR"})
+            channels.append({"sampler": len(samplers) - 1, "target": {"node": 1, "path": "weights"}})
         animations.append({"name": clip.name, "samplers": samplers, "channels": channels})
 
     gltf: dict = {
@@ -211,6 +254,8 @@ def write_glb(primitives: list[Primitive], skeleton: Skeleton, clips: list[Clip]
         "bufferViews": buf.views,
         "accessors": buf.accessors,
     }
+    if target_names:
+        gltf["meshes"][0].update(weights=[0.0] * len(target_names), extras={"targetNames": target_names})
     if animations:
         gltf["animations"] = animations
     if images:

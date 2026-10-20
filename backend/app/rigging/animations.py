@@ -2,7 +2,8 @@
 
 * A built-in library of hand-keyed motions (idle, walk, run, jump, wave, dance…), defined in terms
   of body mechanics (hip flexion, knee bend, arm elevation…) so they adapt to each character's
-  proportions and rest pose (A-pose or T-pose).
+  proportions and rest pose (A-pose or T-pose). Hands take named shapes (relaxed, open, fist,
+  point) when the skeleton has fingers; face clips drive blendshape weights.
 * BVH motion-capture import with retargeting (CMU, Mixamo-converted, Rokoko, etc.).
 
 Rotations are local, relative to the parent joint, with the rest pose as identity, which is how
@@ -18,7 +19,7 @@ from typing import Callable
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .skeleton import BONE_CHILD, HUMANOID, JOINT_INDEX, JOINT_NAMES, JOINTS, RigError, Skeleton
+from .skeleton import FINGERS, HUMANOID, JOINT_INDEX, RigError, Skeleton
 
 FPS = 30
 Z = np.array([0.0, 0.0, 1.0])
@@ -31,9 +32,23 @@ class Clip:
     rotations: np.ndarray  # (k, J, 4) local quaternions xyzw
     hips_offset: np.ndarray  # (k, 3) translation of Hips relative to its rest position
     loop: bool = True
+    morphs: dict[str, np.ndarray] | None = None  # blendshape name → (k,) weight
 
 
 # ---------------------------------------------------------------- posing helpers
+
+
+# finger curl per joint (1, 2, 3) in degrees, plus spread of the base joint (towards the thumb +)
+HandShape = dict[str, tuple[float, float, float, float]]
+HAND_SHAPES: dict[str, HandShape] = {
+    "relaxed": {"Thumb": (5, 10, 8, 0), "Index": (12, 16, 10, 2), "Middle": (15, 20, 12, 0),
+                "Ring": (18, 22, 14, -2), "Pinky": (20, 25, 15, -4)},
+    "open": {"Thumb": (0, 0, 0, 12), "Index": (0, 0, 0, 8), "Middle": (0, 0, 0, 0),
+             "Ring": (0, 0, 0, -7), "Pinky": (0, 0, 0, -14)},
+    "fist": {"Thumb": (20, 35, 40, -5), "Index": (80, 95, 60, 0), "Middle": (85, 100, 65, 0),
+             "Ring": (88, 100, 65, 0), "Pinky": (90, 100, 65, 0)},
+}
+HAND_SHAPES["point"] = {**HAND_SHAPES["fist"], "Index": (0, 0, 0, 0), "Thumb": (25, 30, 35, -8)}
 
 
 class Pose:
@@ -43,6 +58,8 @@ class Pose:
         self.sk = skeleton
         self.rot: dict[str, Rotation] = {}
         self.offset = np.zeros(3)
+        self.hands: dict[str, HandShape] = {}  # side → shape; unset hands are relaxed
+        self.morph: dict[str, float] = {}  # blendshape weights 0..1
 
     # every new motion is applied after the ones already set on that joint
     def _apply(self, joint: str, r: Rotation) -> None:
@@ -101,7 +118,46 @@ class Pose:
         if ankle:
             self.about(f"{side}Foot", [1, 0, 0], -ankle)
 
+    # --- hands (no-ops without finger bones)
+    def hand(self, side: str, shape: str, amount: float = 1.0, base: str = "relaxed") -> None:
+        """Blend a hand from `base` to `shape` (0 → base, 1 → shape)."""
+        a, b = HAND_SHAPES[base], HAND_SHAPES[shape]
+        self.hands[side] = {f: tuple((1 - amount) * x + amount * y for x, y in zip(a[f], b[f])) for f in FINGERS}
+
+    def _palm(self, side: str) -> tuple[np.ndarray, np.ndarray]:
+        """(palm normal, across-the-palm direction towards the thumb) in the rest pose."""
+        sk = self.sk
+        d = sk[f"{side}HandMiddle1"] - sk[f"{side}Hand"]
+        across = sk[f"{side}HandIndex1"] - sk[f"{side}HandPinky1"]
+        across = across / max(np.linalg.norm(across), 1e-9)
+        n = np.cross(d, across) * (1 if side == "Left" else -1)  # left/right hands are mirror images
+        return n / max(np.linalg.norm(n), 1e-9), across
+
+    def _pose_fingers(self) -> None:
+        if "LeftHandIndex1" not in self.sk.template.index:
+            return
+        for side in ("Left", "Right"):
+            shape = self.hands.get(side, HAND_SHAPES["relaxed"])
+            normal, across = self._palm(side)
+            for finger in FINGERS:
+                curls, spread = shape[finger][:3], shape[finger][3]
+                # fingers close towards the palm; the thumb also crosses it towards the little finger
+                target = normal if finger != "Thumb" else (normal - across) / np.sqrt(2)
+                for i, curl in enumerate(curls, 1):
+                    joint = f"{side}Hand{finger}{i}"
+                    b = self.rest_dir(joint)
+                    r = Rotation.identity()
+                    axis = np.cross(b, target)
+                    if curl and np.linalg.norm(axis) > 1e-6:
+                        r = Rotation.from_rotvec(np.radians(curl) * axis / np.linalg.norm(axis))
+                    if i == 1 and spread:
+                        axis = np.cross(b, across)
+                        if np.linalg.norm(axis) > 1e-6:
+                            r = r * Rotation.from_rotvec(np.radians(spread) * axis / np.linalg.norm(axis))
+                    self.rot[joint] = r
+
     def matrix(self) -> np.ndarray:
+        self._pose_fingers()
         index = self.sk.template.index
         quats = np.tile([0.0, 0.0, 0.0, 1.0], (len(index), 1))
         for joint, r in self.rot.items():
@@ -192,6 +248,7 @@ def wave(p: Pose, t: float) -> None:
     p.arm("Right", 145, forward=15, elbow=35)
     p.about("RightForeArm", Z, 22 * _s(t, 2.0))
     p.about("RightHand", Z, 10 * _s(t, 2.0, 0.1))
+    p.hand("Right", "open")
     p.turn("Head", -10)
     p.tilt("Spine1", -4)
     p.offset[1] = 0.002 * p.sk.height * _s(t)
@@ -276,6 +333,65 @@ def a_pose(p: Pose, t: float) -> None:
     p.arm("Right", 45)
 
 
+def _hold(t: float, rise: float = 0.2) -> float:
+    """0 → 1 → 0 over a loop, holding at 1 in the middle."""
+    return float(np.clip(min(t, 1 - t) / rise, 0, 1))
+
+
+def fist(p: Pose, t: float) -> None:
+    close = _hold(t, 0.25)
+    p.arm("Left", 12, elbow=12)
+    p.arm("Right", 30 + 20 * close, forward=40 + 25 * close, elbow=60 + 40 * close)
+    p.hand("Right", "fist", close)
+    p.hand("Left", "fist", 0.6 * close)
+    p.lean("Head", -4 * close)
+    p.offset[1] = 0.002 * p.sk.height * _s(t)
+
+
+def point(p: Pose, t: float) -> None:
+    aim = _hold(t, 0.2)
+    p.arm("Left", 12, elbow=12)
+    p.arm("Right", 12 + 68 * aim, forward=75 * aim, elbow=15 * (1 - aim) + 5)
+    p.hand("Right", "point", aim)
+    p.turn("Spine1", -8 * aim)
+    p.turn("Head", -12 * aim)
+    p.offset[1] = 0.002 * p.sk.height * _s(t)
+
+
+def grab(p: Pose, t: float) -> None:
+    # 0–.35 reach out opening the hand, .35–.5 close it, .5–.8 pull it in, .8–1 let go
+    reach = float(np.sin(np.pi * min(t / 0.7, 1.0)))
+    p.arm("Left", 12, elbow=12)
+    p.arm("Right", 20 + 25 * reach, forward=20 + 50 * reach, elbow=70 - 55 * reach)
+    if t < 0.35:
+        p.hand("Right", "open", min(t / 0.25, 1.0))
+    elif t < 0.8:
+        p.hand("Right", "fist", min((t - 0.35) / 0.15, 1.0), base="open")
+    else:
+        p.hand("Right", "fist", (1.0 - t) / 0.2)
+    p.lean("Spine1", 8 * reach)
+    p.turn("Spine1", -6 * reach)
+    p.lean("Head", 6 * reach)
+
+
+def talk(p: Pose, t: float) -> None:
+    # syllables: the jaw opens and closes at uneven rates, with small head nods
+    open_ = 0.5 + 0.5 * _s(t, 6.0) * (0.6 + 0.4 * _s(t, 1.0, 0.2))
+    p.morph["jawOpen"] = float(np.clip(open_ * (0.4 + 0.6 * abs(_s(t, 2.0, 0.1))), 0, 1))
+    p.morph["smile"] = 0.15 + 0.1 * _s(t, 1.0)
+    _relaxed_arms(p, sway=2 * _s(t))
+    p.arm("Right", 15, forward=20 + 8 * _s(t, 2.0), elbow=50)
+    p.lean("Head", 3 * _s(t, 3.0))
+    p.turn("Head", 4 * _s(t, 1.0))
+
+
+def blink(p: Pose, t: float) -> None:
+    # two blinks per loop (the second one double), relaxed breathing in between
+    lids = max(np.exp(-((t - 0.2) / 0.03) ** 2), np.exp(-((t - 0.7) / 0.03) ** 2), np.exp(-((t - 0.8) / 0.03) ** 2))
+    p.morph["blink_L"] = p.morph["blink_R"] = float(lids)
+    idle(p, t)
+
+
 PRESETS: dict[str, Preset] = {
     "idle": Preset("Reposo (respirar)", 3.0, idle, tags=["básico"]),
     "walk": Preset("Caminar", 1.1, walk, tags=["locomoción"]),
@@ -291,6 +407,11 @@ PRESETS: dict[str, Preset] = {
     "sit": Preset("Sentado", 3.0, sit, tags=["pose"]),
     "t_pose": Preset("T-pose", 1.0, t_pose, tags=["pose"]),
     "a_pose": Preset("A-pose", 1.0, a_pose, tags=["pose"]),
+    "fist": Preset("Puño", 2.0, fist, tags=["manos"]),
+    "point": Preset("Señalar", 2.5, point, tags=["manos"]),
+    "grab": Preset("Agarrar", 2.4, grab, tags=["manos"]),
+    "talk": Preset("Hablar", 3.0, talk, tags=["cara"]),
+    "blink": Preset("Parpadear", 3.0, blink, tags=["cara"]),
 }
 DEFAULT_PRESETS = ["idle", "walk", "run", "jump", "wave"]
 PRESET_SETS: dict[str, dict[str, Preset]] = {"humanoid": PRESETS}  # other templates register theirs
@@ -303,17 +424,20 @@ def preset_clip(skeleton: Skeleton, name: str) -> Clip:
     preset = presets[name]
     frames = max(2, int(round(preset.duration * FPS)) + 1)
     times = np.linspace(0, preset.duration, frames)
-    rotations, offsets = [], []
+    rotations, offsets, morphs = [], [], []
     for i in range(frames):
         pose = Pose(skeleton)
         preset.motion(pose, (i / (frames - 1)) % 1.0 if preset.loop else i / (frames - 1))
         rotations.append(pose.matrix())
         offsets.append(pose.offset.copy())
+        morphs.append(pose.morph)
     if preset.loop:  # make the last frame exactly the first for seamless loops
-        rotations[-1], offsets[-1] = rotations[0], offsets[0]
+        rotations[-1], offsets[-1], morphs[-1] = rotations[0], offsets[0], morphs[0]
     rotations, offsets = np.array(rotations), np.array(offsets)
     ground_feet(skeleton, rotations, offsets, preset.ground)
-    return Clip(name, times, rotations, offsets, preset.loop)
+    names = sorted({n for m in morphs for n in m})
+    weights = {n: np.array([m.get(n, 0.0) for m in morphs]) for n in names} or None
+    return Clip(name, times, rotations, offsets, preset.loop, weights)
 
 
 FOOT_JOINTS = [JOINT_INDEX[n] for n in HUMANOID.feet]  # humanoid default, kept for callers and tests
@@ -324,7 +448,7 @@ def ground_feet(skeleton: Skeleton, rotations: np.ndarray, offsets: np.ndarray, 
     feet = skeleton.foot_indices
     floor = skeleton.positions[feet, 1].min()
     for i in range(len(rotations)):
-        lowest = forward_kinematics(skeleton, rotations[i], offsets[i])[feet, 1].min()
+        lowest = forward_kinematics(skeleton, rotations[i], offsets[i], max(feet) + 1)[feet, 1].min()
         if mode == "plant" or lowest < floor:
             offsets[i, 1] += floor - lowest
 
@@ -461,9 +585,24 @@ def bvh_global(joints: list[BvhJoint], motion: np.ndarray) -> tuple[list[Rotatio
     return glob, pos, rest
 
 
+_FINGER = re.compile(r"^(left|right|l|r)(?:hand)?(thumb|index|middle|ring|pinky)([123])$")
+
+
+def finger_name(name: str) -> str | None:
+    """Finger joints in Mixamo-like names (LeftHandIndex1, mixamorig:RightHandThumb2, l_index3…)."""
+    n = re.sub(r"^.*[:|]", "", name)
+    m = _FINGER.match(re.sub(r"[^a-z0-9]", "", n.lower()))
+    if not m:
+        return None
+    side = "Left" if m.group(1).startswith("l") else "Right"
+    return f"{side}Hand{m.group(2).capitalize()}{m.group(3)}"
+
+
 def retarget_bvh(skeleton: Skeleton, text: str, name: str = "mocap", in_place: bool = True,
                  max_seconds: float = 120.0) -> Clip:
-    if skeleton.template is not HUMANOID:
+    """Fingers follow the mocap only when it has full 3-joint chains for them; otherwise (and the
+    jaw always) they stay in the rest pose."""
+    if skeleton.template.name != HUMANOID.name:
         raise RigError("La captura de movimiento BVH solo se aplica a personajes humanoides")
     joints, motion, frame_time = parse_bvh(text)
     frame_time = frame_time if frame_time > 0 else 1 / FPS
@@ -473,10 +612,18 @@ def retarget_bvh(skeleton: Skeleton, text: str, name: str = "mocap", in_place: b
     frames = motion.shape[0]
 
     src_index: dict[str, int] = {}
+    fingers: dict[str, int] = {}
     for j, joint in enumerate(joints):
         canon = canonical_name(joint.name)
         if canon and canon not in src_index:
             src_index[canon] = j
+        finger = finger_name(joint.name) if joint.channels else None
+        if finger and finger not in fingers:
+            fingers[finger] = j
+    tpl = skeleton.template
+    for base in {f[:-1] for f in fingers}:
+        if all(f"{base}{i}" in fingers for i in (1, 2, 3)) and f"{base}1" in tpl.index:
+            src_index.update({f"{base}{i}": fingers[f"{base}{i}"] for i in (1, 2, 3)})
     needed = ["Hips", "LeftUpLeg", "RightUpLeg", "LeftArm", "RightArm"]
     if any(n not in src_index for n in needed):
         raise RigError("El BVH no tiene un esqueleto humanoide reconocible (caderas, piernas y brazos)")
@@ -492,11 +639,15 @@ def retarget_bvh(skeleton: Skeleton, text: str, name: str = "mocap", in_place: b
 
     tgt_glob: dict[str, Rotation] = {}
     align: dict[str, Rotation] = {}
-    for name_j, parent_name in JOINTS:
-        child = BONE_CHILD.get(name_j)
-        if name_j in src_index and child in src_index:
+    for name_j, parent_name in tpl.joints:
+        child = tpl.bone_child.get(name_j)
+        # a finger's last bone points like the source's tip (its End Site), when the source has one
+        src_child = src_index.get(child)
+        if src_child is None and name_j in src_index and child and child.endswith("_End") and name_j[-1] == "3":
+            src_child = next((k for k, jt in enumerate(joints) if jt.parent == src_index[name_j]), None)
+        if name_j in src_index and src_child is not None:
             t_dir = skeleton[child] - skeleton[name_j]
-            s_dir = src_rest[src_index[child]] - src_rest[src_index[name_j]]
+            s_dir = src_rest[src_child] - src_rest[src_index[name_j]]
             if np.linalg.norm(t_dir) > 1e-9 and np.linalg.norm(s_dir) > 1e-9:
                 align[name_j] = Rotation.align_vectors(s_dir[None], t_dir[None])[0]
         if name_j not in align:
@@ -506,10 +657,10 @@ def retarget_bvh(skeleton: Skeleton, text: str, name: str = "mocap", in_place: b
         else:  # joint the mocap lacks (e.g. extra spine): follow the parent rigidly
             tgt_glob[name_j] = tgt_glob[parent_name] if parent_name else Rotation.identity(frames)
 
-    rotations = np.zeros((frames, len(JOINT_NAMES), 4))
-    for name_j, parent_name in JOINTS:
+    rotations = np.zeros((frames, len(tpl.names), 4))
+    for name_j, parent_name in tpl.joints:
         local = tgt_glob[name_j] if not parent_name else tgt_glob[parent_name].inv() * tgt_glob[name_j]
-        rotations[:, JOINT_INDEX[name_j]] = local.as_quat()
+        rotations[:, tpl.index[name_j]] = local.as_quat()
 
     # root motion scaled by leg length
     def leg_len(rest_lookup) -> float:
@@ -539,23 +690,29 @@ def calibrate_floor(skeleton: Skeleton, rotations: np.ndarray, offsets: np.ndarr
     feet = skeleton.foot_indices
     floor = skeleton.positions[feet, 1].min()
     sample = range(0, len(rotations), max(1, len(rotations) // 60))
-    lowest = [forward_kinematics(skeleton, rotations[i], offsets[i])[feet, 1].min() for i in sample]
+    lowest = [forward_kinematics(skeleton, rotations[i], offsets[i], max(feet) + 1)[feet, 1].min() for i in sample]
     offsets[:, 1] -= np.percentile(lowest, 5) - floor
 
 
 # ---------------------------------------------------------------- forward kinematics (tests, previews)
 
 
-def forward_kinematics(skeleton: Skeleton, rotations: np.ndarray, hips_offset: np.ndarray) -> np.ndarray:
-    """World joint positions (J, 3) for one frame of local rotations."""
-    world_rot: list[Rotation] = []
-    pos = np.zeros_like(skeleton.positions)
-    for j, parent in enumerate(skeleton.template.parents):
-        local = Rotation.from_quat(rotations[j])
+def forward_kinematics(skeleton: Skeleton, rotations: np.ndarray, hips_offset: np.ndarray,
+                       count: int | None = None) -> np.ndarray:
+    """World joint positions (J, 3) for one frame of local rotations. With `count`, only the first
+    `count` joints are solved (joints are in topological order); the rest stay at zero."""
+    parents = skeleton.template.parents
+    n = len(parents) if count is None else count
+    local = Rotation.from_quat(rotations[:n]).as_matrix()
+    world = np.empty_like(local)
+    rest = skeleton.positions
+    pos = np.zeros_like(rest)
+    for j in range(n):
+        parent = parents[j]
         if parent < 0:
-            world_rot.append(local)
-            pos[j] = skeleton.positions[j] + hips_offset
+            world[j] = local[j]
+            pos[j] = rest[j] + hips_offset
         else:
-            world_rot.append(world_rot[parent] * local)
-            pos[j] = pos[parent] + world_rot[parent].apply(skeleton.positions[j] - skeleton.positions[parent])
+            world[j] = world[parent] @ local[j]
+            pos[j] = pos[parent] + world[parent] @ (rest[j] - rest[parent])
     return pos
