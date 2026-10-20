@@ -1068,6 +1068,17 @@ $("#btnDelete").addEventListener("click", async () => {
   selectJob(null);
   refreshJobs();
 });
+$("#btnMcpCopy").addEventListener("click", async () => {
+  let command;
+  try {
+    command = (await api("/api/integrations/mcp/setup")).claude_code;
+    await navigator.clipboard.writeText(command);
+    toast(t("Comando copiado: pégalo en tu terminal (necesita uv)"));
+  } catch (err) {
+    if (!command) return toast(err.message, true);
+    prompt(t("Copia el comando:"), command);
+  }
+});
 $("#btnCopyLink").addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText($("#btnOpenShare").href);

@@ -51,6 +51,16 @@ La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por
 **Agente IA**
 - Chat (botón «Agente IA», abajo a la derecha) que crea conceptos y modelos, los anima y revisa si se imprimen, con tarjetas para abrir cada resultado. Funciona **gratis sin clave** con un asistente integrado; con una clave de Anthropic (opcional, Ajustes) entiende cualquier petición y responde como un experto en 3D, Blender e impresión.
 
+**Claude Code / Cursor (MCP)**
+- Servidor **MCP** para manejar Forja3D desde Claude Code, Cursor o Claude Desktop (como el de Meshy): crear conceptos y modelos desde texto o imagen, esperar el resultado, buscar animaciones, riggear y animar personajes, revisar la imprimibilidad y **exportar el archivo directamente a tu proyecto** (GLB, FBX, .blend, STL, 3MF…).
+- Un solo archivo (`integrations/mcp/forja3d_mcp.py`) que se ejecuta con [uv](https://docs.astral.sh/uv/) sin instalar nada más. En la app: **Exportar → ✦ Claude Code / Cursor (MCP) → ⧉ Copiar comando**, y pégalo en tu terminal:
+  ```
+  claude mcp add forja3d -- uv run <ruta>/forja3d_mcp.py
+  ```
+  Cursor / Claude Desktop: `{"mcpServers": {"forja3d": {"command": "uv", "args": ["run", "<ruta>/forja3d_mcp.py"]}}}` en `~/.cursor/mcp.json` o `claude_desktop_config.json`.
+- Encuentra sola la app de escritorio (que anota su dirección en `server.json` de su carpeta de datos); para otro servidor define `FORJA3D_URL` (p. ej. `http://192.168.1.20:8000`).
+- Herramientas: `create_concepts`, `generate_model`, `image_to_model`, `get_model`, `wait_for_model`, `list_models`, `search_animations`, `rig_and_animate`, `check_printability`, `list_printers`, `export_model`.
+
 **Interfaz**
 - Diseño neón propio, **español / inglés** (selector arriba), barra de flujo **01 Entrada → 02 Modelo texturizado → 03 Rig → 04 Blender y motores**, galería con filtros, historial de versiones, captura PNG y vídeo 360°, enlace para compartir con AR.
 
@@ -107,6 +117,7 @@ desktop/               lanzador de escritorio (ventana nativa), spec de PyInstal
 gpu_worker/            servidor de IA local en tu GPU (Hunyuan3D-2, SD-Turbo, Depth Anything, Real-ESRGAN)
 scripts/windows/       instalar.bat / iniciar.bat (worker de GPU)
 integrations/blender/  complemento de Blender
+integrations/mcp/      servidor MCP para Claude Code, Cursor y Claude Desktop
 frontend/              HTML + JS sin build; three.js y fuentes incluidos (funciona sin internet)
   index.html, app.js   estudio: crear, galería, herramientas, flujo 01–04
   i18n.js              español / inglés
@@ -154,3 +165,4 @@ backend/app/
 | `POST` | `/api/jobs/{id}/character` | `{target, pbr, template, animations}` → texturas HD + rig en un clic |
 | `POST` | `/api/jobs/{id}/animate` | multipart: `animations`, `bvh`, `keep_bvh`, `in_place` |
 | `GET` | `/api/integrations/blender` | complemento de Blender preconfigurado |
+| `GET` | `/api/integrations/mcp` · `/api/integrations/mcp/setup` | servidor MCP preconfigurado · comandos para Claude Code, Cursor y Claude Desktop |

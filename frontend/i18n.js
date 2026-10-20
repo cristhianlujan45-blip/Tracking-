@@ -166,6 +166,11 @@ const EN = {
   "Fondo": "Depth", "Lado mayor": "Longest side", "Medida final en milímetros": "Final size in millimetres",
   "Colores / filamentos": "Colours / filaments", "⬇ Descargar": "⬇ Download",
   "◆ Complemento para Blender (importar con un clic)": "◆ Blender add-on (one-click import)",
+  "✦ Claude Code / Cursor (MCP)": "✦ Claude Code / Cursor (MCP)", "⧉ Copiar comando": "⧉ Copy command",
+  "Maneja Forja3D desde tu asistente de código: crear, riggear, revisar la impresión y exportar":
+    "Drive Forja3D from your coding assistant: create, rig, check printability and export",
+  "Comando copiado: pégalo en tu terminal (necesita uv)": "Command copied: paste it in your terminal (needs uv)",
+  "Copia el comando:": "Copy the command:", "Servidor MCP no disponible": "MCP server not available",
   " (malla estática: sin esqueleto ni animaciones)": " (static mesh: no skeleton or animations)", " {f} por defecto: 100 mm.": " {f} defaults to 100 mm.",
   "No se pudo crear el USDZ: {e}": "Could not create the USDZ: {e}",
   "Universal: web, Unity, Unreal, Godot, Blender, Roblox.": "Universal: web, Unity, Unreal, Godot, Blender, Roblox.",
