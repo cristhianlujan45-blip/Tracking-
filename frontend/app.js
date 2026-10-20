@@ -399,10 +399,14 @@ $("#form").addEventListener("submit", (e) => {
       body.append("images", state.imageFile);
       created = await api("/api/jobs/image", { method: "POST", body });
     } else if (state.mode === "multi") {
-      const files = state.multiFiles.filter(Boolean);
-      if (files.length < 2) throw new Error(t("Añade al menos 2 vistas"));
+      const ROLES = ["front", "left", "back", "right"];
+      const slots = state.multiFiles.map((f, i) => [f, ROLES[i]]).filter(([f]) => f);
+      if (slots.length < 2) throw new Error(t("Añade al menos 2 vistas"));
       const body = imageForm({ ...opts, style: "auto" });
-      files.forEach((f) => body.append("images", f));
+      slots.forEach(([f, role]) => {  // each picture with its slot: front + back is not front + side
+        body.append("images", f);
+        body.append("roles", role);
+      });
       created = await api("/api/jobs/image", { method: "POST", body });
     } else if (state.mode === "scene") {
       if (!state.sceneFile) throw new Error(t("Selecciona una foto"));

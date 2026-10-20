@@ -145,7 +145,7 @@ def test_pre_checks_explain_old_driver_and_full_disk(tmp_path, monkeypatch):
 
     monkeypatch.setattr(la, "find_nvidia_smi", lambda: fake_smi("581.57"))
     monkeypatch.setattr(la.shutil, "disk_usage", lambda p: type("U", (), {"free": 10 * 1024**3})())
-    with pytest.raises(la.LocalAIError, match="35 GB libres"):
+    with pytest.raises(la.LocalAIError, match="45 GB libres"):
         asyncio.run(ai._step0(0, 2))
 
 
@@ -167,7 +167,13 @@ def test_diagnostics_text(tmp_path):
         assert client.get("/api/config").json()["version"]
 
 
-def test_ai_textures_toggle(tmp_path):
+def test_ai_textures_toggle(tmp_path, monkeypatch):
+    downloads = []
+
+    async def fake_setup(self):
+        downloads.append(self.args())
+
+    monkeypatch.setattr(la.LocalAI, "_texture_setup", fake_setup)
     settings = Settings(provider="mock", data_dir=tmp_path, mock_step_delay=0)
     with TestClient(create_app(settings)) as client:
         assert client.put("/api/local-ai/textures", params={"enabled": True}).status_code == 400  # not installed
@@ -176,6 +182,7 @@ def test_ai_textures_toggle(tmp_path):
         (ai.root / "texturas_ia.txt").write_text("custom_rasterizer.whl")
         body = client.put("/api/local-ai/textures", params={"enabled": True}).json()
         assert body["ai_textures"] and "--texture" in ai.args()
+        assert downloads and "--texture" in downloads[0]  # its models are downloaded right away
         assert not client.put("/api/local-ai/textures", params={"enabled": False}).json()["ai_textures"]
         assert "--texture" not in ai.args()
 
@@ -197,3 +204,25 @@ def test_refresh_syncs_worker_code_and_reinstalls_changed_requirements(tmp_path,
     assert (ai.root / "worker" / "backends.py").is_file() and installs == [1]
     asyncio.run(ai._refresh())  # nothing changed: no reinstall
     assert installs == [1]
+
+
+def test_stale_worker_is_replaced(tmp_path, monkeypatch):
+    """A worker left running by an older app version is shut down and the current one started."""
+    ai = dummy_ai(tmp_path)
+    old = la.LocalAI(tmp_path / "old", ROOT, backend="dummy", worker_args=["--dummy-delay", "0"],
+                     python=sys.executable)
+    old.port = ai.port
+    old.start()  # an "orphan" from before an update
+
+    async def scenario():
+        await old.ensure_running()
+        health = await ai.healthy()
+        assert health["version"] == ai.worker_version() != ""
+        monkeypatch.setattr(la.LocalAI, "worker_version", lambda self: "otra")  # the app ships a newer one
+        await ai._shutdown_stale()
+        assert not await ai.healthy(1)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        old.stop()

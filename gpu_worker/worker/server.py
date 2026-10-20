@@ -21,9 +21,10 @@ from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import Response
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
+from . import VERSION
 from .backends import Backend, MeshJob, png_bytes
 
 log = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ def decode_image(data: str) -> Image.Image:
         img.load()
     except (UnidentifiedImageError, OSError) as exc:
         raise HTTPException(400, "Imagen no válida") from exc
-    return img
+    return ImageOps.exif_transpose(img)  # phone photos store their rotation separately
 
 
 def create_app(backend: Backend, token: str | None = None) -> FastAPI:
@@ -145,7 +146,13 @@ def create_app(backend: Backend, token: str | None = None) -> FastAPI:
         with lock:
             busy = sum(t.status in ("queued", "running") for t in tasks.values())
         return {"status": "ok", "backend": backend.name, "capabilities": sorted(backend.capabilities()),
-                "busy": busy, **backend.info()}
+                "busy": busy, "version": VERSION, **backend.info()}
+
+    @app.post("/shutdown")
+    async def shutdown():
+        """The app replaces a worker left running by an older version (e.g. after an update)."""
+        threading.Timer(0.3, os._exit, args=(0,)).start()
+        return {"status": "bye"}
 
     @app.post("/images")
     async def images(body: ImagesIn):
@@ -172,6 +179,7 @@ def create_app(backend: Backend, token: str | None = None) -> FastAPI:
         loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(gpu, backend.cutout, image)
+            result.thumbnail((2048, 2048))  # plenty for the models; keeps the PNG under the upload limit
         except Exception as exc:  # noqa: BLE001
             log.exception("Recorte falló")
             raise HTTPException(500, friendly_error(exc)) from exc

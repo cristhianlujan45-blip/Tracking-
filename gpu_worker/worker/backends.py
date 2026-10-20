@@ -363,7 +363,8 @@ class HunyuanBackend:
             from hy3dgen.texgen import Hunyuan3DPaintPipeline
 
             log.info("Cargando Hunyuan3D-Paint …")
-            self._paint = Hunyuan3DPaintPipeline.from_pretrained("tencent/Hunyuan3D-2")
+            self._activate("none")  # its models go straight to the GPU while loading: make room first
+            self._paint = Hunyuan3DPaintPipeline.from_pretrained("tencent/Hunyuan3D-2", subfolder=PAINT_SUBFOLDER)
             # The paint pipeline needs ~16 GB if fully resident; offload streams it through 8 GB.
             if hasattr(self._paint, "enable_model_cpu_offload"):
                 self._paint.enable_model_cpu_offload()
@@ -428,12 +429,12 @@ class HunyuanBackend:
         import torch
 
         pipe = self._load_t2i()
-        generator = torch.Generator(device="cpu").manual_seed(seed)  # CPU generator: reproducible across GPUs
-        result = pipe(
-            prompt=[prompt] * count, num_inference_steps=2, guidance_scale=0.0,
-            width=512, height=512, generator=generator,
-        )
-        return list(result.images)
+        images = []
+        for i in range(count):  # one at a time: SDXL-Turbo already fills most of 8 GB of VRAM
+            generator = torch.Generator(device="cpu").manual_seed(seed + i)  # CPU: reproducible across GPUs
+            images += pipe(prompt=prompt, num_inference_steps=2, guidance_scale=0.0,
+                           width=512, height=512, generator=generator).images
+        return images
 
     def novel_views(self, image: Image.Image, quality: str = "standard") -> dict[str, Image.Image]:
         import torch
@@ -465,11 +466,14 @@ class HunyuanBackend:
         images = [self._remove_background(img) for img in job.images]
 
         progress(25, "Generando forma 3D")
+        out_of_memory = False
         try:
             mesh = self._shape_pass(images, job.roles, job.seed, steps, octree, progress)
         except Exception as exc:  # noqa: BLE001 - only out-of-memory is retried
             if not _is_oom(exc):
                 raise
+            out_of_memory = True  # retried below: inside `except` the failed frame still holds the GPU
+        if out_of_memory:
             # plan B for small GPUs: free everything and retry lighter (smaller model, coarser grid)
             log.warning("Sin memoria de GPU; reintentando con un modelo más ligero")
             progress(30, "Poca memoria de GPU: reintentando en modo ligero")
@@ -509,13 +513,21 @@ class HunyuanBackend:
         """Switch to Hunyuan3D-2mini for the rest of the session and remember it for the next start."""
         import torch
 
-        for key in ("shape", "mv", "t2i", "paint", "mv_gen", "llm"):
+        for key in ("shape", "mv", "t2i", "paint", "mv_gen", "llm", "depth"):
+            pipe = getattr(self, f"_{key}", None)
+            if pipe is not None and hasattr(pipe, "to"):
+                try:
+                    pipe.to("cpu")
+                except Exception:  # noqa: BLE001 - dropping the reference is what matters
+                    pass
             setattr(self, f"_{key}", None)
         self._on_gpu = None
         gc.collect()
         torch.cuda.empty_cache()
         if self.shape_model != LIGHT_SHAPE[0]:
             self.shape_model, self.shape_subfolder = LIGHT_SHAPE
+            hy3d_local(*LIGHT_SHAPE)  # ~4 GB, only the first time
+            hy3d_local(LIGHT_SHAPE[0], "hunyuan3d-vae-v2-mini-turbo")
             self.multiview = False  # the multi-view model is as big as the full one
             try:
                 with open(LIGHT_MARKER, "w", encoding="utf-8") as fh:
@@ -524,14 +536,14 @@ class HunyuanBackend:
                 pass
 
     def estimate_depth(self, image: Image.Image) -> Image.Image:
-        """Depth Anything V2. Small (~25 M params) stays on the GPU next to whatever else is loaded."""
+        """Depth Anything V2 on the CPU (a second or two): the GPU stays free for the big models."""
         import torch
 
         if self._depth is None:
             from transformers import pipeline
 
             log.info("Cargando %s …", self.depth_model)
-            self._depth = pipeline("depth-estimation", model=self.depth_model, device=0 if torch.cuda.is_available() else -1)
+            self._depth = pipeline("depth-estimation", model=self.depth_model, device=-1)
         with torch.inference_mode():
             result = self._depth(image.convert("RGB"))
         depth = result["predicted_depth"].squeeze().float().cpu().numpy()  # relative inverse depth: higher = closer
@@ -602,6 +614,24 @@ def total_ram_gb() -> float:
         return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024**3
     except (AttributeError, OSError, ValueError):
         return 0.0
+
+
+PAINT_SUBFOLDER = "hunyuan3d-paint-v2-0-turbo"  # the one Hunyuan3DPaintPipeline loads by default
+
+
+def hy3d_models_dir() -> str:
+    return os.path.expanduser(os.environ.get("HY3DGEN_MODELS", "~/.cache/hy3dgen"))
+
+
+def hy3d_local(repo: str, subfolder: str) -> str:
+    """Download only what Hunyuan's loader reads (config + fp16 safetensors, ~5 GB instead of ~25 GB for
+    the five copies in the folder) into the local folder it checks before going to the Hub."""
+    from huggingface_hub import hf_hub_download
+
+    target = os.path.join(hy3d_models_dir(), repo)
+    for name in ("config.yaml", "model.fp16.safetensors"):
+        hf_hub_download(repo, f"{subfolder}/{name}", local_dir=target)
+    return os.path.join(target, subfolder)
 
 
 BACKGROUND_MODEL = "birefnet-general"  # sharper edges than U²-Net (hair, fingers, holes); runs on the CPU
@@ -728,22 +758,18 @@ def prefetch(shape_model: str, shape_subfolder: str, image_model: str, depth_mod
     # FlashVDM swaps in the turbo VAE of the same family
     vae_repo, vae = ((shape_model, "hunyuan3d-vae-v2-mini-turbo") if shape_model.endswith("mini")
                      else ("tencent/Hunyuan3D-2", "hunyuan3d-vae-v2-0-turbo"))
-    jobs = [(shape_model.split("/")[-1], lambda: snapshot_download(
-        shape_model, allow_patterns=[f"{shape_subfolder}/*"])),
-            ("FlashVDM", lambda: snapshot_download(vae_repo, allow_patterns=[f"{vae}/*"]))]
-    if shape_model != LIGHT_SHAPE[0]:  # plan B when the GPU runs out of memory with the full model
-        jobs.append((LIGHT_SHAPE[0].split("/")[-1] + " (plan B)", lambda: snapshot_download(
-            LIGHT_SHAPE[0], allow_patterns=[f"{LIGHT_SHAPE[1]}/*", "hunyuan3d-vae-v2-mini-turbo/*"])))
+    jobs = [(shape_model.split("/")[-1], lambda: hy3d_local(shape_model, shape_subfolder)),
+            ("FlashVDM", lambda: hy3d_local(vae_repo, vae))]
     if multiview:
-        jobs.append(("Hunyuan3D-2mv", lambda: snapshot_download(
-            "tencent/Hunyuan3D-2mv", allow_patterns=["hunyuan3d-dit-v2-mv/*"])))
+        jobs.append(("Hunyuan3D-2mv", lambda: hy3d_local("tencent/Hunyuan3D-2mv", "hunyuan3d-dit-v2-mv")))
     # diffusers layout in fp16 only (the repos also hold full-precision single-file checkpoints)
     jobs.append((image_model.split("/")[-1], lambda: snapshot_download(
         image_model, allow_patterns=["model_index.json", "*/*.json", "*/*.txt", "*/*.fp16.safetensors"])))
     jobs.append((depth_model.split("/")[-1], lambda: snapshot_download(depth_model)))
-    if texture:
+    if texture:  # the folders Hunyuan3DPaintPipeline loads, where it looks first
         jobs.append(("Hunyuan3D-Paint", lambda: snapshot_download(
-            "tencent/Hunyuan3D-2", allow_patterns=["hunyuan3d-paint-v2-0/*", "hunyuan3d-delight-v2-0/*"])))
+            "tencent/Hunyuan3D-2", local_dir=os.path.join(hy3d_models_dir(), "tencent/Hunyuan3D-2"),
+            allow_patterns=[f"{PAINT_SUBFOLDER}/*", "hunyuan3d-delight-v2-0/*"])))
     if novel_views:  # weights plus the custom pipeline code, so loading later needs no network
         jobs.append(("Zero123++", lambda: [snapshot_download(r) for r in (NOVEL_VIEW_PIPELINE, NOVEL_VIEW_MODEL)]))
 
@@ -751,7 +777,7 @@ def prefetch(shape_model: str, shape_subfolder: str, image_model: str, depth_mod
         background_session()
 
     jobs += [("BiRefNet", rembg), ("Real-ESRGAN", esrgan_weights),
-             ("Opus-MT es→en", lambda: snapshot_download(
+             ("Opus-MT es-en", lambda: snapshot_download(
                  TRANSLATOR, allow_patterns=["*.json", "*.spm", "*.txt", "*.bin", "*.safetensors"]))]
     if chat_model:
         jobs.append((chat_model.split("/")[-1], lambda: snapshot_download(

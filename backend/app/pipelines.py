@@ -26,7 +26,8 @@ def generation(provider: Provider, req: GenerationRequest) -> Work:
             pictures = result.inputs or [img.data for img in req.images] or (
                 [result.reference_image] if result.reference_image else [])
             if pictures:
-                roles, trust = projection.ROLES[:len(pictures)], {}
+                roles = list(req.roles) if req.roles and len(req.roles) == len(pictures) else projection.ROLES[:len(pictures)]
+                trust = {}
                 for role, data in result.views.items():  # AI side/back views of a single picture
                     if role not in roles:
                         roles, pictures = [*roles, role], [*pictures, data]

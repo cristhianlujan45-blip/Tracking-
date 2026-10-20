@@ -24,7 +24,7 @@ from typing import Literal
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 from . import agent as ai_agent
@@ -49,6 +49,7 @@ MIME_BY_EXT = {ext: mime for mime, ext in IMAGE_TYPES.items()}
 GENERATIVE_MODES = ("text", "image", "multi_image")
 MAX_THUMBNAIL_BYTES = 2 * 1024 * 1024
 HEX_ID = re.compile(r"^[0-9a-f]{32}$")
+VIEW_ROLES = ("front", "left", "back", "right")
 
 Quality = Literal["draft", "standard", "high"]
 Style = Literal[tuple(STYLES)]  # type: ignore[valid-type]
@@ -370,6 +371,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             req = GenerationRequest(
                 mode=mode, prompt=prompt, quality=opts.quality, images=images,
                 style=opts.style, symmetry=opts.symmetry, pose=opts.pose, seed=seed, engine=opts.engine,
+                roles=(extra or {}).get("roles"),
             )
             state.runner.submit(job_id, pipelines.generation(state.provider, req))
             jobs.append(to_out(job))
@@ -397,6 +399,11 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         try:
             with Image.open(io.BytesIO(data)) as img:
                 img.verify()
+            with Image.open(io.BytesIO(data)) as img:
+                if img.getexif().get(0x0112, 1) != 1:  # phone photo stored sideways: apply its rotation
+                    buf = io.BytesIO()
+                    ImageOps.exif_transpose(img).save(buf, format="PNG")
+                    data, mime = buf.getvalue(), "image/png"
         except Exception as exc:  # noqa: BLE001 - PIL raises many types for corrupt files
             raise HTTPException(400, "La imagen está dañada o no es válida") from exc
         return InputImage(data, mime)
@@ -551,6 +558,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         loop = asyncio.get_running_loop()
 
         def ready(installer: Path) -> None:
+            request.app.state.local_ai.stop()  # os._exit skips shutdown: don't leave the worker running
             updates.run_windows_installer(installer)
             loop.call_later(1.0, os._exit, 0)  # quit so the installer can replace the app's files
 
@@ -612,6 +620,9 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         ai = request.app.state.local_ai
         if enabled and not ai.status()["ai_textures_available"]:
             raise HTTPException(400, "El pintor de texturas con IA no está instalado en tu equipo")
+        health = await ai.healthy(2)
+        if health and health.get("busy"):
+            raise HTTPException(409, "Espera a que termine la generación en curso")
         ai.set_ai_textures(enabled)
         request.app.state.provider.info = {}  # capabilities are read again from the restarted worker
         return ai.status()
@@ -683,6 +694,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         seed: int | None = Form(None, ge=0, le=2**31 - 1),
         variants: int = Form(1, ge=1, le=4),
         engine: str | None = Form(None, max_length=40),
+        roles: list[str] | None = Form(None),
     ):
         inputs: list[InputImage] = []
         extra = {}
@@ -698,6 +710,11 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             raise HTTPException(400, "Sube al menos una imagen")
         if len(inputs) > 4:
             raise HTTPException(400, "Máximo 4 imágenes")
+        if roles and len(inputs) > 1:  # which slot each picture came from (front + back is not front + side)
+            if len(roles) != len(inputs) or len(set(roles)) != len(roles) or not set(roles) <= set(VIEW_ROLES):
+                raise HTTPException(422, "Cada imagen necesita una vista distinta: front, left, back o right")
+            order = sorted(range(len(roles)), key=lambda i: VIEW_ROLES.index(roles[i]))  # front first
+            inputs, extra["roles"] = [inputs[i] for i in order], [roles[i] for i in order]
         mode = "multi_image" if len(inputs) > 1 else "image"
         require(request, mode, "Multi-imagen a 3D" if mode == "multi_image" else "Imagen a 3D")
         opts = GenerationOptions(quality=quality, style=style, seed=seed, variants=variants, engine=engine or None)
@@ -1216,7 +1233,9 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         if mode == "text" and parent["input_image"]:  # reference image from the text -> image step
             ref = job_dir(job_id) / parent["input_image"]
             images, mode = [InputImage(ref.read_bytes(), MIME_BY_EXT.get(ref.suffix[1:], "image/png"))], "image"
-        return create_generation_jobs(request, mode, parent["prompt"], opts, images, {"refined": True}, parent["id"])
+        kept = {"roles": p["roles"]} if p.get("roles") and mode == parent["mode"] else {}
+        return create_generation_jobs(request, mode, parent["prompt"], opts, images, {"refined": True, **kept},
+                                      parent["id"])
 
     @app.post("/api/jobs/{job_id}/variations", response_model=list[JobOut], status_code=201)
     async def variations(request: Request, job_id: str, body: VariationsIn):
@@ -1225,8 +1244,9 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         opts = GenerationOptions(quality=parent["quality"], style=p.get("style", "auto"),
                                  symmetry=p.get("symmetry", False), pose=p.get("pose", "none"), variants=body.count,
                                  engine=p.get("engine"))
+        kept = {"roles": p["roles"]} if p.get("roles") else {}
         return create_generation_jobs(request, parent["mode"], parent["prompt"], opts, load_inputs(parent),
-                                      {"variation_of": parent["id"]}, parent["id"])
+                                      {"variation_of": parent["id"], **kept}, parent["id"])
 
     # ------------------------------------------------------------ AI agent (chat)
 

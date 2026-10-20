@@ -183,3 +183,14 @@ def test_failed_views_fall_back_to_the_single_picture(tmp_path):
         job = c.post("/api/jobs/image", files={"images": ("r.png", PNG, "image/png")}, data={"quality": "draft"}).json()[0]
         assert wait_done(c, job["id"])["status"] == "succeeded"
         assert len(backend.last_job.images) == 1
+
+
+def test_view_slots_keep_their_roles(client):
+    """Front + back pictures reach the worker and the painter as front + back, not front + side."""
+    files = [("images", ("b.png", PNG, "image/png")), ("images", ("f.png", PNG, "image/png"))]
+    resp = client.post("/api/jobs/image", files=files, data={"roles": ["back", "front"], "quality": "draft"})
+    assert resp.status_code == 201, resp.text
+    job = wait_done(client, resp.json()[0]["id"])
+    assert job["status"] == "succeeded" and job["params"]["roles"] == ["front", "back"]
+    bad = client.post("/api/jobs/image", files=files, data={"roles": ["front", "front"]})
+    assert bad.status_code == 422

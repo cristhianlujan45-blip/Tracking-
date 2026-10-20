@@ -126,15 +126,19 @@ class Updater:
 
 
 def run_windows_installer(installer: Path) -> None:
-    """Run the Inno Setup installer silently once the app has quit, then reopen the app."""
+    """Run the Inno Setup installer silently once the app has quit, then reopen the app.
+
+    The paths go through environment variables: cmd.exe reads batch files in the OEM code page, so
+    a user name with accents written into the script would break them."""
     script = installer.with_name("actualizar.cmd")
     script.write_text("\r\n".join([
         "@echo off",
-        "timeout /t 3 /nobreak >nul",  # let the app close first so its files can be replaced
-        f'"{installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS',
-        f'start "" "{sys.executable}"',  # the packaged Forja3D.exe
+        "ping -n 4 127.0.0.1 >nul",  # ~3 s for the app to close (timeout needs a console)
+        '"%F3D_SETUP%" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS',
+        'start "" "%F3D_EXE%"',
         "",
-    ]), encoding="utf-8")
+    ]), encoding="ascii")
+    env = {**os.environ, "F3D_SETUP": str(installer), "F3D_EXE": sys.executable}  # the packaged Forja3D.exe
     flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
     subprocess.Popen([os.environ.get("COMSPEC", "cmd.exe"), "/c", str(script)], creationflags=flags,
-                     close_fds=True)
+                     close_fds=True, env=env)

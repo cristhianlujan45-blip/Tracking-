@@ -245,7 +245,8 @@ const EN = {
   "Guardar": "Save", "Cerrar": "Close", "¡Ajustes guardados!": "Settings saved!",
 
   // ---------------------------------------------------------------- free local AI
-  "Mi GPU · gratis": "My GPU · free", "Recortando el fondo": "Removing the background",
+  "Mi GPU · gratis": "My GPU · free", "Descargando el pintor de texturas con IA": "Downloading the AI texture painter",
+  "Espera a que termine la generación en curso": "Wait for the running generation to finish", "Recortando el fondo": "Removing the background",
   "Actualizando la IA local": "Updating the local AI", "Opciones avanzadas (opcional)": "Advanced options (optional)",
   "✔ No hace falta rellenar nada: elige «Mi GPU · gratis» y pulsa Guardar.": "✔ Nothing to fill in: pick “My GPU · free” and press Save.",
   "Texturas con IA de Tencent (beta: más lento con 8 GB)": "AI textures by Tencent (beta: slower with 8 GB)",
@@ -268,8 +269,8 @@ const EN = {
   "Recomendado. Ilimitado y privado en tu NVIDIA RTX: se instala y arranca sola, sin claves.": "Recommended. Unlimited and private on your NVIDIA RTX: installs and starts by itself, no keys.",
   "Opcional y de pago por uso: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy. Necesita clave.": "Optional, pay per use: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy. Needs a key.",
   "Comprobando la IA local…": "Checking the local AI…", "Instalar IA gratis en mi GPU": "Install free AI on my GPU",
-  "Una sola vez: descarga ≈30 GB (PyTorch, Hunyuan3D-2, Zero123++, SDXL-Turbo). Después arranca sola cada vez que generas: gratis, sin límites, sin claves.":
-    "One time only: downloads ≈30 GB (PyTorch, Hunyuan3D-2, Zero123++, SDXL-Turbo). After that it starts by itself whenever you generate: free, unlimited, no keys.",
+  "Una sola vez: descarga ≈35 GB (PyTorch, Hunyuan3D-2, Zero123++, SDXL-Turbo). Después arranca sola cada vez que generas: gratis, sin límites, sin claves.":
+    "One time only: downloads ≈35 GB (PyTorch, Hunyuan3D-2, Zero123++, SDXL-Turbo). After that it starts by itself whenever you generate: free, unlimited, no keys.",
   "Avanzado: usar un servidor IA de otro equipo": "Advanced: use an AI server on another computer",
   "Instalando…": "Installing…", "La instalación falló: {e}": "The install failed: {e}",
   "✔ IA local instalada y funcionando": "✔ Local AI installed and running",
@@ -286,7 +287,7 @@ const EN = {
   "Instalando Python": "Installing Python", "Instalando PyTorch con CUDA (≈3 GB)": "Installing PyTorch with CUDA (≈3 GB)",
   "Instalando Hunyuan3D-2 y el servidor de IA": "Installing Hunyuan3D-2 and the AI server",
   "Comprobando que PyTorch ve tu GPU": "Checking that PyTorch sees your GPU",
-  "Descargando los modelos de IA (≈25 GB, solo una vez)": "Downloading the AI models (≈25 GB, one time only)",
+  "Descargando los modelos de IA (≈30 GB, solo una vez)": "Downloading the AI models (≈30 GB, one time only)",
   "Terminando": "Finishing", "Listo": "Done", "Modelos listos": "Models ready",
   "La IA local aún no está instalada: abre Ajustes → «Mi GPU» → Instalar (gratis)": "The local AI is not installed yet: open Settings → “My GPU” → Install (free)",
   "No se encontró una tarjeta NVIDIA con su driver instalado: actualiza el driver (nvidia.com/drivers) y vuelve a intentarlo": "No NVIDIA card with its driver was found: update the driver (nvidia.com/drivers) and try again",

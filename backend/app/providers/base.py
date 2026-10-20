@@ -29,6 +29,8 @@ class GenerationRequest:
     pose: str = "none"  # "none" | "a-pose" | "t-pose"
     seed: int = 0
     engine: str | None = None  # provider-specific 3D engine (None = provider default)
+    # which view each image is ("front", "left", "back", "right"); None = that order
+    roles: list[str] | None = None
 
 
 @dataclass

@@ -116,6 +116,8 @@ class LocalProvider:
                 inputs = [await self._cutout(client, i.data) for i in images]
                 images = [InputImage(data, "image/png") for data in inputs]
             payload = {"images": [_b64(i.data) for i in images], "seed": req.seed % 2**32, "quality": req.quality}
+            if req.roles and len(req.roles) == len(images) > 1:
+                payload["roles"] = list(req.roles)
             views, poses = {}, {}
             if len(images) == 1 and {"views", "multi_image"} <= self.capabilities:
                 await on_progress(span[0], "Generando vistas laterales y de espalda")

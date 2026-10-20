@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -56,13 +57,13 @@ STEPS = [
     ("Instalando Hunyuan3D-2 y el servidor de IA", 15),
     ("Comprobando que PyTorch ve tu GPU", 3),
     ("Instalando el pintor de texturas con IA", 2),
-    ("Descargando los modelos de IA (≈25 GB, solo una vez)", 38),
+    ("Descargando los modelos de IA (≈30 GB, solo una vez)", 38),
     ("Terminando", 2),
 ]
 
 
 MIN_DRIVER = (570, 0)  # CUDA 12.8
-MIN_FREE_GB = 35
+MIN_FREE_GB = 45
 
 
 def _driver_version(line: str) -> tuple[int, int] | None:
@@ -171,6 +172,7 @@ class LocalAI:
         env = {**os.environ, "HF_HOME": str(models / "huggingface"), "TORCH_HOME": str(models / "torch"),
                "U2NET_HOME": str(models / "u2net"), "HY3DGEN_MODELS": str(models / "hy3dgen"),
                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True", "PYTHONUNBUFFERED": "1",
+               "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",  # Windows pipes default to cp1252
                "PYTHONPATH": str(self.root), "UV_PYTHON_INSTALL_DIR": str(self.root / "python"),
                "UV_CACHE_DIR": str(self.root / "cache"), "UV_LINK_MODE": "copy"}
         env.pop("VIRTUAL_ENV", None)
@@ -431,8 +433,11 @@ class LocalAI:
     async def ensure_running(self, timeout: float = 600) -> str:
         """Start the worker when needed and wait until it answers. Returns its URL."""
         async with self._lock:
-            if await self.healthy():  # ours, or one started by hand (iniciar.bat -SoloWorker)
-                return self.url
+            health = await self.healthy()
+            if health and (self._python or health.get("version") == self.worker_version()):
+                return self.url  # ours, or one started by hand (iniciar.bat -SoloWorker)
+            if health:  # left running by an older version of the app (e.g. across an update)
+                await self._shutdown_stale()
             await self._refresh()
             self.start()
             deadline = time.monotonic() + timeout
@@ -456,11 +461,27 @@ class LocalAI:
 
     def set_ai_textures(self, enabled: bool) -> None:
         flag = self.root / "texturas_ia_activadas.txt"
-        if enabled:
-            flag.write_text("1", encoding="utf-8")
-        else:
+        if not enabled:
             flag.unlink(missing_ok=True)
-        self.stop()  # the next generation starts the worker with the new setting
+            self.stop()  # the next generation starts the worker without it
+            return
+        flag.write_text("1", encoding="utf-8")
+        if self.installing:
+            return
+        self.error, self.progress = "", 0
+        self.task = asyncio.create_task(self._texture_setup())
+
+    async def _texture_setup(self) -> None:
+        """Download the texture painter's models (~18 GB) with progress, before a generation needs them."""
+        try:
+            self.step = "Descargando el pintor de texturas con IA"
+            await asyncio.to_thread(self.stop)
+            await self._run(str(self.python), "-m", "worker", "--prefetch", *self.args(), start=0, share=100)
+            self.step, self.progress = "Listo", 100
+        except Exception as exc:  # noqa: BLE001 - shown in Settings; textures stay off
+            log.exception("Descarga del pintor de texturas fallida")
+            (self.root / "texturas_ia_activadas.txt").unlink(missing_ok=True)
+            self.error, self.step = str(exc) or exc.__class__.__name__, "Error"
 
     def args(self) -> list[str]:
         extra = ["--texture"] if self.ai_textures and "--texture" not in self.worker_args else []
@@ -475,6 +496,28 @@ class LocalAI:
             elif arg not in ("--multiview", "--novel-views"):  # both need the big multi-view model
                 args.append(arg)
         return args + ["--shape-model", "tencent/Hunyuan3D-2mini", "--shape-subfolder", "hunyuan3d-dit-v2-mini"]
+
+    def worker_version(self) -> str:
+        """Version of the worker code this app ships (gpu_worker/worker/__init__.py)."""
+        try:
+            text = (self.resources / "gpu_worker" / "worker" / "__init__.py").read_text(encoding="utf-8")
+        except OSError:
+            return ""
+        match = re.search(r'VERSION = "([^"]+)"', text)
+        return match.group(1) if match else ""
+
+    async def _shutdown_stale(self) -> None:
+        log.info("Reiniciando una IA local de una versión anterior")
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.post(self.url + "/shutdown")
+        except httpx.HTTPError:
+            pass
+        for _ in range(30):  # wait for it to let go of the port and the GPU
+            await asyncio.sleep(0.5)
+            if not await self.healthy(1):
+                break
+        await asyncio.to_thread(self.stop)
 
     def worker_log_tail(self, lines: int = 3) -> str:
         try:
