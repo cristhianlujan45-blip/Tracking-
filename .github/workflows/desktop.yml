@@ -129,7 +129,7 @@ jobs:
           body: |
             **Windows 10/11 (64 bits):** descarga `Forja3D-Setup-*.exe` y ejecútalo. Si Windows SmartScreen avisa, pulsa «Más información» → «Ejecutar de todas formas» (el instalador no está firmado).
             **macOS (Apple Silicon):** abre el `.dmg` y arrastra Forja3D a Aplicaciones. La primera vez: clic derecho sobre la app → «Abrir» (no está firmada por Apple).
-            **IA gratis en tu GPU NVIDIA (Windows):** la app la instala y la arranca sola la primera vez (≈20 GB, una sola vez). Sin claves ni tokens.
+            **IA gratis en tu GPU NVIDIA (Windows):** la app la instala y la arranca sola la primera vez (≈30 GB de descarga y 45 GB libres en disco, una sola vez; RTX 30, 40 o 50 con 8 GB o más). Sin claves ni tokens.
             Si ya tienes Forja3D, la app se actualiza sola: no hace falta descargar esto de nuevo.
       - name: Publish to the public releases repo
         if: ${{ vars.RELEASES_REPO != '' }}
