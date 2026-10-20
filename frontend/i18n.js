@@ -300,6 +300,7 @@ const EN = {
   "Reposo (respirar)": "Idle (breathing)", "Caminar": "Walk", "Correr": "Run", "Saltar": "Jump", "Saludar": "Wave",
   "Bailar": "Dance", "Puñetazos": "Punches", "Victoria": "Victory", "Asentir (sí)": "Nod (yes)", "Negar (no)": "Shake head (no)",
   "Mirar alrededor": "Look around", "Sentado": "Sitting", "T-pose": "T-pose", "A-pose": "A-pose",
+  "Puño": "Fist", "Señalar": "Point", "Agarrar": "Grab", "Hablar": "Talk", "Parpadear": "Blink",
   "Reposo": "Idle", "Paso": "Walk", "Trote": "Trot", "Galope": "Gallop", "Contento (cola)": "Happy (tail wag)",
   "Barbilla": "Chin", "Ingle": "Groin", "Hombro izq.": "L shoulder", "Hombro der.": "R shoulder", "Codo izq.": "L elbow",
   "Codo der.": "R elbow", "Muñeca izq.": "L wrist", "Muñeca der.": "R wrist", "Rodilla izq.": "L knee", "Rodilla der.": "R knee",

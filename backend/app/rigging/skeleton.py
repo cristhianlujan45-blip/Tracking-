@@ -4,12 +4,14 @@ Conventions (glTF): Y up, the character faces +Z, so its left side is +X. Joint 
 Mixamo convention, which Unity Humanoid, Unreal retargeting and Blender add-ons recognise.
 
 Markers are the Mixamo-style handles a user can adjust (chin, shoulders, elbows, wrists, groin,
-knees, ankles); every joint position is derived from them plus the mesh itself.
+knees, ankles); every joint position is derived from them plus the mesh itself. Fingers (3-bone
+chains) and a jaw are added on top of the 27 body joints when the hands and head allow it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import numpy as np
 import trimesh
@@ -46,6 +48,22 @@ for _side in ("Left", "Right"):
         f"{_side}Hand": f"{_side}Hand_End", f"{_side}UpLeg": f"{_side}Leg", f"{_side}Leg": f"{_side}Foot",
         f"{_side}Foot": f"{_side}ToeBase", f"{_side}ToeBase": f"{_side}Toe_End",
     })
+
+FINGERS = ("Thumb", "Index", "Middle", "Ring", "Pinky")
+
+
+def finger_joints(side: str) -> list[tuple[str, str]]:
+    """Mixamo names: LeftHandIndex1..3 (+ LeftHandIndex_End at the tip)."""
+    out = []
+    for finger in FINGERS:
+        base = f"{side}Hand{finger}"
+        out += [(f"{base}1", f"{side}Hand"), (f"{base}2", f"{base}1"), (f"{base}3", f"{base}2"),
+                (f"{base}_End", f"{base}3")]
+    return out
+
+
+FINGER_JOINTS = [j for side in ("Left", "Right") for j in finger_joints(side)]
+JAW_JOINTS = [("Jaw", "Head"), ("Jaw_End", "Jaw")]
 
 MARKERS = ["chin", "groin", "shoulder_l", "shoulder_r", "elbow_l", "elbow_r", "wrist_l", "wrist_r",
            "knee_l", "knee_r", "ankle_l", "ankle_r"]
@@ -87,6 +105,18 @@ class Template:
 
 HUMANOID = Template("humanoid", JOINTS, BONE_CHILD, MARKERS, MARKER_LABELS,
                     ["LeftFoot", "LeftToeBase", "LeftToe_End", "RightFoot", "RightToeBase", "RightToe_End"], "front")
+
+
+@lru_cache(maxsize=None)
+def humanoid_template(fingers: bool = False, jaw: bool = False) -> Template:
+    """The humanoid body plus optional finger chains and jaw. Extra joints go after the 27 body
+    joints, so body joint indices are the same in every variant."""
+    if not fingers and not jaw:
+        return HUMANOID
+    extra = (JAW_JOINTS if jaw else []) + (FINGER_JOINTS if fingers else [])
+    # every extra joint is a chain: it owns the segment towards the next one
+    child = dict(BONE_CHILD) | {parent: name for name, parent in extra if parent not in BONE_CHILD}
+    return Template("humanoid", JOINTS + extra, child, MARKERS, MARKER_LABELS, HUMANOID.feet, "front")
 
 
 @dataclass
@@ -267,7 +297,8 @@ def _depth_at(v: np.ndarray, x: float, y: float, radius: float, fallback: float)
     return float((near[:, 2].min() + near[:, 2].max()) / 2) if len(near) else fallback
 
 
-def build_skeleton(vertices: np.ndarray, markers: dict[str, list[float]]) -> Skeleton:
+def build_skeleton(vertices: np.ndarray, markers: dict[str, list[float]], details: bool = True) -> Skeleton:
+    """Body joints from the markers; with `details`, also fingers and jaw where the mesh allows."""
     missing = [m for m in MARKERS if m not in markers]
     if missing:
         raise RigError(f"Faltan marcadores: {', '.join(missing)}")
@@ -313,4 +344,37 @@ def build_skeleton(vertices: np.ndarray, markers: dict[str, list[float]]) -> Ske
         pos[f"{side}ToeBase"] = np.array([ankle[0], toe_y, ankle[2] + 0.65 * (toe_z - ankle[2])])
         pos[f"{side}Toe_End"] = np.array([ankle[0], toe_y, toe_z])
 
-    return Skeleton(np.array([pos[name] for name in JOINT_NAMES], dtype=float))
+    body = Skeleton(np.array([pos[name] for name in JOINT_NAMES], dtype=float))
+    return add_details(v, body) if details else body
+
+
+def add_details(v: np.ndarray, body: Skeleton) -> Skeleton:
+    """Finger chains (both hands or none) and a jaw, each skipped when its placement fails."""
+    from .face import place_jaw
+    from .hands import place_fingers
+
+    extra: dict[str, np.ndarray] = {}
+    try:
+        hands = [place_fingers(v, body, side) for side in ("Left", "Right")]
+    except Exception:  # noqa: BLE001 - a degenerate hand gets no fingers, never a failed rig
+        hands = [None]
+    fingers = all(h is not None for h in hands)
+    if fingers:
+        for h in hands:
+            extra.update(h)
+    try:
+        jaw = place_jaw(v, body)
+    except Exception:  # noqa: BLE001 - same for the jaw
+        jaw = None
+    if jaw is not None:
+        extra["Jaw"], extra["Jaw_End"] = jaw
+    if not extra:
+        return body
+    tpl = humanoid_template(fingers=fingers, jaw=jaw is not None)
+    positions = [extra.get(name, body.positions[i] if i < len(body.positions) else None)
+                 for i, name in enumerate(tpl.names)]
+    out = Skeleton(np.array(positions, dtype=float), tpl)
+    if fingers:  # the hand bone ends at the knuckles, where the fingers take over
+        for side in ("Left", "Right"):
+            out.positions[tpl.index[f"{side}Hand_End"]] = out[f"{side}HandMiddle1"]
+    return out

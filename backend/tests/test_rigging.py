@@ -7,6 +7,7 @@ import time
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from scipy.spatial.transform import Rotation
 
 from app import geometry
 from app.config import Settings
@@ -30,13 +31,15 @@ def humanoid(arm_angle=45.0):
     return mesh
 
 
-def make_bvh(skeleton, raise_left_arm=True, names=lambda n: f"mixamorig:{n}", walk_z=0.0) -> str:
-    """BVH in T-pose (cm) of our own joint layout; frame 1 lifts the left arm straight up."""
+def make_bvh(skeleton, raise_left_arm=True, names=lambda n: f"mixamorig:{n}", walk_z=0.0, joints=JOINTS,
+             bend=None) -> str:
+    """BVH in T-pose (cm) of our own joint layout; frame 1 lifts the left arm straight up (and
+    applies `bend`: joint → Z rotation in degrees)."""
     tpose = {"LeftArm": [1, 0, 0], "LeftForeArm": [1, 0, 0], "LeftHand": [1, 0, 0], "LeftHand_End": [1, 0, 0],
              "RightArm": [-1, 0, 0], "RightForeArm": [-1, 0, 0], "RightHand": [-1, 0, 0], "RightHand_End": [-1, 0, 0]}
-    parent_of = dict(JOINTS)
+    parent_of = dict(joints)
     pos = {}
-    for n, parent in JOINTS:
+    for n, parent in joints:
         if parent is None:
             pos[n] = np.array([0, 100.0, 0])
             continue
@@ -44,7 +47,7 @@ def make_bvh(skeleton, raise_left_arm=True, names=lambda n: f"mixamorig:{n}", wa
         if n in tpose:
             d = np.array(tpose[n], float) * np.linalg.norm(d)
         pos[n] = pos[parent] + d * 100
-    children = {n: [c for c, p in JOINTS if p == n] for n, _ in JOINTS}
+    children = {n: [c for c, p in joints if p == n] for n, _ in joints}
     lines, order = ["HIERARCHY"], []
 
     def emit(n, depth):
@@ -69,7 +72,8 @@ def make_bvh(skeleton, raise_left_arm=True, names=lambda n: f"mixamorig:{n}", wa
         for n in order:
             if n == "Hips":
                 values += [0, 100, walk_z * f]
-            values += [90 if (f == 1 and raise_left_arm and n == "LeftArm") else 0, 0, 0]
+            z = 90 if (f == 1 and raise_left_arm and n == "LeftArm") else (bend or {}).get(n, 0) * f
+            values += [z, 0, 0]
         frames.append(" ".join(map(str, values)))
     return "\n".join(lines + ["MOTION", "Frames: 2", "Frame Time: 0.0333333"] + frames)
 
@@ -94,7 +98,8 @@ def test_skin_weights_follow_anatomy():
     mesh = humanoid()
     result = rig(geometry.mesh_to_glb(mesh), presets=["t_pose"])
     gltf = gltf_json(result.glb)
-    assert len(gltf["skins"][0]["joints"]) == len(JOINTS)
+    # 27 body joints + jaw + 3-bone fingers (with tips) on both hands
+    assert len(gltf["skins"][0]["joints"]) == len(JOINTS) + 2 + 40 == len(result.skeleton)
     assert [a["name"] for a in gltf["animations"]] == ["t_pose"]
     # T-pose clip: hands go up to shoulder height (forward kinematics on the stored skeleton)
     sk = build_skeleton(mesh.vertices, result.markers)
@@ -453,3 +458,233 @@ def test_full_character_one_click(client):
     only = client.post(f"/api/jobs/{plain['id']}/character", json={}).json()
     assert [j["mode"] for j in only] == ["rig"] and wait_done(client, only[0]["id"])["status"] == "succeeded"
     assert client.post(f"/api/jobs/{rigged['id']}/character", json={}).status_code == 400
+
+
+# ---------------------------------------------------------------- fingers, face, creatures
+
+
+def _hand_parts(wrist):
+    """T-pose left hand at `wrist`: palm down, four separate fingers along +X, thumb forward (+Z)."""
+    import trimesh as _trimesh
+
+    from app.providers.mock import _limb
+
+    w = np.asarray(wrist, float)
+    palm = _trimesh.creation.box((0.09, 0.025, 0.085))
+    palm.apply_translation(w + [0.045, 0, 0])
+    parts, axes = [palm], {}
+    for name, z, length in (("Index", 0.03, 0.075), ("Middle", 0.01, 0.085), ("Ring", -0.01, 0.08),
+                            ("Pinky", -0.03, 0.065)):
+        a, b = w + [0.09, 0, z], w + [0.09 + length, 0, z * 1.15]
+        parts.append(_limb(a, b, 0.0085))
+        axes[name] = (a, b)
+    a, b = w + [0.02, -0.003, 0.045], w + [0.075, -0.006, 0.08]
+    parts.append(_limb(a, b, 0.01))
+    axes["Thumb"] = (a, b)
+    hand = _trimesh.util.concatenate(parts)
+    v, f = _trimesh.remesh.subdivide_to_size(hand.vertices, hand.faces, 0.006)
+    return _trimesh.Trimesh(v, f), axes
+
+
+def handed_humanoid():
+    """T-pose mock humanoid whose left mitten is replaced by a hand with separate fingers."""
+    import trimesh as _trimesh
+
+    mesh = humanoid(90)
+    markers = estimate_markers(mesh)
+    wrist = build_skeleton(mesh.vertices, markers, details=False)["LeftHand"]
+    keep = ~(mesh.vertices[:, 0] > wrist[0] + 0.005)[mesh.faces].any(axis=1)
+    body = _trimesh.Trimesh(mesh.vertices, mesh.faces[keep], process=False)
+    body.remove_unreferenced_vertices()
+    hand, axes = _hand_parts(wrist)
+    return _trimesh.util.concatenate([body, hand]), markers, axes
+
+
+def test_fingers_follow_separated_fingers_and_get_their_own_weights():
+    from app.rigging.skinning import compute_skin
+
+    mesh, markers, axes = handed_humanoid()
+    sk = build_skeleton(mesh.vertices, markers)
+    assert "LeftHandIndex1" in sk.template.index and "RightHandIndex1" in sk.template.index
+    for name, (a, b) in axes.items():
+        axis = (b - a) / np.linalg.norm(b - a)
+        joints = [sk[f"LeftHand{name}{i}"] for i in (2, 3)] + [sk[f"LeftHand{name}_End"]]
+        if name != "Thumb":
+            joints.append(sk[f"LeftHand{name}1"])  # the thumb's first joint sits inside the palm
+        for p in joints:
+            assert np.linalg.norm((p - a) - ((p - a) @ axis) * axis) < (0.01 if name == "Thumb" else 0.004), name
+        assert (sk[f"LeftHand{name}_End"] - a) @ axis > 0.8 * np.linalg.norm(b - a), name  # reaches the tip
+    assert sk["LeftHand_End"] == pytest.approx(sk["LeftHandMiddle1"])  # the hand bone ends at the knuckles
+
+    weights = compute_skin(mesh, sk)
+    names = sk.template.deform
+    v = np.asarray(mesh.vertices)
+    for name, (a, b) in axes.items():
+        axis, length = (b - a) / np.linalg.norm(b - a), np.linalg.norm(b - a)
+        along = (v - a) @ axis
+        radial = np.linalg.norm((v - a) - along[:, None] * axis, axis=1)
+        finger = (along > 0.25 * length) & (along < length) & (radial < 0.012)
+        own = [i for i, n in enumerate(names) if n.startswith(f"LeftHand{name}")]
+        assert finger.sum() > 100 and weights[finger][:, own].sum(axis=1).mean() > 0.9, name
+    fingers = [i for i, n in enumerate(names) if n.startswith("LeftHand") and n != "LeftHand"]
+    forearm = (v[:, 0] > 0.3) & (v[:, 0] < sk["LeftHand"][0] - 0.02)
+    assert weights[forearm][:, fingers].max() < 1e-6  # fingers never take the arm
+
+
+def test_mitten_hands_get_fingers_and_degenerate_hands_fall_back():
+    mesh = humanoid(45)
+    markers = estimate_markers(mesh)
+    sk = build_skeleton(mesh.vertices, markers)
+    assert len(sk.template.names) == len(JOINTS) + 2 + 40
+    for name in ("Thumb", "Index", "Pinky"):  # both mittens: four even chains + thumb, mirror images
+        for j in ("1", "_End"):
+            left, right = sk[f"LeftHand{name}{j}"], sk[f"RightHand{name}{j}"]
+            assert np.abs(left * [-1, 1, 1] - right).max() < 0.01, (name, j)
+    assert sk["LeftHandThumb_End"][2] > 0.02 and sk["LeftHandPinky1"][2] < -0.02  # thumb forward
+    # wrists past the fingertips leave no hand to measure: no fingers, the rest of the rig is intact
+    bad = dict(markers, wrist_l=[markers["wrist_l"][0] * 1.6, markers["wrist_l"][1]],
+               wrist_r=[markers["wrist_r"][0] * 1.6, markers["wrist_r"][1]])
+    plain = build_skeleton(mesh.vertices, bad)
+    assert "LeftHandIndex1" not in plain.template.index and "Jaw" in plain.template.index
+    result = rig(geometry.mesh_to_glb(mesh), markers=bad, presets=["fist", "wave"])
+    assert len(gltf_json(result.glb)["skins"][0]["joints"]) == len(JOINTS) + 2
+
+
+def test_hand_clips_and_mocap_fingers():
+    from app.rigging.skeleton import FINGERS
+
+    mesh = humanoid(45)
+    sk = build_skeleton(mesh.vertices, estimate_markers(mesh))
+    index = sk.template.index
+
+    def reach(clip_name, side="Right"):  # fingertip distance to the wrist, relative to the rest pose
+        clip = preset_clip(sk, clip_name)
+        k = len(clip.times) // 2
+        pos = forward_kinematics(sk, clip.rotations[k], clip.hips_offset[k])
+        return {f: np.linalg.norm(pos[index[f"{side}Hand{f}_End"]] - pos[index[f"{side}Hand"]])
+                / np.linalg.norm(sk[f"{side}Hand{f}_End"] - sk[f"{side}Hand"]) for f in FINGERS}
+
+    fist, point, wave = reach("fist"), reach("point"), reach("wave")
+    assert all(fist[f] < 0.7 for f in ("Index", "Middle", "Ring", "Pinky"))
+    assert point["Index"] > 0.97 and point["Middle"] < 0.7
+    assert all(wave[f] > 0.97 for f in FINGERS)  # waving opens the hand
+    grab = preset_clip(sk, "grab")
+    curl = [np.linalg.norm(Rotation.from_quat(grab.rotations[i, index["RightHandMiddle2"]]).as_rotvec())
+            for i in range(len(grab.times))]
+    assert max(curl) > np.radians(80) and min(curl) < np.radians(5)  # opens, then closes on the object
+
+    # mocap without finger channels: fingers and jaw stay in the rest pose
+    clip = retarget_bvh(sk, make_bvh(sk))
+    still = [index[n] for n in sk.template.names if "Hand" in n and n[-1].isdigit() or n == "Jaw"]
+    assert np.allclose(np.abs(clip.rotations[:, still, 3]), 1.0)
+    # a full Mixamo-style finger chain is followed
+    bent = retarget_bvh(sk, make_bvh(sk, joints=sk.template.joints, bend={"LeftHandIndex2": 60}))
+    angle = np.linalg.norm(Rotation.from_quat(bent.rotations[1, index["LeftHandIndex2"]]).as_rotvec())
+    assert angle == pytest.approx(np.radians(60), abs=np.radians(3))
+    assert np.allclose(np.abs(bent.rotations[:, index["LeftHandMiddle2"], 3]), 1.0)
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("mixamorig:LeftHandIndex1", "LeftHandIndex1"), ("RightHandThumb3", "RightHandThumb3"),
+    ("l_pinky2", "LeftHandPinky2"), ("LThumb", None), ("LeftHand", None),
+])
+def test_finger_name_mapping(name, expected):
+    from app.rigging.animations import finger_name
+
+    assert finger_name(name) == expected
+
+
+def _painted_eyes(mesh, eyes):
+    import trimesh as _trimesh
+
+    colors = np.asarray(mesh.visual.vertex_colors).copy()
+    for x in eyes:
+        colors[np.linalg.norm(mesh.vertices - [x, 1.655, 0.12], axis=1) < 0.03, :3] = 20
+    mesh.visual = _trimesh.visual.ColorVisuals(mesh, vertex_colors=colors)
+    return mesh
+
+
+def test_face_blendshapes_and_clips():
+    import trimesh as _trimesh
+
+    plain = rig(geometry.mesh_to_glb(humanoid()), presets=["talk", "blink", "idle"])
+    gltf = gltf_json(plain.glb)
+    mesh = gltf["meshes"][0]
+    assert mesh["extras"]["targetNames"] == ["jawOpen", "smile"]  # no eyes to find: no blink
+    assert mesh["weights"] == [0.0, 0.0] and len(mesh["primitives"][0]["targets"]) == 2
+    paths = {a["name"]: [c["target"]["path"] for c in a["channels"]] for a in gltf["animations"]}
+    assert "weights" in paths["talk"] and "weights" not in paths["blink"] and "weights" not in paths["idle"]
+    talk = next(a for a in gltf["animations"] if a["name"] == "talk")
+    channel = next(c for c in talk["channels"] if c["target"]["path"] == "weights")
+    sampler = talk["samplers"][channel["sampler"]]
+    assert channel["target"]["node"] == 1  # the skinned "Character" node
+    assert gltf["accessors"][sampler["output"]]["count"] == 2 * gltf["accessors"][sampler["input"]]["count"]
+    jaw = gltf["accessors"][mesh["primitives"][0]["targets"][0]["POSITION"]]
+    assert "sparse" in jaw and jaw["sparse"]["count"] < jaw["count"] and jaw["min"][1] < -0.02  # the chin goes down
+    assert "Jaw" in plain.skeleton and plain.skeleton["Jaw"][1] > plain.skeleton["Head"][1]
+    _trimesh.load(io.BytesIO(plain.glb), file_type="glb")  # still a readable GLB
+
+    # the jawOpen offsets: lower face only, never above the mouth or on the body
+    sk = build_skeleton(humanoid().vertices, plain.markers)
+    from app.rigging.face import analyse_face
+
+    body = humanoid()
+    offsets = analyse_face(body.vertices, body.vertex_normals, None, sk).targets(body.vertices, body.vertex_normals)
+    moved = np.linalg.norm(offsets["jawOpen"], axis=1) > 1e-4
+    assert moved.sum() > 20 and body.vertices[moved, 1].min() > sk["Head"][1] - 0.05
+    assert body.vertices[moved, 1].max() < sk["Jaw"][1]
+
+    eyed = rig(geometry.mesh_to_glb(_painted_eyes(humanoid(), [0.04, -0.04])), presets=["blink"])
+    gltf = gltf_json(eyed.glb)
+    assert gltf["meshes"][0]["extras"]["targetNames"] == ["jawOpen", "blink_L", "blink_R", "smile"]
+    blink = gltf["animations"][0]
+    assert blink["channels"][-1]["target"]["path"] == "weights"
+
+
+def creature():
+    """One-eyed monster: a big round belly, short legs and long thin arms hanging close to it,
+    fused into one surface like generated meshes."""
+    import trimesh as _trimesh
+
+    from app.providers.mock import _limb
+
+    belly = _trimesh.creation.icosphere(4, radius=1.0)
+    belly.apply_scale((0.42, 0.42, 0.38))
+    belly.apply_translation((0, 0.98, 0))
+    head = _trimesh.creation.icosphere(3, radius=0.2)
+    head.apply_translation((0, 1.5, 0.02))
+    parts = [belly, head]
+    for side in (-1, 1):
+        parts += [_limb((0.16 * side, 0.7, 0), (0.18 * side, 0.32, 0), 0.08),
+                  _limb((0.18 * side, 0.32, 0), (0.18 * side, 0.07, 0), 0.065),
+                  _limb((0.3 * side, 1.28, 0), (0.55 * side, 1.02, 0), 0.06),
+                  _limb((0.55 * side, 1.02, 0), (0.58 * side, 0.6, 0), 0.05),
+                  _limb((0.58 * side, 0.6, 0), (0.6 * side, 0.45, 0), 0.045)]
+    fused = geometry.voxelize(_trimesh.util.concatenate(parts), 96)
+    fused.merge_vertices()
+    _trimesh.smoothing.filter_taubin(fused, iterations=12)
+    fused.apply_translation([0, -fused.vertices[:, 1].min(), 0])
+    markers = {"chin": [0, 1.33], "groin": [0, 0.68], "shoulder_l": [0.33, 1.26], "elbow_l": [0.55, 1.02],
+               "wrist_l": [0.58, 0.6], "knee_l": [0.18, 0.32], "ankle_l": [0.18, 0.07]}
+    markers |= {k[:-1] + "r": [-x, y] for k, (x, y) in markers.items() if k.endswith("_l")}
+    return fused, markers
+
+
+def test_wide_belly_is_not_dragged_by_the_arms():
+    from app.rigging.skinning import compute_skin
+
+    mesh, markers = creature()
+    sk = build_skeleton(mesh.vertices, markers)
+    weights = compute_skin(mesh, sk)
+    names = sk.template.deform
+    arm = [i for i, n in enumerate(names) if ("Arm" in n or "Hand" in n)]
+    trunk = [i for i, n in enumerate(names) if n in ("Hips", "Spine", "Spine1", "Spine2")]
+    legs = [i for i, n in enumerate(names) if "Leg" in n]
+    v = mesh.vertices
+    belly = (np.abs(v[:, 0]) > 0.2) & (np.abs(v[:, 0]) < 0.45) & (v[:, 1] > 0.7) & (v[:, 1] < 1.0)
+    arms = (np.abs(v[:, 0]) > 0.5) & (v[:, 1] > 0.5) & (v[:, 1] < 1.0)
+    from_arms = weights[belly][:, arm].sum(axis=1)
+    assert belly.sum() > 1000 and np.percentile(from_arms, 99) < 0.01 and (from_arms > 0.05).mean() < 0.005
+    assert weights[arms][:, trunk].sum(axis=1).max() < 0.02  # and the arms are not held by the spine
+    assert weights[belly][:, trunk].sum(axis=1).mean() > weights[belly][:, legs].sum(axis=1).mean()  # nor the legs
+    assert (weights > 0).sum(axis=1).max() <= 4

@@ -31,10 +31,11 @@ La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por
 
 **Personajes: rig y animación**
 - **Personaje completo en un clic**: texturas HD + PBR → esqueleto → animaciones elegidas.
-- Auto-rig de **humanos** (27 huesos con nombres Mixamo/Unity Humanoid) y de **cuadrúpedos** (perros, gatos, caballos…; 26 huesos), con detección automática.
+- Auto-rig de **humanos** (27 huesos con nombres Mixamo/Unity Humanoid, más **dedos** de 3 falanges colocados según la forma de la mano y **mandíbula**) y de **cuadrúpedos** (perros, gatos, caballos…; 26 huesos), con detección automática.
+- **Cara**: *blendshapes* procedurales (abrir la boca, sonrisa y parpadeo cuando se ven los ojos en el color o la textura), con clips Hablar y Parpadear; en Blender/FBX llegan como *shape keys*.
 - **Marcadores ajustables** estilo Mixamo (vista frontal para personas, lateral para animales).
-- Pesos por difusión de calor (*bone heat*), máximo 4 huesos por vértice; visor de huesos y mapa de pesos.
-- **650+ animaciones**: 14 procedurales, 6 andares de cuadrúpedo y una **biblioteca mocap de 639 clips** (CMU, en español e inglés) en 15 categorías con buscador; además tus propios **BVH**.
+- Pesos por difusión de calor (*bone heat*) con visibilidad: una barriga grande no se mueve con los brazos que cuelgan a su lado (criaturas, monstruos), máximo 4 huesos por vértice; visor de huesos y mapa de pesos.
+- **650+ animaciones**: 19 procedurales (también puño, señalar y agarrar con los dedos), 6 andares de cuadrúpedo y una **biblioteca mocap de 639 clips** (CMU, en español e inglés) en 15 categorías con buscador; además tus propios **BVH**.
 - El personaje riggeado conserva **todos los mapas PBR y tangentes** (validado con el validador oficial de Khronos: 0 errores, 0 avisos).
 
 **Exportar**
@@ -74,7 +75,6 @@ La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por
 ### Pendiente
 
 - Firma de código (Windows y Apple) para que no aparezcan avisos al instalar; versión para Mac Intel.
-- Rig de dedos y expresiones faciales (*blendshapes*).
 - Cuentas, galería pública y app móvil.
 
 ## Proveedores de IA
