@@ -1,6 +1,7 @@
 """The built-in local AI launcher: starts the GPU worker by itself and the local provider uses it."""
 
 import asyncio
+import shutil
 import socket
 import sys
 from pathlib import Path
@@ -226,3 +227,39 @@ def test_stale_worker_is_replaced(tmp_path, monkeypatch):
         asyncio.run(scenario())
     finally:
         old.stop()
+
+
+def test_python_from_a_plain_folder_when_windows_refuses_uvs_link(tmp_path, monkeypatch):
+    """uv can fail to link its Python on Windows (os error 448): the app uses that Python, moved to a
+    plain folder of its own, or python.org's package when there is none."""
+    ai = la.LocalAI(tmp_path, ROOT)
+    managed = ai.root / "python" / "cpython-3.11.17-windows-x86_64-none"
+    managed.mkdir(parents=True)
+    (managed / "python.exe").write_text("")
+    calls = []
+
+    async def fake_run(self, *argv, start=0, share=0, cwd=None):
+        calls.append(argv)
+        if argv[-1] == "3.11":
+            raise la.LocalAIError("Falló «Instalando Python»: error: Failed to create Python minor version link "
+                                  "directory (os error 448)")
+
+    monkeypatch.setattr(la.LocalAI, "_run", fake_run)
+    monkeypatch.setattr(la.LocalAI, "_uv", lambda self: "uv")
+    monkeypatch.setattr(la.sys, "platform", "win32")
+    asyncio.run(ai._step2(0, 0))
+    own = ai.root / "py311" / "python.exe"
+    assert calls[-1] == ("uv", "venv", str(ai.root / "venv"), "--python", str(own))
+    assert own.is_file() and not managed.exists()
+
+    # no copy from uv at all: python.org's package
+    shutil.rmtree(ai.root / "py311")
+    fetched = []
+
+    async def python_org(self):
+        fetched.append(True)
+        return self.root / "py311" / "python.exe"
+
+    monkeypatch.setattr(la.LocalAI, "_python_org", python_org)
+    asyncio.run(ai._step2(0, 0))
+    assert fetched and calls[-1][-1] == str(own)

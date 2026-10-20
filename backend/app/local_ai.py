@@ -8,6 +8,7 @@ starts by itself whenever a generation needs it: no scripts, no keys, no tokens.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -37,6 +38,9 @@ WHEELS_TAG = "ai-wheels-v1"
 HUNYUAN_ZIP = "https://github.com/Tencent/Hunyuan3D-2/archive/refs/heads/main.zip"
 HUNYUAN_PYPI = "hy3dgen==2.0.2"  # fallback when GitHub is unreachable (older, without FlashVDM)
 UV_URL = "https://github.com/astral-sh/uv/releases/latest/download/{asset}"
+# python.org's own full Python for Windows (with venv and pip), used when uv cannot set up its Python
+PY_NUGET = "https://api.nuget.org/v3-flatcontainer/python/3.11.9/python.3.11.9.nupkg"
+PY_NUGET_SHA256 = "9283876d58c017e0e846f95b490da3bca0fc0a6ee1134b2870677cfb7eec3c67"
 DEFAULT_PORT = 8001
 
 # best quality that still fits 8 GB of VRAM (the worker keeps one model on the GPU at a time)
@@ -83,6 +87,13 @@ def _digest(path: Path) -> str:
 
 def _folder_gb(path: Path) -> float:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 1024**3 if path.is_dir() else 0.0
+
+
+def _is_junction(path: Path) -> bool:
+    try:
+        return path.is_junction()  # Python 3.12+
+    except AttributeError:
+        return False
 
 
 class LocalAIError(Exception):
@@ -310,8 +321,54 @@ class LocalAI:
         return str(local) if local.is_file() else None
 
     async def _step2(self, start, share):  # Python 3.11
-        if not self.python.is_file():
-            await self._run(self._uv(), "venv", str(self.root / "venv"), "--python", "3.11", start=start)
+        if self.python.is_file():
+            return
+        venv = self.root / "venv"
+        try:
+            await self._run(self._uv(), "venv", str(venv), "--python", "3.11", start=start)
+            return
+        except LocalAIError as exc:
+            if sys.platform != "win32":
+                raise
+            # Windows can refuse the folder link uv makes for its Python ("untrusted mount point",
+            # os error 448): use a Python from a plain folder of ours instead
+            log.warning("uv no pudo preparar su Python (%s); se usa una copia propia", exc)
+        base = self._own_python() or await self._python_org()
+        shutil.rmtree(venv, ignore_errors=True)
+        await self._run(self._uv(), "venv", str(venv), "--python", str(base), start=start)
+
+    def _own_python(self) -> Path | None:
+        """Python 3.11 in ai/py311: the copy uv already downloaded, moved out of uv's own folder."""
+        target = self.root / "py311"
+        if (target / "python.exe").is_file():
+            return target / "python.exe"
+        for folder in sorted((self.root / "python").glob("cpython-3.11.*"), reverse=True):
+            if folder.is_dir() and not folder.is_symlink() and not _is_junction(folder) \
+                    and (folder / "python.exe").is_file():
+                shutil.rmtree(target, ignore_errors=True)
+                shutil.move(str(folder), str(target))
+                return target / "python.exe"
+        return None
+
+    async def _python_org(self) -> Path:
+        self._say("Descargando Python 3.11 (python.org)…")
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=600) as client:
+                resp = await client.get(PY_NUGET)
+                resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise LocalAIError(f"No se pudo descargar Python 3.11: {exc}") from exc
+        if hashlib.sha256(resp.content).hexdigest() != PY_NUGET_SHA256:
+            raise LocalAIError("La descarga de Python 3.11 llegó dañada: vuelve a intentarlo")
+        target = self.root / "py311"
+        shutil.rmtree(target, ignore_errors=True)
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            for name in zf.namelist():
+                if name.startswith("tools/") and not name.endswith("/"):
+                    dest = target / name[len("tools/"):]
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(zf.read(name))
+        return target / "python.exe"
 
     async def _step3(self, start, share):  # PyTorch
         await self._run(self._uv(), "pip", "install", "--python", str(self.python), *TORCH_PKGS,

@@ -306,4 +306,7 @@ class FalProvider:
             detail = resp.json().get("detail", resp.text)
         except ValueError:
             detail = resp.text
+        if resp.status_code == 403 and "balance" in str(detail).lower():
+            raise GenerationError("Se acabó el saldo de fal.ai (nube). Usa la IA gratis de tu tarjeta gráfica: "
+                                  "Ajustes → «Mi GPU · gratis»")
         raise GenerationError(f"fal.ai ({model}) respondió {resp.status_code}: {str(detail)[:300]}")

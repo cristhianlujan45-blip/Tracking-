@@ -127,6 +127,10 @@ const EN = {
   "{d} de {n} listas": "{d} of {n} ready", "Compara y quédate con una": "Compare them and keep one",
   "Variante {n}": "Variant {n}", "¿Quedarte con esta variante y borrar las otras {n}?": "Keep this variant and delete the other {n}?",
   "Variante elegida": "Variant kept",
+  "Descargando Python 3.11 (python.org)…": "Downloading Python 3.11 (python.org)…",
+  "La descarga de Python 3.11 llegó dañada: vuelve a intentarlo": "The Python 3.11 download arrived damaged: try again",
+  "Se acabó el saldo de fal.ai (nube). Usa la IA gratis de tu tarjeta gráfica: Ajustes → «Mi GPU · gratis»":
+    "Your fal.ai (cloud) balance ran out. Use the free AI on your graphics card: Settings → “My GPU · free”",
   "Animar · 4k": "Animate · 4k", "Editar · 10k": "Edit · 10k", "Esculpir · 25k": "Sculpt · 25k",
   "Solo quads, bien repartidos y con la textura del original en un mapa UV limpio. Exporta en OBJ, FBX o .blend (o usa el complemento de Blender) para conservar los quads.":
     "Quads only, evenly spread, with the original's texture on a clean UV map. Export as OBJ, FBX or .blend (or use the Blender add-on) to keep the quads.",
