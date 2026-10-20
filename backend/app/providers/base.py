@@ -43,6 +43,8 @@ class GenerationResult:
     # and the (azimuth, elevation) they were actually seen from when not square on the axes
     views: dict[str, bytes] = field(default_factory=dict)
     view_poses: dict[str, tuple[float, float]] = field(default_factory=dict)
+    # the input pictures as clean cut-outs (same order), so painting uses the exact mask the shape saw
+    inputs: list[bytes] = field(default_factory=list)
 
 
 class GenerationError(Exception):

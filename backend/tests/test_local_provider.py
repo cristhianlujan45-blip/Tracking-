@@ -60,7 +60,7 @@ def test_config_reports_worker(client):
     assert cfg["provider"] == "local"
     assert cfg["provider_info"]["gpu"] == "ninguna (dummy)"
     assert set(cfg["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth", "upscale",
-                                        "views"}
+                                        "views", "cutout"}
 
 
 def test_text_to_3d_keeps_reference_image(client):

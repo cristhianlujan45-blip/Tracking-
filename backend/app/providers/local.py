@@ -110,6 +110,11 @@ class LocalProvider:
                 span = (15, 97)
             if not images:
                 raise GenerationError("No hay imagen de entrada")
+            inputs = []
+            if "cutout" in self.capabilities:  # one clean background removal for both shape and painting
+                await on_progress(span[0], "Recortando el fondo")
+                inputs = [await self._cutout(client, i.data) for i in images]
+                images = [InputImage(data, "image/png") for data in inputs]
             payload = {"images": [_b64(i.data) for i in images], "seed": req.seed % 2**32, "quality": req.quality}
             views, poses = {}, {}
             if len(images) == 1 and {"views", "multi_image"} <= self.capabilities:
@@ -123,7 +128,8 @@ class LocalProvider:
                 span = (span[0] + 10, span[1])
             glb = await self._run_task(client, payload, on_progress, span)
         return GenerationResult(model_glb=glb, reference_image=reference, views=views, view_poses=poses,
-                                extra_files={f"view_{role}.png": data for role, data in views.items()})
+                                extra_files={f"view_{role}.png": data for role, data in views.items()},
+                                inputs=inputs)
 
     async def generate_images(self, req: GenerationRequest, count: int) -> list[bytes]:
         await self._ready()
@@ -137,6 +143,13 @@ class LocalProvider:
             image = (await self._images(client, req, 1))[0]
             payload = {"kind": "texture", "images": [_b64(image)], "mesh_glb": _b64(glb), "seed": req.seed % 2**32}
             return await self._run_task(client, payload, on_progress, (15, 97))
+
+    async def _cutout(self, client: httpx.AsyncClient, data: bytes) -> bytes:
+        try:
+            resp = await self._call(client.post("/cutout", json={"image": _b64(data)}, timeout=300))
+            return base64.b64decode(resp.json()["image"])
+        except GenerationError:  # an older worker or a failed cut: the shape step removes it again
+            return data
 
     async def chat(self, messages: list[dict], max_tokens: int = 400) -> str:
         """The worker's small text model (assistant without a key). Does not start the worker."""

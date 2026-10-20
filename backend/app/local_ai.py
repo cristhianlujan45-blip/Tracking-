@@ -74,6 +74,12 @@ def _driver_version(line: str) -> tuple[int, int] | None:
         return None
 
 
+def _digest(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+
+
 def _folder_gb(path: Path) -> float:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 1024**3 if path.is_dir() else 0.0
 
@@ -323,12 +329,37 @@ class LocalAI:
                     zf.extractall(vendor)
             except (httpx.HTTPError, zipfile.BadZipFile) as exc:
                 self._say(f"GitHub no disponible ({exc.__class__.__name__}): se usa {HUNYUAN_PYPI} de PyPI")
+        self._copy_worker()
+        await self._install_packages(start)
+
+    async def _install_packages(self, start: int = 0) -> None:
+        source = self.root / "vendor" / "Hunyuan3D-2-main"
         hunyuan = str(source) if (source / "setup.py").is_file() else HUNYUAN_PYPI
-        worker_src = self.resources / "gpu_worker"
-        shutil.copytree(worker_src / "worker", self.root / "worker", dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns("__pycache__"))
+        requirements = self.resources / "gpu_worker" / "requirements.txt"
         await self._run(self._uv(), "pip", "install", "--python", str(self.python), hunyuan,
-                        "-r", str(worker_src / "requirements.txt"), *TORCH_PKGS, start=start)  # keep the CUDA torch
+                        "-r", str(requirements), *TORCH_PKGS, start=start)  # keep the CUDA torch
+        (self.root / "requirements.sha").write_text(_digest(requirements), encoding="utf-8")
+
+    def _copy_worker(self) -> None:
+        shutil.copytree(self.resources / "gpu_worker" / "worker", self.root / "worker", dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+
+    async def _refresh(self) -> None:
+        """After an app update: the worker code always matches the app, and new dependencies get installed."""
+        if self._python or not self.installed or not (self.resources / "gpu_worker" / "worker").is_dir():
+            return
+        self._copy_worker()
+        requirements = self.resources / "gpu_worker" / "requirements.txt"
+        stamp = self.root / "requirements.sha"
+        current = stamp.read_text(encoding="utf-8").strip() if stamp.is_file() else ""
+        if current != _digest(requirements) and self._uv():
+            self.step = "Actualizando la IA local"
+            try:
+                await self._install_packages()
+            except LocalAIError:
+                log.exception("No se pudieron actualizar los paquetes de la IA local")
+            finally:
+                self.step = ""
 
     async def _step5(self, start, share):  # torch must still be the CUDA build
         check = ("import torch,sys; ok=torch.cuda.is_available() and torch.version.cuda is not None; "
@@ -402,6 +433,7 @@ class LocalAI:
         async with self._lock:
             if await self.healthy():  # ours, or one started by hand (iniciar.bat -SoloWorker)
                 return self.url
+            await self._refresh()
             self.start()
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:

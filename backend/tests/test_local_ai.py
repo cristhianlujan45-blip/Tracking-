@@ -178,3 +178,22 @@ def test_ai_textures_toggle(tmp_path):
         assert body["ai_textures"] and "--texture" in ai.args()
         assert not client.put("/api/local-ai/textures", params={"enabled": False}).json()["ai_textures"]
         assert "--texture" not in ai.args()
+
+
+def test_refresh_syncs_worker_code_and_reinstalls_changed_requirements(tmp_path, monkeypatch):
+    ai = la.LocalAI(tmp_path, ROOT)
+    ai.root.mkdir(parents=True)
+    (ai.root / "uv").mkdir()
+    (ai.root / "uv" / ("uv.exe" if sys.platform == "win32" else "uv")).write_text("")
+    monkeypatch.setattr(la.LocalAI, "installed", property(lambda self: True))
+    installs = []
+
+    async def fake_install(self, start=0):
+        installs.append(1)
+        (self.root / "requirements.sha").write_text(la._digest(ROOT / "gpu_worker" / "requirements.txt"))
+
+    monkeypatch.setattr(la.LocalAI, "_install_packages", fake_install)
+    asyncio.run(ai._refresh())
+    assert (ai.root / "worker" / "backends.py").is_file() and installs == [1]
+    asyncio.run(ai._refresh())  # nothing changed: no reinstall
+    assert installs == [1]

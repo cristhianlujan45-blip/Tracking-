@@ -163,6 +163,20 @@ def create_app(backend: Backend, token: str | None = None) -> FastAPI:
             raise HTTPException(500, friendly_error(exc)) from exc
         return {"images": [base64.b64encode(png_bytes(img)).decode() for img in result]}
 
+    @app.post("/cutout")
+    async def cutout(body: DepthIn):
+        """Background removal (BiRefNet + clean-up): the app paints with the same mask the shape used."""
+        if "cutout" not in backend.capabilities():
+            raise HTTPException(400, "Este worker no recorta fondos")
+        image = decode_image(body.image)
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(gpu, backend.cutout, image)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Recorte falló")
+            raise HTTPException(500, friendly_error(exc)) from exc
+        return {"image": base64.b64encode(png_bytes(result)).decode()}
+
     @app.post("/chat")
     async def chat(body: ChatIn):
         if "chat" not in backend.capabilities():

@@ -9,3 +9,4 @@ transformers>=4.46,<5   # 5.x renames DINOv2 layers and Hunyuan3D-2 no longer lo
 accelerate>=1.0
 spandrel>=0.4      # Real-ESRGAN para ampliar texturas
 sentencepiece>=0.2  # traductor español → inglés de los prompts (Opus-MT)
+rembg[cpu]>=2.0.57  # quitar fondos con BiRefNet (MIT)

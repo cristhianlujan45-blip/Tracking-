@@ -190,7 +190,7 @@ def _back_from_front(front: Image.Image) -> Image.Image:
 
 def _prepare(mesh: trimesh.Trimesh, views: dict[str, Image.Image], mirror_side: bool, depth_res: int,
              trust: dict[str, float] | None = None, poses: dict[str, tuple[float, float]] | None = None) -> list[_View]:
-    views = {k: v for k, v in views.items() if k in VIEWS and v is not None}
+    views = {k: v for k, v in views.items() if k in VIEWS and v is not None and _has_silhouette(v)}
     if not views:
         raise ProjectionError("Hacen falta vistas (frente, lateral o espalda) para texturizar")
     trust, poses = dict(trust or {}), dict(poses or {})
@@ -208,6 +208,11 @@ def _prepare(mesh: trimesh.Trimesh, views: dict[str, Image.Image], mirror_side: 
     size = float(np.ptp(verts, axis=0).max())
     return [_View(name, image, verts, size, depth_res, trust.get(name, 1.0), poses.get(name))
             for name, image in views.items()]
+
+
+def _has_silhouette(image: Image.Image) -> bool:
+    """A picture whose background removal left nothing cannot paint anything."""
+    return (np.asarray(image.convert("RGBA"))[..., 3] > 128).mean() > 0.002
 
 
 def _blend(prepared: list[_View], points: np.ndarray, normals: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

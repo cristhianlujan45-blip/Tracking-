@@ -37,7 +37,7 @@ def test_health(client):
     body = client.get("/health").json()
     assert body["backend"] == "dummy"
     assert set(body["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth", "upscale",
-                                        "views"}
+                                        "views", "cutout"}
 
 
 def test_images(client):
@@ -152,3 +152,18 @@ def test_frame_centres_the_cut_out():
     x0, y0, x1, y1 = framed.getchannel("A").point(lambda a: 255 if a > 128 else 0).getbbox()
     assert abs((x0 + x1) / 2 - 160) <= 2 and abs((y0 + y1) / 2 - 160) <= 2
     assert abs((y1 - y0) - 0.85 * 320) <= 3
+
+
+def test_clean_cutout_drops_specks_and_fills_pinholes():
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    from worker.backends import clean_cutout
+
+    img = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse([40, 30, 160, 190], fill=(200, 50, 50, 255))   # the subject
+    d.ellipse([95, 100, 99, 104], fill=(0, 0, 0, 0))        # a pinhole in the mask
+    d.rectangle([5, 5, 8, 8], fill=(90, 90, 90, 255))       # a speck of background
+    alpha = np.asarray(clean_cutout(img))[:, :, 3]
+    assert alpha[6, 6] == 0 and alpha[102, 97] == 255 and alpha[110, 100] == 255

@@ -119,6 +119,7 @@ class DummyBackend:
             caps.add("views")
         if self.chat_enabled:
             caps.add("chat")
+        caps.add("cutout")
         return caps
 
     def novel_views(self, image: Image.Image, quality: str = "standard") -> dict[str, Image.Image]:
@@ -133,6 +134,16 @@ class DummyBackend:
 
     def info(self) -> dict:
         return {"gpu": "ninguna (dummy)", "vram_gb": 0, "models": ["dummy"]}
+
+    def cutout(self, image: Image.Image) -> Image.Image:
+        """Pixels close to the corner colour become transparent (enough for tests)."""
+        rgba = np.array(image.convert("RGBA"))
+        corner = rgba[0, 0, :3].astype(int)
+        background = np.abs(rgba[:, :, :3].astype(int) - corner).sum(2) < 30
+        if background.all():  # a flat picture: nothing to cut
+            return image.convert("RGBA")
+        rgba[background, 3] = 0
+        return Image.fromarray(rgba, "RGBA")
 
     def chat(self, messages: list[dict], max_tokens: int = 400) -> str:
         """Echoes the request as a 'create' action, in the JSON shape the app's assistant expects."""
@@ -193,8 +204,9 @@ class DummyBackend:
 # quality -> (diffusion steps, octree resolution, max faces after reduction)
 HUNYUAN_QUALITY = {
     "draft": (15, 256, 20_000),
-    "standard": (30, 320, 40_000),
-    "high": (50, 380, 80_000),
+    "standard": (30, 384, 50_000),
+    # FlashVDM decodes a 512 grid within 8 GB; out-of-memory falls back to the light model
+    "high": (50, 512, 100_000),
 }
 
 
@@ -246,7 +258,11 @@ class HunyuanBackend:
             caps.add("views")
         if self.chat_model:
             caps.add("chat")
+        caps.add("cutout")
         return caps
+
+    def cutout(self, image: Image.Image) -> Image.Image:
+        return self._remove_background(image)
 
     def info(self) -> dict:
         import torch
@@ -397,13 +413,14 @@ class HunyuanBackend:
             return text
 
     def _remove_background(self, img: Image.Image) -> Image.Image:
-        if self._rembg is None:
-            from hy3dgen.rembg import BackgroundRemover
-
-            self._rembg = BackgroundRemover()
         img = img.convert("RGBA")
-        alpha = np.asarray(img)[:, :, 3]
-        return img if alpha.min() < 250 else self._rembg(img.convert("RGB"))  # keep existing cut-outs
+        if np.asarray(img)[:, :, 3].min() < 250:  # already a cut-out: keep it
+            return clean_cutout(img)
+        from rembg import remove
+
+        if self._rembg is None:
+            self._rembg = background_session()
+        return clean_cutout(remove(img.convert("RGB"), session=self._rembg, post_process_mask=True).convert("RGBA"))
 
     # ------------------------------------------------------------ tasks
 
@@ -463,6 +480,7 @@ class HunyuanBackend:
         mesh = FloaterRemover()(mesh)
         mesh = DegenerateFaceRemover()(mesh)
         mesh = FaceReducer()(mesh, max_facenum=max_faces)
+        mesh = tidy_mesh(mesh)
 
         if self.texture and job.quality != "draft":
             progress(85, "Texturizando (puede tardar)")
@@ -586,6 +604,61 @@ def total_ram_gb() -> float:
         return 0.0
 
 
+BACKGROUND_MODEL = "birefnet-general"  # sharper edges than U²-Net (hair, fingers, holes); runs on the CPU
+
+
+def background_session():
+    """BiRefNet through rembg, falling back to U²-Net when it is not available."""
+    from rembg import new_session
+
+    try:
+        return new_session(BACKGROUND_MODEL)
+    except Exception:  # noqa: BLE001 - older rembg or download problem
+        log.exception("BiRefNet no disponible; se usa U²-Net")
+        return new_session("u2net")  # explicit: newer rembg defaults to a non-commercial model
+
+
+def clean_cutout(img: Image.Image) -> Image.Image:
+    """Keep the subject only: drop specks and shadows detached from it and fill pinholes in the mask,
+    so the 3D model gets no floating bits or holes from a noisy background removal."""
+    try:
+        import cv2
+    except ImportError:
+        return img
+    rgba = np.array(img.convert("RGBA"))
+    mask = (rgba[:, :, 3] > 127).astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if count <= 1:
+        return img
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    keep = np.zeros(count, bool)
+    keep[1:] = areas >= 0.03 * areas.max()  # the subject and big parts of it (e.g. a separate weapon)
+    subject = keep[labels]
+    # holes completely enclosed by the subject smaller than 0.2 % of the picture are mask errors
+    holes = (~subject).astype(np.uint8)
+    hcount, hlabels, hstats, _ = cv2.connectedComponentsWithStats(holes, connectivity=4)
+    border = set(np.unique(np.concatenate([hlabels[0], hlabels[-1], hlabels[:, 0], hlabels[:, -1]])))
+    small = [i for i in range(1, hcount) if i not in border and hstats[i, cv2.CC_STAT_AREA] < 0.002 * mask.size]
+    fill = np.isin(hlabels, small)
+    alpha = rgba[:, :, 3].astype(np.float32)
+    alpha[~(subject | fill)] = 0
+    alpha[fill] = 255
+    rgba[:, :, 3] = alpha.astype(np.uint8)
+    return Image.fromarray(rgba, "RGBA")
+
+
+def tidy_mesh(mesh):
+    """Consistent outward normals and small holes closed (cleaner shading, prints and rigging)."""
+    import trimesh
+
+    try:
+        trimesh.repair.fix_normals(mesh)
+        trimesh.repair.fill_holes(mesh)
+    except Exception:  # noqa: BLE001 - cosmetic: the mesh is usable as it is
+        log.exception("No se pudo ordenar la malla")
+    return mesh
+
+
 def _is_oom(exc: Exception) -> bool:
     return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
 
@@ -675,11 +748,9 @@ def prefetch(shape_model: str, shape_subfolder: str, image_model: str, depth_mod
         jobs.append(("Zero123++", lambda: [snapshot_download(r) for r in (NOVEL_VIEW_PIPELINE, NOVEL_VIEW_MODEL)]))
 
     def rembg():
-        from hy3dgen.rembg import BackgroundRemover
+        background_session()
 
-        BackgroundRemover()
-
-    jobs += [("U²-Net", rembg), ("Real-ESRGAN", esrgan_weights),
+    jobs += [("BiRefNet", rembg), ("Real-ESRGAN", esrgan_weights),
              ("Opus-MT es→en", lambda: snapshot_download(
                  TRANSLATOR, allow_patterns=["*.json", "*.spm", "*.txt", "*.bin", "*.safetensors"]))]
     if chat_model:
