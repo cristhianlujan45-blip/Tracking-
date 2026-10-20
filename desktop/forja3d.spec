@@ -11,6 +11,7 @@ ICON = ROOT / "desktop" / "assets" / ("forja3d.ico" if sys.platform == "win32" e
 datas = [
     (str(ROOT / "frontend"), "frontend"),
     (str(ROOT / "integrations" / "blender" / "forja3d_blender.py"), "integrations/blender"),
+    (str(ROOT / "integrations" / "mcp" / "forja3d_mcp.py"), "integrations/mcp"),
     # run by Blender as a script, so it must exist as a real .py file
     (str(ROOT / "backend" / "app" / "blender_convert.py"), "app"),
     (str(ROOT / "backend" / "app" / "rigging" / "mocap" / "cmu.zip"), "app/rigging/mocap"),

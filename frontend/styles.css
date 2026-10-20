@@ -260,6 +260,7 @@ textarea#prompt { font-size: 15px; border-left: 3px solid var(--sakura); }
 .wide { width: 100%; margin-top: 8px; }
 .link { background: none; border: 0; color: var(--cyan); cursor: pointer; padding: 6px 0; font-size: 13px; text-decoration: none; }
 .link:hover { color: var(--sakura-2); }
+.mcp-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .icon { background: none; border: 0; cursor: pointer; font-size: 18px; color: var(--muted); padding: 2px 4px; }
 .icon:hover, .icon.on { color: var(--yellow); text-shadow: 0 0 10px rgba(255, 210, 63, .6); }
 .error { color: var(--danger); margin: 8px 0 0; font-weight: 600; }

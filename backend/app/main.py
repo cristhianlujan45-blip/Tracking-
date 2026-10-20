@@ -40,6 +40,7 @@ from .styles import POSES, STYLES
 RESOURCES = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
 FRONTEND_DIR = RESOURCES / "frontend"
 BLENDER_ADDON = RESOURCES / "integrations" / "blender" / "forja3d_blender.py"
+MCP_SERVER = RESOURCES / "integrations" / "mcp" / "forja3d_mcp.py"
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 MIME_BY_EXT = {ext: mime for mime, ext in IMAGE_TYPES.items()}
 GENERATIVE_MODES = ("text", "image", "multi_image")
@@ -434,6 +435,45 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         source = source.replace('DEFAULT_SERVER = "http://localhost:8000"', f'DEFAULT_SERVER = "{base}"', 1)
         return Response(source, media_type="text/x-python",
                         headers={"Content-Disposition": 'attachment; filename="forja3d_blender.py"'})
+
+    def mcp_script(request: Request) -> str:
+        if not MCP_SERVER.is_file():
+            raise HTTPException(404, "Servidor MCP no disponible")
+        source = MCP_SERVER.read_text(encoding="utf-8")
+        base = str(request.base_url).rstrip("/").replace('"', "")
+        return source.replace('DEFAULT_URL = "http://127.0.0.1:8000"', f'DEFAULT_URL = "{base}"', 1)
+
+    @app.get("/api/integrations/mcp")
+    async def mcp_server(request: Request):
+        """MCP server (stdio) for Claude Code, Cursor or Claude Desktop, preconfigured with this app's address."""
+        return Response(mcp_script(request), media_type="text/x-python",
+                        headers={"Content-Disposition": 'attachment; filename="forja3d_mcp.py"'})
+
+    @app.get("/api/integrations/mcp/setup")
+    async def mcp_setup(request: Request):
+        """Commands to register the MCP server. On this computer the script is also saved to the data folder,
+        so the command works as is; from another machine, download it and use its path."""
+        source = mcp_script(request)
+        host = request.client.host if request.client else ""
+        installed = host in ("127.0.0.1", "::1", "localhost", "testclient")
+        if installed:
+            target = request.app.state.settings.data_dir / "integrations" / "forja3d_mcp.py"
+            if not target.is_file() or target.read_text(encoding="utf-8") != source:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(source, encoding="utf-8")
+            path = str(target.resolve())
+        else:
+            path = "/ruta/a/forja3d_mcp.py"
+        arg = f'"{path}"' if " " in path else path
+        return {
+            "path": path,
+            "installed": installed,
+            "script_url": str(request.base_url).rstrip("/") + "/api/integrations/mcp",
+            "requires": "uv: https://docs.astral.sh/uv/",
+            "claude_code": f"claude mcp add forja3d -- uv run {arg}",
+            "json_config": {"mcpServers": {"forja3d": {"command": "uv", "args": ["run", path]}}},
+            "config_files": {"cursor": "~/.cursor/mcp.json", "claude_desktop": "claude_desktop_config.json"},
+        }
 
     # ------------------------------------------------------------ settings (desktop app)
 

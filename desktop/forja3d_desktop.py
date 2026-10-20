@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import argparse
+import atexit
+import json
 import logging
 import os
 import socket
@@ -51,6 +53,25 @@ def wait_ready(url: str, timeout: float = 60) -> bool:
     return False
 
 
+def announce(home: Path, url: str) -> None:
+    """Tell external tools (the MCP server for Claude Code / Cursor) where the app is listening."""
+    path = home / "server.json"
+    try:
+        path.write_text(json.dumps({"url": url, "pid": os.getpid()}), encoding="utf-8")
+    except OSError:
+        logging.exception("No se pudo escribir %s", path)
+        return
+
+    def forget():
+        try:  # only our own address: another instance may have started since
+            if json.loads(path.read_text(encoding="utf-8")).get("url") == url:
+                path.unlink()
+        except (OSError, ValueError):
+            pass
+
+    atexit.register(forget)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=APP_NAME)
     parser.add_argument("--server", action="store_true", help="run without a window")
@@ -83,6 +104,7 @@ def main() -> None:
     thread.start()
     if not wait_ready(url):
         raise SystemExit(f"{APP_NAME} no pudo arrancar (ver {home / 'forja3d.log'})")
+    announce(home, url)
 
     if args.server:
         print(f"{APP_NAME} listo en {url}", flush=True)
