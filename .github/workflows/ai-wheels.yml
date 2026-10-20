@@ -38,6 +38,9 @@ jobs:
           python -m pip install --upgrade pip wheel setuptools ninja
           python -m pip install "torch==$env:TORCH" --index-url https://download.pytorch.org/whl/cu128
           git clone --depth 1 https://github.com/Tencent/Hunyuan3D-2 hy
+          # torch/extension.h pulls compiled-autograd headers that MSVC cannot compile through nvcc
+          # ("'std': ambiguous symbol"); the CUDA file only needs the tensor API
+          python -c "p='hy/hy3dgen/texgen/custom_rasterizer/lib/custom_rasterizer_kernel/rasterizer.h'; s=open(p).read(); s=s.replace('#include <torch/extension.h>', '#ifdef __CUDACC__\n#include <torch/types.h>\n#else\n#include <torch/extension.h>\n#endif', 1); open(p,'w').write(s)"
           cd hy/hy3dgen/texgen/custom_rasterizer
           python setup.py bdist_wheel
           New-Item -ItemType Directory -Force ../../../../wheels | Out-Null
