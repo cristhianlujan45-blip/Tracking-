@@ -174,6 +174,7 @@ class LocalAI:
             raise LocalAIError("No se encontró una tarjeta NVIDIA con su driver instalado: actualiza el driver "
                                "(nvidia.com/drivers) y vuelve a intentarlo")
         self.error, self.progress = "", 0
+        self.root.mkdir(parents=True, exist_ok=True)  # every step runs inside it
         self.task = asyncio.create_task(self._install())
 
     async def _install(self) -> None:
@@ -196,9 +197,11 @@ class LocalAI:
         """Run a command, keep its output in the log; `@@ pct text` lines move the progress bar.
         A thread instead of asyncio subprocesses: works with any event loop (Windows included)."""
         self._say("$ " + " ".join(Path(a).name if i == 0 else a for i, a in enumerate(argv)))
+        workdir = cwd or self.root
+        workdir.mkdir(parents=True, exist_ok=True)  # Windows refuses to start a process in a missing folder
 
         def run() -> int:
-            proc = subprocess.Popen(argv, cwd=cwd or self.root, env=self.env(), stdout=subprocess.PIPE,
+            proc = subprocess.Popen(argv, cwd=workdir, env=self.env(), stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **_no_window())
             assert proc.stdout is not None
             buffer = b""

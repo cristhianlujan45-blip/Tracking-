@@ -86,3 +86,35 @@ def test_install_needs_an_nvidia_gpu(tmp_path, monkeypatch):
                 break
             asyncio.run(asyncio.sleep(0.05))
         assert "Instalar" in job["error"]
+
+
+def test_install_runs_in_a_fresh_data_folder(tmp_path, monkeypatch):
+    """First run on a new PC: the AI folder does not exist yet when the first step starts."""
+    smi = tmp_path / "bin" / "nvidia-smi"
+    smi.parent.mkdir()
+    smi.write_text(f"#!{sys.executable}\nprint('NVIDIA GeForce RTX 5060 Laptop GPU, 8151 MiB, 580.00')\n")
+    smi.chmod(0o755)
+    monkeypatch.setattr(la, "find_nvidia_smi", lambda: str(smi))
+    ai = la.LocalAI(tmp_path / "nueva carpeta", ROOT)
+    assert not ai.root.exists()
+    venv_python = ai.python
+
+    async def fake_step(self, start, share):
+        venv_python.parent.mkdir(parents=True, exist_ok=True)
+        venv_python.touch()
+
+    for i in range(1, len(la.STEPS)):  # downloads and installs are simulated; step 0 runs for real
+        monkeypatch.setattr(la.LocalAI, f"_step{i}", fake_step)
+
+    async def no_start(self, timeout=600):
+        return self.url
+
+    monkeypatch.setattr(la.LocalAI, "ensure_running", no_start)
+
+    async def scenario():
+        ai.start_install()
+        await ai.task
+
+    asyncio.run(scenario())
+    assert ai.error == "" and ai.progress == 100 and ai.installed, (ai.error, list(ai.log))
+    assert any("RTX 5060" in line for line in ai.log)
