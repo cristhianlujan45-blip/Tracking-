@@ -50,7 +50,7 @@ def test_mcp_script_download(client):
     assert resp.status_code == 200
     assert 'filename="forja3d_mcp.py"' in resp.headers["content-disposition"]
     assert 'DEFAULT_URL = "http://testserver"' in resp.text
-    assert "# /// script" in resp.text and '"mcp>=1.2"' in resp.text
+    assert "# /// script" in resp.text and '"mcp>=1.10"' in resp.text
     compile(resp.text, "forja3d_mcp.py", "exec")  # valid Python
 
 

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["mcp>=1.2", "httpx>=0.27"]
+# dependencies = ["mcp>=1.10", "httpx>=0.27"]
 # ///
 """Forja3D para Claude Code, Cursor y Claude Desktop: servidor MCP (stdio) que maneja tu app Forja3D.
 

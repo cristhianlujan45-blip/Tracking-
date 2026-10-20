@@ -1,3 +1,3 @@
 -r requirements.txt
 pytest>=8
-mcp>=1.2  # tests of integrations/mcp (skipped without it)
+mcp>=1.10  # tests of integrations/mcp (skipped without it)
