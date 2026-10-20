@@ -250,31 +250,6 @@ def _quiet_stdout():
         os.close(saved)
 
 
-def quad_remesh(glb: bytes, target_faces: int = 5000) -> tuple[bytes, bytes]:
-    """Instant Meshes field-aligned remesh into pure quads: (triangulated GLB, quad OBJ)."""
-    import pynanoinstantmeshes
-
-    mesh = to_color_mesh(load_scene(glb))
-    mesh.merge_vertices()
-    target = int(np.clip(target_faces, 200, 400_000))
-    with _quiet_stdout():
-        verts, quads = pynanoinstantmeshes.remesh(
-            np.asarray(mesh.vertices, dtype=np.float32), np.asarray(mesh.faces, dtype=np.uint32),
-            max(target // 4, 50), rosy=4, posy=4, deterministic=True)
-    verts, quads = np.asarray(verts, dtype=float), np.asarray(quads, dtype=np.int64)
-    if not len(quads):
-        raise GeometryError("No se pudo generar la malla de quads (¿modelo demasiado pequeño o roto?)")
-    colors = transfer_colors(mesh, mesh, points=verts)
-    tris = np.vstack([quads[:, [0, 1, 2]], quads[:, [0, 2, 3]]])
-    out = trimesh.Trimesh(verts, tris, process=False)
-    out.visual = trimesh.visual.ColorVisuals(out, vertex_colors=colors)
-    lines = ["# Forja3D quad remesh (Instant Meshes)"]
-    lines += [f"v {x:.6f} {y:.6f} {z:.6f} {r / 255:.4f} {g / 255:.4f} {b / 255:.4f}"
-              for (x, y, z), (r, g, b, _a) in zip(verts, colors)]
-    lines += [f"f {a + 1} {b + 1} {c + 1} {d + 1}" for a, b, c, d in quads]
-    return mesh_to_glb(out), ("\n".join(lines) + "\n").encode()
-
-
 def apply_style(glb: bytes, style: str) -> bytes:
     """Styles that are guaranteed by geometry, not only by the prompt."""
     if style not in ("lowpoly", "voxel", "sculpture"):

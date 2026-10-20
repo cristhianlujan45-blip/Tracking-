@@ -622,7 +622,8 @@ async function showModel(job) {
     [...$("#mapView").options].forEach((o) => (o.hidden = !!o.value && !maps.includes(o.value)));
     updateEnhance();
     renderFlow(job);
-    if (!job.thumbnail_url) setTimeout(() => uploadThumbnail(job.id), 700);
+    // auto=1: the server's quick preview of a variant, replaced by the viewer's own picture
+    if (!job.thumbnail_url || job.thumbnail_url.includes("auto=1")) setTimeout(() => uploadThumbnail(job.id), 700);
   } catch (err) {
     state.loadedModel = null;
     emptyMsg(t("No se pudo cargar el modelo: {e}", { e: err.message }));
@@ -800,6 +801,7 @@ function renderTools(job) {
   $("#btnFav").classList.toggle("on", job.favorite);
   $("#toolMeta").innerHTML = metaChips(job);
   $$("#toolMeta [data-goto]").forEach((a) => (a.onclick = () => selectJob(a.dataset.goto)));
+  renderVariants(job);
   renderHistory(job);
   renderFlow(job);
 
@@ -858,6 +860,56 @@ async function loadAnalysis(job) {
 $("#printReport").closest("details").addEventListener("toggle", (e) => {
   const job = selectedJob();
   if (e.target.open && job?.status === "succeeded") loadAnalysis(job);
+});
+
+// shape variants of one input, side by side: open each one and keep the best
+function renderVariants(job) {
+  const group = job.params?.group;
+  const items = group ? state.jobs.filter((j) => j.params?.group === group)
+    .sort((a, b) => a.created_at - b.created_at || (a.params.variant || 0) - (b.params.variant || 0)) : [];
+  $("#variantsBox").hidden = items.length < 2;
+  if (items.length < 2) return;
+  const ready = items.filter((j) => j.status === "succeeded").length;
+  $("#variantsHint").textContent = ready < items.length
+    ? t("{d} de {n} listas", { d: ready, n: items.length }) : t("Compara y quédate con una");
+  $("#variantGrid").replaceChildren(
+    ...items.map((j, i) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = `variant ${j.status}`;
+      card.classList.toggle("on", j.id === job.id);
+      const pic = document.createElement("span");
+      pic.className = "pic";
+      if (j.thumbnail_url) pic.style.backgroundImage = `url("${j.thumbnail_url}")`;
+      else pic.textContent = j.status === "failed" ? "✕" : j.status === "running" ? `${j.progress}%` : "…";
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = tr(j.params.variant_label) || t("Variante {n}", { n: i + 1 });
+      card.append(pic, name);
+      card.title = j.status === "failed" ? tr(j.error) || "" : name.textContent;
+      card.addEventListener("click", () => selectJob(j.id));
+      return card;
+    }),
+  );
+  $("#btnKeep").disabled = job.status !== "succeeded";
+}
+
+$("#btnKeep").addEventListener("click", async (e) => {
+  const job = selectedJob();
+  if (!job?.params?.group) return;
+  const others = state.jobs.filter((j) => j.params?.group === job.params.group && j.id !== job.id).length;
+  if (!confirm(t("¿Quedarte con esta variante y borrar las otras {n}?", { n: others }))) return;
+  const button = e.currentTarget;
+  button.disabled = true;
+  try {
+    await api(`/api/jobs/${job.id}/keep`, { method: "POST" });
+    toast(t("Variante elegida"));
+    state.toolsKey = null;
+    refreshJobs();
+  } catch (err) {
+    toast(tr(err.message), true);
+    button.disabled = false;
+  }
 });
 
 function renderHistory(job) {
@@ -926,11 +978,19 @@ const facesFromSlider = () => Math.round(10 ** Number($("#remeshFaces").value) /
 function updateRemeshUi() {
   const mode = $("#remeshMode").value;
   $("#facesRow").hidden = !["decimate", "lowpoly", "quads"].includes(mode);
+  $("#quadsBox").hidden = mode !== "quads";
+  $$("#quadPresets button").forEach((b) => b.classList.toggle("on", b.dataset.faces === $("#remeshFaces").value));
   $("#resRow").hidden = mode !== "voxel";
   $("#facesValue").textContent = facesFromSlider().toLocaleString();
   $("#resValue").textContent = `${$("#remeshRes").value}³`;
 }
 ["remeshMode", "remeshFaces", "remeshRes"].forEach((id) => $(`#${id}`).addEventListener("input", updateRemeshUi));
+$$("#quadPresets button").forEach((b) =>
+  b.addEventListener("click", () => {
+    $("#remeshFaces").value = b.dataset.faces;
+    updateRemeshUi();
+  }),
+);
 
 async function derive(button, path, json) {
   const job = selectedJob();

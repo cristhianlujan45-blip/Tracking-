@@ -181,7 +181,7 @@
               </select>
             </div>
             <div>
-              <label>Variantes</label>
+              <label title="Cada variante se construye de otra forma (fiel a la foto, forma libre, otras vistas) para que elijas la mejor">Variantes</label>
               <div class="segmented" id="variants">
                 <button type="button" class="on" data-v="1">1</button><button type="button" data-v="2">2</button><button type="button" data-v="3">3</button><button type="button" data-v="4">4</button>
               </div>
@@ -320,11 +320,17 @@
         </div>
         <div class="meta-list" id="toolMeta"></div>
 
+        <div class="variants-box" id="variantsBox" hidden>
+          <div class="variants-head"><b>Elige la mejor forma</b><small id="variantsHint"></small></div>
+          <div class="variant-grid" id="variantGrid"></div>
+          <button class="secondary" id="btnKeep">✓ Quedarme con esta y borrar las demás</button>
+        </div>
+
         <details open data-need="generative">
           <summary><span class="tag">02</span>Generación</summary>
           <div class="btn-row">
             <button class="secondary" id="btnRefine" title="Misma entrada y semilla en calidad Full HD">⇪ Refinar HD</button>
-            <button class="secondary" id="btnVariations" title="Nuevas semillas">⧉ 3 variaciones</button>
+            <button class="secondary" id="btnVariations" title="Otras 3 formas para elegir: solo con la foto y con otras vistas imaginadas">⧉ 3 variaciones</button>
           </div>
           <button class="link" id="btnRemix">↺ Cargar parámetros en el formulario</button>
         </details>
@@ -413,6 +419,14 @@
           <div class="range" id="facesRow">
             <label for="remeshFaces">Caras objetivo <b id="facesValue"></b></label>
             <input type="range" id="remeshFaces" min="2.3" max="5.3" step="0.05" value="3.7" />
+          </div>
+          <div id="quadsBox" hidden>
+            <div class="targets" id="quadPresets">
+              <button type="button" data-faces="3.6">Animar · 4k</button>
+              <button type="button" data-faces="4">Editar · 10k</button>
+              <button type="button" data-faces="4.4">Esculpir · 25k</button>
+            </div>
+            <p class="muted small">Solo quads, bien repartidos y con la textura del original en un mapa UV limpio. Exporta en OBJ, FBX o .blend (o usa el complemento de Blender) para conservar los quads.</p>
           </div>
           <div class="range" id="resRow" hidden>
             <label for="remeshRes">Resolución <b id="resValue"></b></label>

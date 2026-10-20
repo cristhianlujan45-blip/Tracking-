@@ -8,7 +8,7 @@ from functools import partial
 from pathlib import Path
 from typing import Callable
 
-from . import creations, geometry, projection
+from . import creations, geometry, projection, publishing
 from .jobs import Work
 from .providers import GenerationRequest, GenerationResult, InputImage, Provider
 from .providers.base import ProgressCallback
@@ -19,7 +19,9 @@ log = logging.getLogger(__name__)
 GENERATED_VIEW_TRUST = 0.6
 
 
-def generation(provider: Provider, req: GenerationRequest) -> Work:
+def generation(provider: Provider, req: GenerationRequest, preview: bool = False) -> Work:
+    """`preview`: also render a gallery picture (variants are compared before they are opened)."""
+
     async def work(on_progress: ProgressCallback) -> GenerationResult:
         result = await provider.generate(req, on_progress)
         if getattr(provider, "paints_from_views", False):
@@ -41,6 +43,12 @@ def generation(provider: Provider, req: GenerationRequest) -> Work:
         if req.style in ("lowpoly", "voxel", "sculpture"):
             await on_progress(96, "Aplicando estilo")
             result.model_glb = await asyncio.to_thread(geometry.apply_style, result.model_glb, req.style)
+        if preview:
+            try:
+                views = await asyncio.to_thread(publishing.render_views, result.model_glb, 320, ("tres_cuartos",))
+                result.extra_files["preview.png"] = views["tres_cuartos"]
+            except Exception:  # noqa: BLE001 - only a picture: the app takes one when the model is opened
+                log.exception("No se pudo crear la vista previa")
         return result
 
     return work

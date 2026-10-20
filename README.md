@@ -42,12 +42,12 @@ La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por
 **Exportar**
 - **Destinos con un clic**: Blender, Unity, Unreal, Godot, Roblox, web/AR e impresora 3D (elige el mejor formato disponible).
 - GLB con animaciones, **FBX** y **.blend** (con Blender instalado): en el `.blend` cada animación queda en su **pista NLA numerada** (01 idle, 02 walk…), lista para editar.
-- OBJ (quads reales tras el remallado en quads), STL, 3MF, PLY, USDZ (iPhone/AR).
+- OBJ (quads reales tras el remallado en quads, con su material y textura), STL, 3MF, PLY, USDZ (iPhone/AR).
 - **Impresión multicolor**: 3MF pintado por colores (Bambu AMS, Prusa MMU) o un STL por color.
 - **Complemento de Blender**: lista tus modelos y los importa con un clic, con las animaciones ya en pistas NLA.
 
 **Editar e imprimir**
-- Refinar HD, variaciones, remallado (reducir, **quads limpios**, low-poly, vóxel, suavizar).
+- Refinar HD, **variantes de forma para elegir** (fiel a la foto, forma libre, otras vistas; se comparan y te quedas con una), remallado (reducir, **quads limpios con textura y UV de quads enteros**, low-poly, vóxel, suavizar).
 - Imprimibilidad a la medida final (cerrado, agujeros, aristas no-manifold, volumen y gramos de PLA), reparación automática, **dividir para que quepa en la cama** de tu impresora (Bambu, Prusa, Creality, Elegoo, Anycubic, resina) y **abrir en tu laminador** (Bambu Studio, OrcaSlicer, PrusaSlicer, Cura, Creality Print, ElegooSlicer, Lychee…).
 
 **Agente IA**
@@ -135,7 +135,8 @@ backend/app/
   main.py              API REST (FastAPI) + sirve el frontend
   pipelines.py         trabajos: generación IA, operaciones locales, subidas
   jobs.py              ejecutor asíncrono con límite de concurrencia y dependencias
-  geometry.py          remallado (quads incl.), análisis, reparación, corte, exportación, multicolor
+  geometry.py          remallado, análisis, reparación, corte, exportación, multicolor
+  quads.py             remallado en quads (Instant Meshes) + UV por quads (LSCM) + horneado de textura
   textures.py          texturas HD y mapas PBR
   projection.py        pintado del modelo desde sus vistas
   sheet.py             hojas de personaje: detección y recorte de vistas
@@ -167,6 +168,7 @@ backend/app/
 | `POST` | `/api/jobs/{id}/retexture` | `{prompt, style, resolution}` |
 | `POST` | `/api/jobs/{id}/remesh` | `{mode: decimate\|quads\|lowpoly\|voxel\|smooth, target_faces, resolution}` |
 | `POST` | `/api/jobs/{id}/repair` · `/split` · `/refine` · `/variations` | impresión y variantes |
+| `POST` | `/api/jobs/{id}/keep` | quedarse con esta variante y borrar las demás de su grupo |
 | `GET` | `/api/rig/presets` | animaciones (humano, cuadrúpedo, biblioteca mocap) y marcadores |
 | `POST` | `/api/jobs/{id}/rig/markers` | `{template?, yaw?, auto?}` → marcadores |
 | `POST` | `/api/jobs/{id}/rig` | `{template, markers?, yaw?, animations, in_place}` |

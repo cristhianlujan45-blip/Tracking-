@@ -24,7 +24,7 @@ import uuid
 import webbrowser
 
 import bpy
-from bpy.props import CollectionProperty, FloatProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, CollectionProperty, FloatProperty, IntProperty, StringProperty
 
 DEFAULT_SERVER = "http://localhost:8000"  # la app lo sustituye al descargar el complemento
 MODE_ICONS = {
@@ -79,6 +79,7 @@ class ForjaItem(bpy.types.PropertyGroup):
     job_id: StringProperty()
     title: StringProperty()
     mode: StringProperty()
+    quads: BoolProperty()  # a quad remesh: imported from its OBJ to keep the quads
     created: FloatProperty()
 
 
@@ -113,6 +114,7 @@ class FORJA_OT_refresh(bpy.types.Operator):
                 continue
             item = items.add()
             item.job_id, item.title, item.mode = job["id"], job["title"][:120], job["mode"]
+            item.quads = job["mode"] == "remesh" and (job.get("params") or {}).get("mode") == "quads"
             item.created = job.get("created_at", 0.0)
         context.scene.forja_index = min(context.scene.forja_index, max(len(items) - 1, 0))
         self.report({"INFO"}, f"{len(items)} modelos")
@@ -160,20 +162,31 @@ class FORJA_OT_import(bpy.types.Operator):
                 self.report({"WARNING"}, "Pulsa «Actualizar» primero")
                 return {"CANCELLED"}
             job_id = scene.forja_items[scene.forja_index].job_id
-        title = next((i.title for i in scene.forja_items if i.job_id == job_id), "Forja3D")
+        item = next((i for i in scene.forja_items if i.job_id == job_id), None)
+        title = item.title if item else "Forja3D"
+        quads = bool(item and item.quads) and hasattr(bpy.ops.wm, "obj_import")
         try:
-            data = http(f"{server_url(context)}/api/jobs/{job_id}/model.glb", timeout=300)
+            url = f"{server_url(context)}/api/jobs/{job_id}/" + ("export?format=obj" if quads else "model.glb")
+            data = http(url, timeout=300)
         except RuntimeError as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
 
-        path = os.path.join(tempfile.gettempdir(), f"forja3d-{job_id}.glb")
-        with open(path, "wb") as fh:
-            fh.write(data)
         before = set(bpy.data.objects)
         if context.mode != "OBJECT":
             bpy.ops.object.mode_set(mode="OBJECT")
-        bpy.ops.import_scene.gltf(filepath=path)
+        if quads:  # OBJ + material + texture: Blender keeps the quads (glTF only carries triangles)
+            import io
+            import zipfile
+
+            folder = tempfile.mkdtemp(prefix=f"forja3d-{job_id}-")
+            zipfile.ZipFile(io.BytesIO(data)).extractall(folder)
+            bpy.ops.wm.obj_import(filepath=os.path.join(folder, "model.obj"))
+        else:
+            path = os.path.join(tempfile.gettempdir(), f"forja3d-{job_id}.glb")
+            with open(path, "wb") as fh:
+                fh.write(data)
+            bpy.ops.import_scene.gltf(filepath=path)
         new_objects = [o for o in bpy.data.objects if o not in before]
         roots = [o for o in new_objects if o.parent not in new_objects]
 

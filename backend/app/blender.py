@@ -45,13 +45,17 @@ def _command(blender: str, src: str, dst: str) -> list[str]:
     return [blender, "-b", "--factory-startup", "--python", str(SCRIPT), "--", src, dst]
 
 
-def convert(glb: bytes, fmt: str, blender: str, timeout: float = 300, source_ext: str = "glb") -> bytes:
-    """`glb` is the model data (GLB, or an OBJ when `source_ext` is "obj" to keep quads)."""
+def convert(glb: bytes, fmt: str, blender: str, timeout: float = 300, source_ext: str = "glb",
+            extra: dict[str, bytes] | None = None) -> bytes:
+    """`glb` is the model data (GLB, or an OBJ when `source_ext` is "obj" to keep quads); `extra`
+    are files it refers to (an OBJ's material and texture), written next to it."""
     if fmt not in FORMATS:
         raise BlenderError(f"Formato no soportado por el conversor: {fmt}")
     with tempfile.TemporaryDirectory(prefix="forja3d-") as tmp:
         src, dst = os.path.join(tmp, f"in.{source_ext}"), os.path.join(tmp, f"out.{FORMATS[fmt][0]}")
         Path(src).write_bytes(glb)
+        for name, data in (extra or {}).items():
+            Path(tmp, Path(name).name).write_bytes(data)
         try:
             proc = subprocess.run(_command(blender, src, dst), capture_output=True, text=True, timeout=timeout,
                                   env={**os.environ, "PYTHONIOENCODING": "utf-8"})

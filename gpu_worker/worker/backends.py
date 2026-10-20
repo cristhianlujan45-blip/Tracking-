@@ -65,7 +65,7 @@ class Backend(Protocol):
         """Super-resolution ×2/×4 of a texture."""
         ...
 
-    def novel_views(self, image: Image.Image, quality: str = "standard") -> dict[str, Image.Image]:
+    def novel_views(self, image: Image.Image, quality: str = "standard", seed: int = 0) -> dict[str, Image.Image]:
         """AI-generated "left" / "back" / "right" views of a single front picture (transparent
         background); `view_poses` says where each one was really seen from."""
         ...
@@ -122,7 +122,7 @@ class DummyBackend:
         caps.add("cutout")
         return caps
 
-    def novel_views(self, image: Image.Image, quality: str = "standard") -> dict[str, Image.Image]:
+    def novel_views(self, image: Image.Image, quality: str = "standard", seed: int = 0) -> dict[str, Image.Image]:
         """Mirrored, tinted copies of the picture: shapes and colours that tests can tell apart."""
         time.sleep(self.delay / 2)
         base = image.convert("RGBA").resize((512, 512))
@@ -436,12 +436,12 @@ class HunyuanBackend:
                            width=512, height=512, generator=generator).images
         return images
 
-    def novel_views(self, image: Image.Image, quality: str = "standard") -> dict[str, Image.Image]:
+    def novel_views(self, image: Image.Image, quality: str = "standard", seed: int = 0) -> dict[str, Image.Image]:
         import torch
 
         cond = _frame(self._remove_background(image), 320)
         pipe = self._load_mv_gen()
-        generator = torch.Generator(device="cpu").manual_seed(0)
+        generator = torch.Generator(device="cpu").manual_seed(seed)
         grid = pipe(cond, num_inference_steps=NOVEL_VIEW_STEPS.get(quality, 50), generator=generator).images[0]
         tile = grid.width // 2
         views = {}

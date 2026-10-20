@@ -57,6 +57,7 @@ class UpscaleIn(BaseModel):
 class ViewsIn(BaseModel):
     image: str  # base64, the front picture
     quality: Literal["draft", "standard", "high"] = "standard"
+    seed: int = Field(0, ge=0, lt=2**32)  # another seed imagines other sides and back (shape variants)
 
 
 class TaskIn(BaseModel):
@@ -233,7 +234,7 @@ def create_app(backend: Backend, token: str | None = None) -> FastAPI:
         image = decode_image(body.image)
         loop = asyncio.get_running_loop()
         try:
-            result = await loop.run_in_executor(gpu, backend.novel_views, image, body.quality)
+            result = await loop.run_in_executor(gpu, backend.novel_views, image, body.quality, body.seed)
         except Exception as exc:  # noqa: BLE001
             log.exception("Generación de vistas falló")
             raise HTTPException(500, friendly_error(exc)) from exc

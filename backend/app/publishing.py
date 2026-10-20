@@ -26,10 +26,10 @@ UPLOAD_PAGES = {
 VIEWS = {"frente": 0, "tres_cuartos": 35, "lado": 90, "espalda": 180}
 
 
-def render_views(glb: bytes, size: int = 900) -> dict[str, bytes]:
+def render_views(glb: bytes, size: int = 900, only: tuple[str, ...] | None = None) -> dict[str, bytes]:
     """Soft studio previews from several angles (dense surface splatting with simple lighting)."""
     mesh = geometry.to_color_mesh(geometry.load_scene(glb))
-    count = min(1_500_000, max(300_000, len(mesh.faces) * 12))
+    count = int(min(1_500_000, max(300_000, len(mesh.faces) * 12)) * min(1.0, (size / 900) ** 2 * 2))
     pts, face = trimesh.sample.sample_surface(mesh, count, seed=7)
     nrm = mesh.face_normals[face]
     try:
@@ -40,6 +40,8 @@ def render_views(glb: bytes, size: int = 900) -> dict[str, bytes]:
     light_dir = np.array([0.35, 0.55, 0.75]) / np.linalg.norm([0.35, 0.55, 0.75])
     out = {}
     for name, yaw in VIEWS.items():
+        if only and name not in only:
+            continue
         a = np.radians(yaw)
         rot = np.array([[np.cos(a), 0, -np.sin(a)], [0, 1, 0], [np.sin(a), 0, np.cos(a)]])
         tilt = np.radians(-12)  # look slightly down at the model, like a product photo

@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from . import agent as ai_agent
 from ._version import VERSION
-from . import blender, creations, geometry, pipelines, printing, publishing, rigging, sheet, textures, updates
+from . import blender, creations, geometry, pipelines, printing, publishing, quads, rigging, sheet, textures, updates
 from .config import Settings, get_settings, save_user_settings, user_settings_path, with_user_settings
 from .db import JobStore
 from .jobs import JobRunner
@@ -239,7 +239,9 @@ def to_out(job: dict) -> JobOut:
         title=job_title(job),
         model_url=f"{base}/model.glb?v={version}" if job["model_file"] else None,
         image_url=f"{base}/image" if job["input_image"] else None,
-        thumbnail_url=f"{base}/thumbnail?v={version}" if job.get("thumbnail") else None,
+        # auto=1: a picture rendered by the server, replaced by the viewer's own once the model is opened
+        thumbnail_url=(f"{base}/thumbnail?v={version}" + ("&auto=1" if job["thumbnail"] == "preview.png" else ""))
+        if job.get("thumbnail") else None,
         depth_url=f"{base}/depth" if job["params"].get("has_depth") and job["status"] == "succeeded" else None,
     )
 
@@ -343,16 +345,24 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         images: list[InputImage],
         extra: dict | None = None,
         parent_id: str | None = None,
+        variants: list[int] | None = None,
+        group: str | None = None,
     ) -> list[JobOut]:
+        """One job per shape variant. `variants` says how each one is built (see the provider's
+        variant_label; default 0, 1, 2…); jobs of one `group` are alternatives to choose from."""
         state = request.app.state
         engines = [e["id"] for e in getattr(state.provider, "engines", [])]
         if opts.engine and opts.engine not in engines:
             raise HTTPException(422, f"Motor desconocido: {opts.engine}")
         base_seed = opts.seed if opts.seed is not None else new_seed()
+        variants = variants or list(range(opts.variants))
+        ids = [uuid.uuid4().hex for _ in variants]
+        if len(ids) > 1 and group is None:
+            group = ids[0]
+        label_of = getattr(state.provider, "variant_label", None)
         jobs = []
-        for i in range(opts.variants):
+        for i, (job_id, variant) in enumerate(zip(ids, variants)):
             seed = (base_seed + i) % 2**31
-            job_id = uuid.uuid4().hex
             inputs = []
             if images:
                 job_dir(job_id).mkdir(parents=True)
@@ -364,6 +374,11 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                 "style": opts.style, "symmetry": opts.symmetry, "pose": opts.pose, "seed": seed, "engine": opts.engine,
                 "inputs": inputs, **(extra or {}),
             }
+            if variant:
+                params["variant"] = variant
+            if group:
+                label = label_of(variant, len(images)) if label_of else None
+                params.update(group=group, variant_label=label or f"Variante {i + 1}")
             job = state.store.create(
                 id=job_id, mode=mode, prompt=prompt, quality=opts.quality, provider=state.provider.name,
                 input_image=inputs[0] if inputs else None, params=params, parent_id=parent_id,
@@ -371,9 +386,9 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             req = GenerationRequest(
                 mode=mode, prompt=prompt, quality=opts.quality, images=images,
                 style=opts.style, symmetry=opts.symmetry, pose=opts.pose, seed=seed, engine=opts.engine,
-                roles=(extra or {}).get("roles"),
+                roles=(extra or {}).get("roles"), variant=variant,
             )
-            state.runner.submit(job_id, pipelines.generation(state.provider, req))
+            state.runner.submit(job_id, pipelines.generation(state.provider, req, preview=bool(group)))
             jobs.append(to_out(job))
         return jobs
 
@@ -938,19 +953,26 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         if size_mm is None and height_mm is not None:
             size_mm, fit = height_mm, "height"
         filename = slugify(job_title(job))
-        quads = job_dir(job_id) / "quads.obj"  # true quad topology from a quad remesh
-        if format == "obj" and quads.is_file() and size_mm is None:
+        quad_obj = job_dir(job_id) / "quads.obj"  # true quad topology from a quad remesh
+        quad_files = {n: (job_dir(job_id) / n).read_bytes() for n in ("quads.mtl", "quads.png")
+                      if (job_dir(job_id) / n).is_file()}  # its material and texture
+        if format == "obj" and quad_obj.is_file() and size_mm is None:
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr("model.obj", quads.read_bytes())
+                zf.writestr("model.obj", quad_obj.read_bytes().replace(b"mtllib quads.mtl", b"mtllib model.mtl"))
+                if "quads.mtl" in quad_files:
+                    zf.writestr("model.mtl", quad_files["quads.mtl"].replace(b"quads.png", b"model.png"))
+                if "quads.png" in quad_files:
+                    zf.writestr("model.png", quad_files["quads.png"])
             return Response(buf.getvalue(), media_type="application/zip",
                             headers={"Content-Disposition": f'attachment; filename="{filename}.zip"'})
         if format in blender.FORMATS:
             if not request.app.state.blender:
                 raise HTTPException(400, "Para FBX/.blend instala Blender (o indica BLENDER_PATH en .env) y reinicia la app")
-            source, ext = (quads.read_bytes(), "obj") if quads.is_file() else (path.read_bytes(), "glb")
+            source, ext = (quad_obj.read_bytes(), "obj") if quad_obj.is_file() else (path.read_bytes(), "glb")
             try:
-                data = await asyncio.to_thread(blender.convert, source, format, request.app.state.blender, 300, ext)
+                data = await asyncio.to_thread(blender.convert, source, format, request.app.state.blender, 300, ext,
+                                               quad_files if ext == "obj" else None)
             except blender.BlenderError as exc:
                 raise HTTPException(422, str(exc)) from exc
             ext, media_type = blender.FORMATS[format]
@@ -983,9 +1005,10 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         parent, path = ready_model(request, job_id)
         if body.mode == "quads":
             async def work(on_progress):
-                await on_progress(15, "Remallado en quads (Instant Meshes)")
-                glb, obj = await asyncio.to_thread(geometry.quad_remesh, path.read_bytes(), body.target_faces)
-                return GenerationResult(model_glb=glb, extra_files={"quads.obj": obj})
+                await on_progress(15, "Remallado en quads y textura (Instant Meshes)")
+                glb, files, _ = await asyncio.to_thread(quads.quad_remesh, path.read_bytes(), body.target_faces,
+                                                        name="quads")
+                return GenerationResult(model_glb=glb, extra_files=files)
         else:
             work = pipelines.local(path, "Remallando", geometry.remesh, mode=body.mode,
                                    target_faces=body.target_faces, resolution=body.resolution)
@@ -1235,7 +1258,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             images, mode = [InputImage(ref.read_bytes(), MIME_BY_EXT.get(ref.suffix[1:], "image/png"))], "image"
         kept = {"roles": p["roles"]} if p.get("roles") and mode == parent["mode"] else {}
         return create_generation_jobs(request, mode, parent["prompt"], opts, images, {"refined": True, **kept},
-                                      parent["id"])
+                                      parent["id"], variants=[p.get("variant", 0)])
 
     @app.post("/api/jobs/{job_id}/variations", response_model=list[JobOut], status_code=201)
     async def variations(request: Request, job_id: str, body: VariationsIn):
@@ -1245,8 +1268,32 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                                  symmetry=p.get("symmetry", False), pose=p.get("pose", "none"), variants=body.count,
                                  engine=p.get("engine"))
         kept = {"roles": p["roles"]} if p.get("roles") else {}
+        # built differently from the model they vary (the photo alone, or other imagined sides), and
+        # grouped with it so you can keep the best one
+        variants = [v for v in range(1, body.count + 2) if v != p.get("variant", 0)][:body.count]
+        group = p.get("group") or parent["id"]
+        if not p.get("group"):
+            label = getattr(request.app.state.provider, "variant_label", lambda *_: None)(
+                p.get("variant", 0), len(p.get("inputs", [])))
+            request.app.state.store.update_params(parent["id"], {"group": group, "variant_label": label or "Original"})
         return create_generation_jobs(request, parent["mode"], parent["prompt"], opts, load_inputs(parent),
-                                      {"variation_of": parent["id"], **kept}, parent["id"])
+                                      {"variation_of": parent["id"], **kept}, parent["id"], variants, group)
+
+    @app.post("/api/jobs/{job_id}/keep", response_model=JobOut)
+    async def keep_variant(request: Request, job_id: str):
+        """Keep this shape variant and delete the other ones of its group (unfinished ones are stopped)."""
+        job = get_job_or_404(request, job_id)
+        group = job["params"].get("group")
+        if not group:
+            raise HTTPException(400, "Este modelo no tiene variantes")
+        state = request.app.state
+        for other in state.store.list(limit=2000):
+            if other["id"] != job_id and other["params"].get("group") == group:
+                state.runner.cancel(other["id"])
+                state.store.delete(other["id"])
+                shutil.rmtree(job_dir(other["id"]), ignore_errors=True)
+        state.store.update_params(job_id, {"group": None, "variant_label": None})
+        return to_out(state.store.get(job_id))
 
     # ------------------------------------------------------------ AI agent (chat)
 

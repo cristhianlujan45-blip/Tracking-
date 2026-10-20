@@ -31,6 +31,9 @@ class GenerationRequest:
     engine: str | None = None  # provider-specific 3D engine (None = provider default)
     # which view each image is ("front", "left", "back", "right"); None = that order
     roles: list[str] | None = None
+    # position in a set of shape variants of the same input (0 = the default way of building it):
+    # providers may build each one differently, not only with another seed
+    variant: int = 0
 
 
 @dataclass

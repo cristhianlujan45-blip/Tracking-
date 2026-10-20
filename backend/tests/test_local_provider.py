@@ -175,7 +175,7 @@ def test_without_views_a_single_picture_goes_alone(tmp_path):
 
 def test_failed_views_fall_back_to_the_single_picture(tmp_path):
     class NoViews(DummyBackend):
-        def novel_views(self, image, quality="standard"):
+        def novel_views(self, image, quality="standard", seed=0):
             raise RuntimeError("CUDA out of memory")
 
     backend = NoViews(delay=0.01)
@@ -194,3 +194,59 @@ def test_view_slots_keep_their_roles(client):
     assert job["status"] == "succeeded" and job["params"]["roles"] == ["front", "back"]
     bad = client.post("/api/jobs/image", files=files, data={"roles": ["front", "front"]})
     assert bad.status_code == 422
+
+
+class Recording(DummyBackend):
+    """Remembers every shape job, view generation and cut-out the app asked for."""
+
+    def __init__(self, **kwargs):
+        super().__init__(delay=0.01, **kwargs)
+        self.jobs, self.view_seeds, self.cutouts = [], [], 0
+
+    def image_to_mesh(self, job, progress):
+        self.jobs.append(job)
+        return super().image_to_mesh(job, progress)
+
+    def novel_views(self, image, quality="standard", seed=0):
+        self.view_seeds.append(seed)
+        return super().novel_views(image, quality, seed)
+
+    def cutout(self, image):
+        self.cutouts += 1
+        return super().cutout(image)
+
+
+def test_shape_variants_are_built_differently_and_one_is_kept(tmp_path):
+    backend = Recording()
+    with make_client(tmp_path, backend=backend) as c:
+        resp = c.post("/api/jobs/image", files={"images": ("r.png", PNG, "image/png")},
+                      data={"quality": "draft", "variants": 3, "seed": 40})
+        assert resp.status_code == 201, resp.text
+        jobs = [wait_done(c, j["id"], timeout=120) for j in resp.json()]
+        assert all(j["status"] == "succeeded" for j in jobs), [j["error"] for j in jobs]
+        assert len({j["params"]["group"] for j in jobs}) == 1
+        assert [j["params"]["variant_label"] for j in jobs] == ["Fiel a la foto", "Forma libre", "Otras vistas"]
+        assert all("auto=1" in j["thumbnail_url"] for j in jobs)  # a preview to compare them in the gallery
+        assert c.get(jobs[0]["thumbnail_url"]).content[:4] == b"\x89PNG"
+        # one cut-out and one default view set shared by all; the third variant imagines other views
+        assert backend.cutouts == 1 and sorted(backend.view_seeds) == [0, 42]
+        shapes = {tuple(job.roles or ()): len(job.images) for job in backend.jobs}
+        assert shapes == {("front", "left", "right"): 3, (): 1}  # the free shape uses the photo alone
+        # every variant is still painted with the generated views
+        assert all((tmp_path / "files" / j["id"] / "view_back.png").is_file() for j in jobs)
+
+        kept = c.post(f"/api/jobs/{jobs[1]['id']}/keep")
+        assert kept.status_code == 200, kept.text
+        assert kept.json()["params"]["group"] is None and kept.json()["params"]["variant"] == 1
+        assert [j["id"] for j in c.get("/api/jobs").json()] == [jobs[1]["id"]]
+        assert c.post(f"/api/jobs/{jobs[1]['id']}/keep").status_code == 400
+
+        # three more from the kept one: never the way it was built, grouped with it
+        more = c.post(f"/api/jobs/{jobs[1]['id']}/variations", json={"count": 3}).json()
+        assert [m["params"]["variant"] for m in more] == [2, 3, 4]
+        assert all(wait_done(c, m["id"], timeout=120)["status"] == "succeeded" for m in more)
+        parent = c.get(f"/api/jobs/{jobs[1]['id']}").json()
+        assert parent["params"]["group"] == more[0]["params"]["group"] == jobs[1]["id"]
+        assert parent["params"]["variant_label"] == "Forma libre"
+        refined = c.post(f"/api/jobs/{jobs[1]['id']}/refine").json()[0]
+        assert refined["params"]["variant"] == 1 and "group" not in refined["params"]

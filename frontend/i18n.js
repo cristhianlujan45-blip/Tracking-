@@ -119,6 +119,18 @@ const EN = {
   "Selecciona un modelo para editarlo, riggearlo, exportarlo o imprimirlo.": "Select a model to edit, rig, export or print it.",
   "Renombrar": "Rename", "Generación": "Generation", "Misma entrada y semilla en calidad Full HD": "Same input and seed in Full HD quality",
   "⇪ Refinar HD": "⇪ Refine HD", "Nuevas semillas": "New seeds", "⧉ 3 variaciones": "⧉ 3 variations",
+  "Otras 3 formas para elegir: solo con la foto y con otras vistas imaginadas": "3 more shapes to choose from: from the photo alone and with other imagined views",
+  "Cada variante se construye de otra forma (fiel a la foto, forma libre, otras vistas) para que elijas la mejor":
+    "Each variant is built another way (true to the photo, free shape, other views) so you can pick the best",
+  "Elige la mejor forma": "Pick the best shape", "✓ Quedarme con esta y borrar las demás": "✓ Keep this one, delete the others",
+  "Fiel a la foto": "True to the photo", "Forma libre": "Free shape", "Otras vistas": "Other views", "Original": "Original",
+  "{d} de {n} listas": "{d} of {n} ready", "Compara y quédate con una": "Compare them and keep one",
+  "Variante {n}": "Variant {n}", "¿Quedarte con esta variante y borrar las otras {n}?": "Keep this variant and delete the other {n}?",
+  "Variante elegida": "Variant kept",
+  "Animar · 4k": "Animate · 4k", "Editar · 10k": "Edit · 10k", "Esculpir · 25k": "Sculpt · 25k",
+  "Solo quads, bien repartidos y con la textura del original en un mapa UV limpio. Exporta en OBJ, FBX o .blend (o usa el complemento de Blender) para conservar los quads.":
+    "Quads only, evenly spread, with the original's texture on a clean UV map. Export as OBJ, FBX or .blend (or use the Blender add-on) to keep the quads.",
+  "Remallado en quads y textura (Instant Meshes)": "Quad remesh and texture (Instant Meshes)", "Este modelo no tiene variantes": "This model has no variants",
   "↺ Cargar parámetros en el formulario": "↺ Load settings into the form", "Parámetros cargados en el formulario": "Settings loaded into the form",
   "Rigging y animación": "Rigging & animation", "Personaje completo en un clic": "Full character in one click",
   "Texturas HD + PBR → esqueleto → animaciones elegidas. Listo para Blender, Unity, Unreal y Godot.":
@@ -434,6 +446,7 @@ const PATTERNS = [
   [/^No se pudo leer el archivo (\w+): (.+)$/, "Could not read the $1 file: $2"],
   [/^Tiempo de espera agotado en (.+)$/, "Timed out waiting for $1"],
   [/^Error (\d+)$/, "Error $1"],
+  [/^Variante (\d+)$/, "Variant $1"],
 ];
 
 // generated titles: "<name> · reducido" → "<name> · reduced"

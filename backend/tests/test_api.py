@@ -458,10 +458,16 @@ def test_quad_remesh_exports_real_quads(client):
                                         json={"mode": "quads", "target_faces": 2000}).json()["id"])
     assert job["status"] == "succeeded", job["error"]
     data = client.get(f"/api/jobs/{job['id']}/export", params={"format": "obj"}).content
-    obj = zipfile.ZipFile(io.BytesIO(data)).read("model.obj").decode()
+    zf = zipfile.ZipFile(io.BytesIO(data))
+    obj = zf.read("model.obj").decode()
     faces = [line.split()[1:] for line in obj.splitlines() if line.startswith("f ")]
     assert faces and all(len(f) == 4 for f in faces)
     assert 1000 < len(faces) < 4000
+    # with its material and texture, and the model in the viewer is textured too
+    assert "mtllib model.mtl" in obj and b"map_Kd model.png" in zf.read("model.mtl")
+    assert zf.read("model.png")[:4] == b"\x89PNG"
+    scene = geometry.load_scene(client.get(job["model_url"]).content)
+    assert all(g.visual.kind == "texture" for g in scene.geometry.values())
 
 
 def test_multicolor_print_exports(client):

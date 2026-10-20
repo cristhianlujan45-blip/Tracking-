@@ -34,6 +34,11 @@ class JobRunner:
         task.add_done_callback(self._tasks.discard)
         task.add_done_callback(lambda _t: self._by_job.pop(job_id, None))
 
+    def cancel(self, job_id: str) -> None:
+        task = self._by_job.get(job_id)
+        if task is not None:
+            task.cancel()
+
     async def wait_idle(self) -> None:
         while self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
@@ -77,6 +82,8 @@ class JobRunner:
             fields = {"status": "succeeded", "progress": 100, "stage": "Completado", "model_file": "model.glb"}
             for name, data in result.extra_files.items():
                 (job_dir / name).write_bytes(data)
+            if "preview.png" in result.extra_files:
+                fields["thumbnail"] = "preview.png"
             if result.reference_image:
                 name = f"reference.{result.reference_image_ext}"
                 (job_dir / name).write_bytes(result.reference_image)

@@ -650,3 +650,26 @@ input[type="color"] { width: 100%; height: 38px; padding: 2px; background: rgba(
 .publish-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .publish-row button { margin: 0; padding: 8px 4px; font-size: 12px; }
 .ok-note { color: var(--ok); margin: 10px 0 4px; }
+
+/* ---------- shape variants: compare and keep one ---------- */
+.variants-box {
+  margin: 8px 0 12px; padding: 10px 12px; border: 1px solid rgba(60, 242, 255, .35);
+  background: linear-gradient(135deg, rgba(60, 242, 255, .07), rgba(255, 79, 154, .05));
+}
+.variants-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.variants-head b { font: 13px var(--display); color: var(--cyan); letter-spacing: .4px; }
+.variants-head small { color: var(--muted); font-size: 11px; }
+.variant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.variant {
+  display: flex; flex-direction: column; gap: 4px; padding: 4px; cursor: pointer; text-align: left;
+  background: rgba(255, 255, 255, .03); border: 1px solid var(--line-2); color: var(--text); font: 11px var(--body);
+}
+.variant:hover { border-color: var(--cyan); }
+.variant.on { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan) inset; }
+.variant .pic {
+  aspect-ratio: 1; display: grid; place-items: center; background: var(--panel-2) center / cover no-repeat;
+  color: var(--muted); font: 12px var(--mono);
+}
+.variant.failed .pic { color: var(--danger); }
+.variant .name { font-weight: 700; line-height: 1.2; }
+#btnKeep { width: 100%; }

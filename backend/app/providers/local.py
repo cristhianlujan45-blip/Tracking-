@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import logging
 import time
+from collections import OrderedDict
 
 import httpx
 
@@ -27,10 +29,28 @@ NEGATIVE_PROMPT = "blurry, cropped, multiple objects, text, watermark, busy back
 VIEW_AZIMUTHS = {"left": 90, "back": 180, "right": 270}
 # the multi-view shape model expects square side/back views: farther off ones only paint the model
 SHAPE_MAX_OFF_AXIS = 15
+CACHE_ITEMS = 12  # cut-outs and view sets kept in memory (a few MB each)
+
+
+# How each shape variant of one picture is built, so the variants really differ (a new seed alone
+# barely changes a shape pinned down by four views):
+#   0 front picture + AI side/back views (the most faithful)
+#   1 the front picture alone: the model imagines the hidden sides itself (views only paint it)
+#   2+ side/back views imagined again with another seed
+VARIANT_LABELS = ["Fiel a la foto", "Forma libre", "Otras vistas"]
+SHAPE_FROM_PHOTO_ONLY = 1
+
+
+def variant_views_seed(variant: int, seed: int) -> int:
+    return 0 if variant < 2 else (seed % 2**32) or 1  # 0 is the default view set
 
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 def _off_axis(role: str, poses: dict[str, tuple[float, float]]) -> float:
@@ -61,6 +81,10 @@ class LocalProvider:
         self.launcher = launcher
         self.capabilities = DEFAULT_CAPABILITIES
         self.info: dict = {}
+        # variants of one picture share its cut-out and views: no second background removal or
+        # second view generation (and no model swap on the GPU) for the same input
+        self._cache: OrderedDict[tuple, bytes | tuple] = OrderedDict()
+        self._pending: dict[tuple, asyncio.Task] = {}
         self.engines = [{"id": "hunyuan2", "label": "Hunyuan3D-2 (tu GPU)",
                          "description": "Gratis y privado, en tu tarjeta gráfica.", "native_text": False,
                          "max_views": 4, "tags": ["local"]}]
@@ -113,7 +137,8 @@ class LocalProvider:
             inputs = []
             if "cutout" in self.capabilities:  # one clean background removal for both shape and painting
                 await on_progress(span[0], "Recortando el fondo")
-                inputs = [await self._cutout(client, i.data) for i in images]
+                inputs = [await self._shared(("cutout", _digest(i.data)), lambda d=i.data: self._fresh(self._cutout, d))
+                          for i in images]
                 images = [InputImage(data, "image/png") for data in inputs]
             payload = {"images": [_b64(i.data) for i in images], "seed": req.seed % 2**32, "quality": req.quality}
             if req.roles and len(req.roles) == len(images) > 1:
@@ -121,10 +146,13 @@ class LocalProvider:
             views, poses = {}, {}
             if len(images) == 1 and {"views", "multi_image"} <= self.capabilities:
                 await on_progress(span[0], "Generando vistas laterales y de espalda")
-                views, poses = await self._views(client, images[0].data, req.quality)
+                views_seed = variant_views_seed(req.variant, req.seed)
+                key = ("views", _digest(images[0].data), req.quality, views_seed)
+                views, poses = await self._shared(
+                    key, lambda: self._fresh(self._views, images[0].data, req.quality, views_seed))
                 # only views seen square from their side drive the shape; the rest just paint it
                 square = [r for r in VIEW_AZIMUTHS if r in views and _off_axis(r, poses) <= SHAPE_MAX_OFF_AXIS]
-                if square:
+                if square and req.variant != SHAPE_FROM_PHOTO_ONLY:
                     payload["images"] += [_b64(views[r]) for r in square]
                     payload["roles"] = ["front", *square]
                 span = (span[0] + 10, span[1])
@@ -145,6 +173,34 @@ class LocalProvider:
             image = (await self._images(client, req, 1))[0]
             payload = {"kind": "texture", "images": [_b64(image)], "mesh_glb": _b64(glb), "seed": req.seed % 2**32}
             return await self._run_task(client, payload, on_progress, (15, 97))
+
+    def variant_label(self, variant: int, images: int) -> str | None:
+        """How variant `variant` is built (shown next to it so you know what you compare)."""
+        if images > 1 or not {"views", "multi_image"} <= self.capabilities:
+            return None  # several real pictures pin the shape: variants differ by seed only
+        return VARIANT_LABELS[min(variant, len(VARIANT_LABELS) - 1)]
+
+    async def _fresh(self, fn, *args):
+        """`fn(client, *args)` on its own connection: a shared call outlives the job that started it."""
+        async with self._client() as client:
+            return await fn(client, *args)
+
+    async def _shared(self, key: tuple, make):
+        """`make()` once per key and kept for a while: variants running at the same time wait for the
+        same call, later ones reuse its result."""
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        task = self._pending.get(key)
+        if task is None:
+            task = self._pending[key] = asyncio.ensure_future(make())
+            task.add_done_callback(lambda _t: self._pending.pop(key, None))
+        result = await asyncio.shield(task)
+        if result[0] if isinstance(result, tuple) else result:  # failures (no views) are retried next time
+            self._cache[key] = result
+            while len(self._cache) > CACHE_ITEMS:
+                self._cache.popitem(last=False)
+        return result
 
     async def _cutout(self, client: httpx.AsyncClient, data: bytes) -> bytes:
         try:
@@ -197,11 +253,12 @@ class LocalProvider:
         resp = await self._call(client.post("/images", json=body, timeout=600))
         return [base64.b64decode(i) for i in resp.json()["images"]]
 
-    async def _views(self, client: httpx.AsyncClient, image: bytes,
-                     quality: str) -> tuple[dict[str, bytes], dict[str, tuple[float, float]]]:
+    async def _views(self, client: httpx.AsyncClient, image: bytes, quality: str,
+                     seed: int = 0) -> tuple[dict[str, bytes], dict[str, tuple[float, float]]]:
         """AI side and back views of a single picture. Optional: on failure the picture is used alone."""
         try:
-            resp = await self._call(client.post("/views", json={"image": _b64(image), "quality": quality}, timeout=900))
+            body = {"image": _b64(image), "quality": quality, **({"seed": seed} if seed else {})}
+            resp = await self._call(client.post("/views", json=body, timeout=900))
         except GenerationError as exc:
             log.warning("No se pudieron generar las vistas laterales: %s", exc)
             return {}, {}

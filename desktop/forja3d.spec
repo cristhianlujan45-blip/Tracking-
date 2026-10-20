@@ -26,7 +26,8 @@ hiddenimports = (
     + collect_submodules("uvicorn")
     + collect_submodules("webview")
     + ["fast_simplification", "pynanoinstantmeshes", "mapbox_earcut", "rtree", "shapely", "lxml.etree",
-       "networkx", "cv2", "xatlas", "multipart", "python_multipart", "scipy.sparse.linalg", "scipy.ndimage"]
+       "networkx", "cv2", "xatlas", "multipart", "python_multipart", "scipy.sparse.linalg", "scipy.ndimage",
+       "scipy.spatial"]
     + collect_submodules("anthropic")
 )
 
