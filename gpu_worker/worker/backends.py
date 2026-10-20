@@ -2,7 +2,8 @@
 
 * ``dummy``   – no GPU, no downloads: returns procedural meshes/images. Used to test the plumbing.
 * ``hunyuan`` – Hunyuan3D-2mini (shape), optional Hunyuan3D-2mv (multi-view) and Hunyuan3D-Paint
-                (texture), plus SD-Turbo / SDXL-Turbo for concept images. Tuned for 8 GB of VRAM:
+                (texture), plus SD-Turbo / SDXL-Turbo for concept images and optional Zero123++ for
+                the side and back views of a single picture. Tuned for 8 GB of VRAM:
                 only one model lives on the GPU at a time, the rest wait in system RAM.
 
 Heavy imports (torch, diffusers, hy3dgen) happen lazily inside the hunyuan backend so the worker
@@ -39,6 +40,8 @@ class MeshJob:
     # retexture: paint this GLB with the first image instead of generating a new shape
     mesh_glb: bytes | None = None
     extras: dict = field(default_factory=dict)
+    # view of each image for multi-view shapes (default: VIEW_NAMES order)
+    roles: list[str] | None = None
 
 
 class Backend(Protocol):
@@ -62,6 +65,25 @@ class Backend(Protocol):
         """Super-resolution ×2/×4 of a texture."""
         ...
 
+    def novel_views(self, image: Image.Image, quality: str = "standard") -> dict[str, Image.Image]:
+        """AI-generated "left" / "back" / "right" views of a single front picture (transparent
+        background); `view_poses` says where each one was really seen from."""
+        ...
+
+
+# Zero123++ v1.2 renders a 3×2 grid of 320 px views at azimuths 30, 90, 150, 210, 270, 330 from the
+# input (reading order) and elevations alternating 20° / -10°. Checked on a one-eyed test character:
+# its azimuth turns the camera towards the model's left like ours (cell 1 shows the face looking
+# image-left, as the "left" view does), and no view needs mirroring. The grid has no straight back
+# view, so "back" is the 30°-off one seen from lower down. role -> grid cell; poses in the app's
+# convention: (azimuth from the front towards the model's left, elevation)
+NOVEL_VIEW_MODEL = "sudo-ai/zero123plus-v1.2"
+NOVEL_VIEW_PIPELINE = "sudo-ai/zero123plus-pipeline"  # its custom diffusers pipeline code
+NOVEL_VIEW_CELLS = {"left": 1, "back": 3, "right": 4}
+NOVEL_VIEW_POSES = {"left": (90.0, -10.0), "back": (210.0, -10.0), "right": (270.0, 20.0)}
+NOVEL_VIEW_STEPS = {"draft": 28, "standard": 50, "high": 75}
+NOVEL_VIEW_SIZE = 640
+
 
 def png_bytes(img: Image.Image) -> bytes:
     out = io.BytesIO()
@@ -76,12 +98,16 @@ class DummyBackend:
     """Fake GPU: deterministic shapes and images, with a short delay per stage."""
 
     name = "dummy"
+    view_poses = NOVEL_VIEW_POSES
 
-    def __init__(self, delay: float = 0.2, texture: bool = True, multiview: bool = True, chat: bool = False):
+    def __init__(self, delay: float = 0.2, texture: bool = True, multiview: bool = True, novel_views: bool = True,
+                 chat: bool = False):
         self.delay = delay
         self.texture = texture
         self.multiview = multiview
+        self.views = novel_views
         self.chat_enabled = chat
+        self.last_job: MeshJob | None = None  # lets tests check what the app sent
 
     def capabilities(self) -> set[str]:
         caps = {"text", "image", "concepts", "depth", "upscale"}
@@ -89,9 +115,21 @@ class DummyBackend:
             caps.add("multi_image")
         if self.texture:
             caps.add("retexture")
+        if self.views:
+            caps.add("views")
         if self.chat_enabled:
             caps.add("chat")
         return caps
+
+    def novel_views(self, image: Image.Image, quality: str = "standard") -> dict[str, Image.Image]:
+        """Mirrored, tinted copies of the picture: shapes and colours that tests can tell apart."""
+        time.sleep(self.delay / 2)
+        base = image.convert("RGBA").resize((512, 512))
+        alpha = base.getchannel("A")
+        tinted = Image.blend(base.convert("RGB"), Image.new("RGB", base.size, (40, 90, 220)), 0.5)
+        tinted.putalpha(alpha)
+        back = base.transpose(Image.FLIP_LEFT_RIGHT)
+        return {"left": tinted, "back": back, "right": tinted.transpose(Image.FLIP_LEFT_RIGHT)}
 
     def info(self) -> dict:
         return {"gpu": "ninguna (dummy)", "vram_gb": 0, "models": ["dummy"]}
@@ -127,6 +165,7 @@ class DummyBackend:
     def image_to_mesh(self, job: MeshJob, progress: Progress) -> bytes:
         import trimesh
 
+        self.last_job = job
         for pct, stage in [(10, "Quitando fondo"), (40, "Generando forma"), (80, "Limpiando malla")]:
             progress(pct, stage)
             time.sleep(self.delay)
@@ -163,6 +202,7 @@ class HunyuanBackend:
     """Hunyuan3D-2 family + SD-Turbo, scheduled so peak VRAM stays around 6–7 GB."""
 
     name = "hunyuan"
+    view_poses = NOVEL_VIEW_POSES
 
     def __init__(
         self,
@@ -172,6 +212,7 @@ class HunyuanBackend:
         depth_model: str = "depth-anything/Depth-Anything-V2-Small-hf",
         texture: bool = False,
         multiview: bool = False,
+        novel_views: bool = False,
         device: str = "cuda",
         chat_model: str = "",
     ):
@@ -184,8 +225,9 @@ class HunyuanBackend:
         self._esrgan = None
         self.texture = texture
         self.multiview = multiview
+        self.views = novel_views
         self.device = device
-        self._shape = self._mv = self._paint = self._t2i = self._rembg = self._translator = None
+        self._shape = self._mv = self._paint = self._t2i = self._rembg = self._translator = self._mv_gen = None
         self.chat_model = chat_model
         self._llm = self._llm_tokenizer = None
         self._on_gpu: str | None = None
@@ -200,6 +242,8 @@ class HunyuanBackend:
             caps.add("multi_image")
         if self.texture:
             caps.add("retexture")
+        if self.views:
+            caps.add("views")
         if self.chat_model:
             caps.add("chat")
         return caps
@@ -216,6 +260,8 @@ class HunyuanBackend:
             models.append("tencent/Hunyuan3D-2mv")
         if self.texture:
             models.append("tencent/Hunyuan3D-2 (paint)")
+        if self.views:
+            models.append(NOVEL_VIEW_MODEL)
         if self.chat_model:
             models.append(self.chat_model)
         return {"gpu": gpu, "vram_gb": vram, "models": models, "low_ram": self.low_ram}
@@ -277,6 +323,24 @@ class HunyuanBackend:
             )
         self._activate("t2i")
         return self._t2i
+
+    def _load_mv_gen(self):
+        """Zero123++ (~3 GB in fp16, ~5 GB of VRAM while running), from local Hub snapshots so it
+        also loads offline: its pipeline code lives in a separate repo."""
+        if self._mv_gen is None:
+            import torch
+            from diffusers import DiffusionPipeline, EulerAncestralDiscreteScheduler
+
+            log.info("Cargando %s …", NOVEL_VIEW_MODEL)
+            pipe = DiffusionPipeline.from_pretrained(
+                hub_dir(NOVEL_VIEW_MODEL), custom_pipeline=hub_dir(NOVEL_VIEW_PIPELINE),
+                torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
+            )
+            # sampler recommended for v1.2
+            pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
+            self._mv_gen = pipe
+        self._activate("mv_gen")
+        return self._mv_gen
 
     def _load_paint(self):
         if self._paint is None:
@@ -354,6 +418,27 @@ class HunyuanBackend:
         )
         return list(result.images)
 
+    def novel_views(self, image: Image.Image, quality: str = "standard") -> dict[str, Image.Image]:
+        import torch
+
+        cond = _frame(self._remove_background(image), 320)
+        pipe = self._load_mv_gen()
+        generator = torch.Generator(device="cpu").manual_seed(0)
+        grid = pipe(cond, num_inference_steps=NOVEL_VIEW_STEPS.get(quality, 50), generator=generator).images[0]
+        tile = grid.width // 2
+        views = {}
+        for role, cell in NOVEL_VIEW_CELLS.items():
+            row, col = divmod(cell, 2)
+            view = self._remove_background(grid.crop((col * tile, row * tile, (col + 1) * tile, (row + 1) * tile)))
+            try:  # Real-ESRGAN: 320 px views are too soft to paint a model with
+                rgb = self.upscale(view.convert("RGB"), 4).resize((NOVEL_VIEW_SIZE,) * 2, Image.LANCZOS)
+            except Exception:  # noqa: BLE001 - a plain resize still works
+                log.exception("No se pudo ampliar la vista %s", role)
+                rgb = view.convert("RGB").resize((NOVEL_VIEW_SIZE,) * 2, Image.LANCZOS)
+            rgb.putalpha(view.getchannel("A").resize(rgb.size, Image.LANCZOS))
+            views[role] = rgb
+        return views
+
     def image_to_mesh(self, job: MeshJob, progress: Progress) -> bytes:
         import torch
         from hy3dgen.shapegen import DegenerateFaceRemover, FaceReducer, FloaterRemover
@@ -364,7 +449,7 @@ class HunyuanBackend:
 
         progress(25, "Generando forma 3D")
         try:
-            mesh = self._shape_pass(images, job.seed, steps, octree, progress)
+            mesh = self._shape_pass(images, job.roles, job.seed, steps, octree, progress)
         except Exception as exc:  # noqa: BLE001 - only out-of-memory is retried
             if not _is_oom(exc):
                 raise
@@ -372,7 +457,7 @@ class HunyuanBackend:
             log.warning("Sin memoria de GPU; reintentando con un modelo más ligero")
             progress(30, "Poca memoria de GPU: reintentando en modo ligero")
             self._use_light_model()
-            mesh = self._shape_pass(images[:1], job.seed, steps, min(octree, 320), progress, chunks=4000)
+            mesh = self._shape_pass(images[:1], None, job.seed, steps, min(octree, 320), progress, chunks=4000)
 
         progress(80, "Limpiando malla")
         mesh = FloaterRemover()(mesh)
@@ -384,14 +469,15 @@ class HunyuanBackend:
             mesh = self._load_paint()(mesh, image=images[0])
         return mesh.export(file_type="glb")
 
-    def _shape_pass(self, images, seed: int, steps: int, octree: int, progress: Progress, chunks: int = 8000):
+    def _shape_pass(self, images, roles, seed: int, steps: int, octree: int, progress: Progress,
+                    chunks: int = 8000):
         import torch
 
         generator = torch.Generator(device="cpu").manual_seed(seed)
         if len(images) > 1 and self.multiview:
             progress(15, "Cargando modelo multi-vista")
             pipe = self._load_mv()
-            image_arg = dict(zip(VIEW_NAMES, images))
+            image_arg = dict(zip(roles or VIEW_NAMES, images))
         else:
             progress(15, "Cargando modelo de forma")
             pipe = self._load_shape()
@@ -405,7 +491,7 @@ class HunyuanBackend:
         """Switch to Hunyuan3D-2mini for the rest of the session and remember it for the next start."""
         import torch
 
-        for key in ("shape", "mv", "t2i", "paint"):
+        for key in ("shape", "mv", "t2i", "paint", "mv_gen", "llm"):
             setattr(self, f"_{key}", None)
         self._on_gpu = None
         gc.collect()
@@ -504,6 +590,28 @@ def _is_oom(exc: Exception) -> bool:
     return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
 
 
+def _frame(img: Image.Image, size: int, fill: float = 0.85) -> Image.Image:
+    """Centre a cut-out on a square transparent canvas, the object filling `fill` of it."""
+    img = img.convert("RGBA")
+    box = img.getchannel("A").point(lambda a: 255 if a > 16 else 0).getbbox() or (0, 0, *img.size)
+    obj = img.crop(box)
+    side = int(max(obj.size) / fill)
+    canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    canvas.paste(obj, ((side - obj.width) // 2, (side - obj.height) // 2))
+    return canvas.resize((size, size), Image.LANCZOS)
+
+
+def hub_dir(repo: str) -> str:
+    """Local snapshot of a Hub repo: the cached one when present (no network needed), else download it."""
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.utils import LocalEntryNotFoundError
+
+    try:
+        return snapshot_download(repo, local_files_only=True)
+    except LocalEntryNotFoundError:
+        return snapshot_download(repo)
+
+
 def _fast_decoding(pipe) -> None:
     """FlashVDM (newer Hunyuan3D-2 code): the mesh decoding step goes from minutes to seconds."""
     if hasattr(pipe, "enable_flashvdm"):
@@ -539,7 +647,8 @@ def esrgan_weights() -> str:
 
 
 def prefetch(shape_model: str, shape_subfolder: str, image_model: str, depth_model: str, multiview: bool,
-             texture: bool, say: Callable[[int, str], None], chat_model: str = "") -> None:
+             texture: bool, say: Callable[[int, str], None], novel_views: bool = False,
+             chat_model: str = "") -> None:
     """Download every model the worker will use, once, so the first generation does not wait for it."""
     from huggingface_hub import snapshot_download
 
@@ -562,6 +671,8 @@ def prefetch(shape_model: str, shape_subfolder: str, image_model: str, depth_mod
     if texture:
         jobs.append(("Hunyuan3D-Paint", lambda: snapshot_download(
             "tencent/Hunyuan3D-2", allow_patterns=["hunyuan3d-paint-v2-0/*", "hunyuan3d-delight-v2-0/*"])))
+    if novel_views:  # weights plus the custom pipeline code, so loading later needs no network
+        jobs.append(("Zero123++", lambda: [snapshot_download(r) for r in (NOVEL_VIEW_PIPELINE, NOVEL_VIEW_MODEL)]))
 
     def rembg():
         from hy3dgen.rembg import BackgroundRemover
@@ -582,7 +693,8 @@ def prefetch(shape_model: str, shape_subfolder: str, image_model: str, depth_mod
 
 def build_backend(name: str, **kwargs) -> Backend:
     if name == "dummy":
-        return DummyBackend(**{k: v for k, v in kwargs.items() if k in ("delay", "texture", "multiview", "chat")})
+        return DummyBackend(**{k: v for k, v in kwargs.items()
+                               if k in ("delay", "texture", "multiview", "novel_views", "chat")})
     if name == "hunyuan":
         return HunyuanBackend(**{k: v for k, v in kwargs.items() if k != "delay"})
     raise ValueError(f"Backend desconocido: {name}")

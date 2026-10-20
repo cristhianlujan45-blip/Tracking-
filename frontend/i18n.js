@@ -266,8 +266,8 @@ const EN = {
   "Recomendado. Ilimitado y privado en tu NVIDIA RTX: se instala y arranca sola, sin claves.": "Recommended. Unlimited and private on your NVIDIA RTX: installs and starts by itself, no keys.",
   "Opcional y de pago por uso: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy. Necesita clave.": "Optional, pay per use: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy. Needs a key.",
   "Comprobando la IA local…": "Checking the local AI…", "Instalar IA gratis en mi GPU": "Install free AI on my GPU",
-  "Una sola vez: descarga ≈20 GB (PyTorch, Hunyuan3D-2, SDXL-Turbo). Después arranca sola cada vez que generas: gratis, sin límites, sin claves.":
-    "One time only: downloads ≈20 GB (PyTorch, Hunyuan3D-2, SDXL-Turbo). After that it starts by itself whenever you generate: free, unlimited, no keys.",
+  "Una sola vez: descarga ≈30 GB (PyTorch, Hunyuan3D-2, Zero123++, SDXL-Turbo). Después arranca sola cada vez que generas: gratis, sin límites, sin claves.":
+    "One time only: downloads ≈30 GB (PyTorch, Hunyuan3D-2, Zero123++, SDXL-Turbo). After that it starts by itself whenever you generate: free, unlimited, no keys.",
   "Avanzado: usar un servidor IA de otro equipo": "Advanced: use an AI server on another computer",
   "Instalando…": "Installing…", "La instalación falló: {e}": "The install failed: {e}",
   "✔ IA local instalada y funcionando": "✔ Local AI installed and running",
@@ -284,7 +284,7 @@ const EN = {
   "Instalando Python": "Installing Python", "Instalando PyTorch con CUDA (≈3 GB)": "Installing PyTorch with CUDA (≈3 GB)",
   "Instalando Hunyuan3D-2 y el servidor de IA": "Installing Hunyuan3D-2 and the AI server",
   "Comprobando que PyTorch ve tu GPU": "Checking that PyTorch sees your GPU",
-  "Descargando los modelos de IA (≈15 GB, solo una vez)": "Downloading the AI models (≈15 GB, one time only)",
+  "Descargando los modelos de IA (≈25 GB, solo una vez)": "Downloading the AI models (≈25 GB, one time only)",
   "Terminando": "Finishing", "Listo": "Done", "Modelos listos": "Models ready",
   "La IA local aún no está instalada: abre Ajustes → «Mi GPU» → Instalar (gratis)": "The local AI is not installed yet: open Settings → “My GPU” → Install (free)",
   "No se encontró una tarjeta NVIDIA con su driver instalado: actualiza el driver (nvidia.com/drivers) y vuelve a intentarlo": "No NVIDIA card with its driver was found: update the driver (nvidia.com/drivers) and try again",
@@ -358,6 +358,7 @@ const EN = {
   "Enviando a Meshy 7 Retexture": "Sending to Meshy 7 Retexture", "Estimando profundidad": "Estimating depth",
   "Estimando profundidad con IA": "Estimating depth with AI", "Generando imagen de la textura": "Generating the texture image",
   "Generando imagen de referencia": "Generating a reference image", "Generando imagen de referencia en tu GPU": "Generating a reference image on your GPU",
+  "Generando vistas laterales y de espalda": "Generating side and back views",
   "Remallado en quads (Instant Meshes)": "Quad remeshing (Instant Meshes)", "Remallando": "Remeshing", "Reparando malla": "Repairing mesh",
   "Dividiendo en piezas": "Splitting into parts", "Importando modelo": "Importing model",
   "Demo (sin IA)": "Demo (no AI)", "Formas procedurales para probar la app.": "Procedural shapes to try the app.",

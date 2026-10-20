@@ -53,9 +53,16 @@ class UpscaleIn(BaseModel):
     scale: int = Field(4, ge=2, le=4)
 
 
+class ViewsIn(BaseModel):
+    image: str  # base64, the front picture
+    quality: Literal["draft", "standard", "high"] = "standard"
+
+
 class TaskIn(BaseModel):
     kind: Literal["mesh", "texture"] = "mesh"
     images: list[str] = Field(min_length=1, max_length=4)  # base64 (PNG/JPG/WEBP)
+    # view of each image; default: front, left, back, right in that order
+    roles: list[Literal["front", "left", "back", "right"]] | None = None
     seed: int = Field(0, ge=0, le=2**32 - 1)
     quality: Literal["draft", "standard", "high"] = "standard"
     mesh_glb: str | None = None  # base64, required for kind="texture"
@@ -196,6 +203,22 @@ def create_app(backend: Backend, token: str | None = None) -> FastAPI:
             raise HTTPException(500, friendly_error(exc)) from exc
         return {"image": base64.b64encode(png_bytes(result)).decode()}
 
+    @app.post("/views")
+    async def views(body: ViewsIn):
+        """Side and back views of a single front picture, plus the (azimuth, elevation) each was seen from."""
+        if "views" not in backend.capabilities():
+            raise HTTPException(400, "Este worker no genera vistas laterales")
+        image = decode_image(body.image)
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(gpu, backend.novel_views, image, body.quality)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Generación de vistas falló")
+            raise HTTPException(500, friendly_error(exc)) from exc
+        poses = getattr(backend, "view_poses", {})
+        return {"views": {role: base64.b64encode(png_bytes(img)).decode() for role, img in result.items()},
+                "poses": {role: list(poses[role]) for role in result if role in poses}}
+
     @app.post("/tasks", status_code=202)
     async def create_task(body: TaskIn):
         prune()
@@ -204,11 +227,13 @@ def create_app(backend: Backend, token: str | None = None) -> FastAPI:
                 raise HTTPException(400, "El texturizado está desactivado en este worker")
             if not body.mesh_glb:
                 raise HTTPException(400, "Falta mesh_glb")
+        if body.roles is not None and (len(body.roles) != len(body.images) or len(set(body.roles)) != len(body.roles)):
+            raise HTTPException(400, "roles debe dar una vista distinta para cada imagen")
         if len(body.images) > 1 and "multi_image" not in backend.capabilities():
-            body.images = body.images[:1]
+            body.images, body.roles = body.images[:1], None
         job = MeshJob(
             images=[decode_image(i) for i in body.images], seed=body.seed, quality=body.quality,
-            mesh_glb=base64.b64decode(body.mesh_glb) if body.mesh_glb else None,
+            mesh_glb=base64.b64decode(body.mesh_glb) if body.mesh_glb else None, roles=body.roles,
         )
         task = Task(id=uuid.uuid4().hex)
         with lock:

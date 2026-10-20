@@ -6,7 +6,9 @@ Each view is an orthographic picture of the model (transparent background). The 
 to face +Z with +Y up, as in glTF. For every point the views that see it (depth-tested) are blended
 by how squarely they face the surface; points no view sees (top of the head, armpits…) get the
 colour of their neighbours by diffusion over the mesh. With a single picture the back is painted
-from the front's colour regions (mirrored, without its details: no second face on the back).
+from the front's colour regions (mirrored, without its details: no second face on the back), unless
+the local AI generated side/back views for it: those come with the pose (azimuth, elevation) they
+were really seen from and a lower trust than real pictures.
 
 `paint_glb` bakes the result into a real UV texture (xatlas unwrap, 2048 px), so the detail of the
 pictures survives instead of being limited by the vertex count; without xatlas it falls back to
@@ -24,14 +26,20 @@ from scipy import ndimage, sparse
 
 from .geometry import load_scene, mesh_to_glb
 
-# camera direction (from the model towards the camera) and the image axes in model space
-VIEWS = {
-    "front": (np.array([0, 0, 1.0]), np.array([1.0, 0, 0])),
-    "back": (np.array([0, 0, -1.0]), np.array([-1.0, 0, 0])),
-    "left": (np.array([1.0, 0, 0]), np.array([0, 0, -1.0])),   # the model's left side: its face looks image-left
-    "right": (np.array([-1.0, 0, 0]), np.array([0, 0, 1.0])),
-}
-UP = np.array([0, 1.0, 0])
+
+def view_axes(azimuth: float, elevation: float = 0.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Camera direction (from the model towards the camera), image right and image up in model space
+    for a camera orbiting the model: azimuth 0 = front, 90 = the model's left side (+X), 180 = back;
+    elevation > 0 looks down from above."""
+    az, el = np.radians(azimuth), np.radians(elevation)
+    cam = np.array([np.sin(az) * np.cos(el), np.sin(el), np.cos(az) * np.cos(el)])
+    right = np.array([np.cos(az), 0.0, -np.sin(az)])
+    return cam, right, np.cross(cam, right)
+
+
+# the model's left side: camera at +X, its face looks image-left
+AZIMUTHS = {"front": 0, "left": 90, "back": 180, "right": 270}
+VIEWS = {name: view_axes(az) for name, az in AZIMUTHS.items()}
 
 
 class ProjectionError(Exception):
@@ -111,13 +119,14 @@ class _View:
     """One picture placed on the model: alignment, depth buffer and per-point colour + trust."""
 
     def __init__(self, name: str, image: Image.Image, verts: np.ndarray, size: float, depth_res: int,
-                 trust: float = 1.0):
-        self.cam, self.right = VIEWS[name]
+                 trust: float = 1.0, pose: tuple[float, float] | None = None):
+        # pose (azimuth, elevation) places pictures taken off the four axes, e.g. AI-generated views
+        self.cam, self.right, self.up = view_axes(*pose) if pose else VIEWS[name]
         self.trust = trust * (0.8 if name in ("left", "right") else 1.0)  # side pictures are usually narrower
         self.img = np.asarray(image.convert("RGBA"), dtype=float)
         box = _alpha_box(self.img)
         mask = self.img[..., 3] > 128
-        a, b = verts @ self.right, verts @ UP  # image axes in model units
+        a, b = verts @ self.right, verts @ self.up  # image axes in model units
         self.mid = ((a.max() + a.min()) / 2, (b.max() + b.min()) / 2)
         self.sx, self.sy, self.cx, self.cy = _align(a, b, mask, box)
         # outlines and anti-aliasing live at the edge of the drawing: trust pixels well inside it
@@ -140,7 +149,7 @@ class _View:
         return np.clip(np.round((pts2d - self.lo) * self.zscale).astype(int), 0, self.res - 1)
 
     def colour(self, points: np.ndarray, normals: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        a, b = points @ self.right, points @ UP
+        a, b = points @ self.right, points @ self.up
         u = self.cx + (a - self.mid[0]) * self.sx
         v = self.cy - (b - self.mid[1]) * self.sy
         rgb, alpha = _sample(self.img, u, v)
@@ -179,21 +188,26 @@ def _back_from_front(front: Image.Image) -> Image.Image:
     return out
 
 
-def _prepare(mesh: trimesh.Trimesh, views: dict[str, Image.Image], mirror_side: bool,
-             depth_res: int) -> list[_View]:
+def _prepare(mesh: trimesh.Trimesh, views: dict[str, Image.Image], mirror_side: bool, depth_res: int,
+             trust: dict[str, float] | None = None, poses: dict[str, tuple[float, float]] | None = None) -> list[_View]:
     views = {k: v for k, v in views.items() if k in VIEWS and v is not None}
     if not views:
         raise ProjectionError("Hacen falta vistas (frente, lateral o espalda) para texturizar")
-    trust = {}
+    trust, poses = dict(trust or {}), dict(poses or {})
     if mirror_side:  # symmetric characters: the missing side is the mirror of the other one
         for a, b in (("left", "right"), ("right", "left")):
             if a in views and b not in views:
                 views[b] = views[a].transpose(Image.FLIP_LEFT_RIGHT)
+                if a in trust:
+                    trust[b] = trust[a]
+                if a in poses:  # mirrored camera: azimuth -az
+                    poses[b] = ((360 - poses[a][0]) % 360, poses[a][1])
     if set(views) == {"front"}:
         views["back"], trust["back"] = _back_from_front(views["front"]), 0.5
     verts = np.asarray(mesh.vertices, dtype=float)
     size = float(np.ptp(verts, axis=0).max())
-    return [_View(name, image, verts, size, depth_res, trust.get(name, 1.0)) for name, image in views.items()]
+    return [_View(name, image, verts, size, depth_res, trust.get(name, 1.0), poses.get(name))
+            for name, image in views.items()]
 
 
 def _blend(prepared: list[_View], points: np.ndarray, normals: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -215,9 +229,10 @@ def _vertex_colours(mesh: trimesh.Trimesh, prepared: list[_View]) -> np.ndarray:
 
 
 def project_views(mesh: trimesh.Trimesh, views: dict[str, Image.Image], mirror_side: bool = True,
-                  depth_res: int = 384) -> trimesh.Trimesh:
+                  depth_res: int = 384, trust: dict[str, float] | None = None,
+                  poses: dict[str, tuple[float, float]] | None = None) -> trimesh.Trimesh:
     """Vertex-coloured copy of `mesh` painted from its views."""
-    prepared = _prepare(mesh, views, mirror_side, depth_res)
+    prepared = _prepare(mesh, views, mirror_side, depth_res, trust, poses)
     mesh = mesh.copy()
     colors = _vertex_colours(mesh, prepared)
     rgba = np.column_stack([colors, np.full(len(colors), 255)]).astype(np.uint8)
@@ -226,11 +241,14 @@ def project_views(mesh: trimesh.Trimesh, views: dict[str, Image.Image], mirror_s
 
 
 def bake_views(mesh: trimesh.Trimesh, views: dict[str, Image.Image], size: int = 2048, mirror_side: bool = True,
-               depth_res: int = 512) -> trimesh.Trimesh:
-    """Textured copy of `mesh`: UV-unwrapped with xatlas and every texel painted from the views."""
+               depth_res: int = 512, trust: dict[str, float] | None = None,
+               poses: dict[str, tuple[float, float]] | None = None) -> trimesh.Trimesh:
+    """Textured copy of `mesh`: UV-unwrapped with xatlas and every texel painted from the views.
+    `trust` weighs views by role (e.g. AI-generated ones below real pictures), `poses` gives
+    (azimuth, elevation) for views not taken square on the four axes."""
     import xatlas
 
-    prepared = _prepare(mesh, views, mirror_side, depth_res)
+    prepared = _prepare(mesh, views, mirror_side, depth_res, trust, poses)
     verts = np.asarray(mesh.vertices, dtype=float)
     normals = np.asarray(mesh.vertex_normals, dtype=float)
     vcol = _vertex_colours(mesh, prepared)  # smooth fallback where no picture is trustworthy
@@ -288,8 +306,10 @@ def bake_views(mesh: trimesh.Trimesh, views: dict[str, Image.Image], size: int =
 ROLES = ["front", "left", "back", "right"]  # order of the app's multi-view slots
 
 
-def paint_glb(glb: bytes, images: list[bytes], roles: list[str] | None = None) -> bytes:
-    """Vertex-colour an untextured model from its input pictures; textured models are returned as is."""
+def paint_glb(glb: bytes, images: list[bytes], roles: list[str] | None = None,
+              trust: dict[str, float] | None = None, poses: dict[str, tuple[float, float]] | None = None) -> bytes:
+    """Paint an untextured model from its input pictures; textured models are returned as is.
+    `trust` and `poses` are per role, see `bake_views`."""
     from .sheet import remove_background
 
     scene = load_scene(glb)
@@ -301,9 +321,9 @@ def paint_glb(glb: bytes, images: list[bytes], roles: list[str] | None = None) -
         views[role] = remove_background(Image.open(io.BytesIO(data)))
     mesh = trimesh.util.concatenate(meshes) if len(meshes) > 1 else meshes[0]
     try:
-        return mesh_to_glb(bake_views(mesh, views))
+        return mesh_to_glb(bake_views(mesh, views, trust=trust, poses=poses))
     except ImportError:  # xatlas missing: vertex colours still look right, just less detailed
-        return mesh_to_glb(project_views(mesh, views))
+        return mesh_to_glb(project_views(mesh, views, trust=trust, poses=poses))
 
 
 def _diffuse(mesh: trimesh.Trimesh, colors: np.ndarray, known: np.ndarray, iterations: int = 400) -> np.ndarray:

@@ -43,7 +43,7 @@ PREMIUM_ARGS = [
     "--shape-model", "tencent/Hunyuan3D-2", "--shape-subfolder", "hunyuan3d-dit-v2-0",
     "--image-model", "stabilityai/sdxl-turbo",
     "--depth-model", "depth-anything/Depth-Anything-V2-Base-hf",
-    "--multiview",
+    "--multiview", "--novel-views",
     "--chat-model", "Qwen/Qwen2.5-1.5B-Instruct",  # the assistant's free local text model (~3 GB)
 ]
 
@@ -56,13 +56,13 @@ STEPS = [
     ("Instalando Hunyuan3D-2 y el servidor de IA", 15),
     ("Comprobando que PyTorch ve tu GPU", 3),
     ("Instalando el pintor de texturas con IA", 2),
-    ("Descargando los modelos de IA (≈15 GB, solo una vez)", 38),
+    ("Descargando los modelos de IA (≈25 GB, solo una vez)", 38),
     ("Terminando", 2),
 ]
 
 
 MIN_DRIVER = (570, 0)  # CUDA 12.8
-MIN_FREE_GB = 25
+MIN_FREE_GB = 35
 
 
 def _driver_version(line: str) -> tuple[int, int] | None:
@@ -438,7 +438,7 @@ class LocalAI:
                 skip -= 1
             elif arg in ("--shape-model", "--shape-subfolder"):
                 skip = 1
-            elif arg != "--multiview":
+            elif arg not in ("--multiview", "--novel-views"):  # both need the big multi-view model
                 args.append(arg)
         return args + ["--shape-model", "tencent/Hunyuan3D-2mini", "--shape-subfolder", "hunyuan3d-dit-v2-mini"]
 

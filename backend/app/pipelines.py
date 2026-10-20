@@ -12,6 +12,9 @@ from .jobs import Work
 from .providers import GenerationRequest, GenerationResult, InputImage, Provider
 from .providers.base import ProgressCallback
 
+# generated views are plausible, not exact: real pictures win wherever both see the surface
+GENERATED_VIEW_TRUST = 0.6
+
 
 def generation(provider: Provider, req: GenerationRequest) -> Work:
     async def work(on_progress: ProgressCallback) -> GenerationResult:
@@ -19,8 +22,14 @@ def generation(provider: Provider, req: GenerationRequest) -> Work:
         if getattr(provider, "paints_from_views", False):
             pictures = [img.data for img in req.images] or ([result.reference_image] if result.reference_image else [])
             if pictures:
+                roles, trust = projection.ROLES[:len(pictures)], {}
+                for role, data in result.views.items():  # AI side/back views of a single picture
+                    if role not in roles:
+                        roles, pictures = [*roles, role], [*pictures, data]
+                        trust[role] = GENERATED_VIEW_TRUST
                 await on_progress(97, "Pintando el modelo desde las imágenes")
-                result.model_glb = await asyncio.to_thread(projection.paint_glb, result.model_glb, pictures)
+                result.model_glb = await asyncio.to_thread(
+                    projection.paint_glb, result.model_glb, pictures, roles, trust, result.view_poses)
         if req.style in ("lowpoly", "voxel", "sculpture"):
             await on_progress(96, "Aplicando estilo")
             result.model_glb = await asyncio.to_thread(geometry.apply_style, result.model_glb, req.style)

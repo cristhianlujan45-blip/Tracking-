@@ -145,7 +145,7 @@ def test_pre_checks_explain_old_driver_and_full_disk(tmp_path, monkeypatch):
 
     monkeypatch.setattr(la, "find_nvidia_smi", lambda: fake_smi("581.57"))
     monkeypatch.setattr(la.shutil, "disk_usage", lambda p: type("U", (), {"free": 10 * 1024**3})())
-    with pytest.raises(la.LocalAIError, match="25 GB libres"):
+    with pytest.raises(la.LocalAIError, match="35 GB libres"):
         asyncio.run(ai._step0(0, 2))
 
 

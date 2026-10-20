@@ -9,7 +9,7 @@ Descarga la última versión desde la página **Releases** del repositorio (se c
 - **Windows 10/11 (64 bits):** `Forja3D-Setup-x.y.z.exe` → ejecútalo. Crea el acceso directo y abre la app en su propia ventana. Si SmartScreen avisa, pulsa «Más información» → «Ejecutar de todas formas» (el instalador no está firmado).
 - **macOS (Apple Silicon):** `Forja3D-x.y.z-mac-arm64.dmg` → arrastra Forja3D a Aplicaciones. La primera vez: clic derecho → «Abrir» (no está firmada por Apple).
 
-**IA gratis en tu GPU, sin configurar nada.** En Windows con una NVIDIA RTX (8 GB bastan, incluida la serie 50) la app instala sola su IA la primera vez que la abres (≈20 GB, una única vez, con barra de progreso) y la arranca cada vez que generas: sin claves, sin tokens, sin scripts y sin límite de generaciones. Usa la máxima calidad que cabe en 8 GB: Hunyuan3D-2 (forma) con FlashVDM, Hunyuan3D-2mv (varias vistas), SDXL-Turbo (conceptos), Depth Anything V2 Base y Real-ESRGAN, y traduce sola tus descripciones en español. También se puede instalar o reparar desde **Ajustes → Mi GPU**.
+**IA gratis en tu GPU, sin configurar nada.** En Windows con una NVIDIA RTX (8 GB bastan, incluida la serie 50) la app instala sola su IA la primera vez que la abres (≈30 GB, una única vez, con barra de progreso) y la arranca cada vez que generas: sin claves, sin tokens, sin scripts y sin límite de generaciones. Usa la máxima calidad que cabe en 8 GB: Hunyuan3D-2 (forma) con FlashVDM, Hunyuan3D-2mv (varias vistas), Zero123++ (laterales y espalda de una sola imagen), SDXL-Turbo (conceptos), Depth Anything V2 Base y Real-ESRGAN, y traduce sola tus descripciones en español. También se puede instalar o reparar desde **Ajustes → Mi GPU**.
 
 La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por uso a fal.ai con tu clave. Tus modelos y ajustes se guardan en `%APPDATA%\Forja3D` (Windows) o `~/Library/Application Support/Forja3D` (Mac). En Mac (sin NVIDIA) usa la nube o el modo demo.
 
@@ -18,6 +18,7 @@ La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por
 **Crear**
 - **Texto → 3D** con 7 estilos, simetría, pose A/T y semilla; **conceptos primero** (4 imágenes, eliges una y pasa a 3D).
 - **Imagen → 3D** y **multi-vista → 3D** (frente, lateral, espalda, lateral derecho).
+- **Vistas laterales y de espalda con IA**: con una sola imagen (o tras el concepto de Texto → 3D), la IA local genera con Zero123++ los dos lados y la espalda, que alimentan la forma multi-vista y el pintado del modelo en lugar de inventar la parte de atrás.
 - **Hoja de personaje**: sube un *model sheet* y Forja3D encuentra y recorta solo las vistas de frente, lado y espalda (con fondo transparente) para generar el modelo multi-vista.
 - Motores de primera línea en la nube: **Hunyuan3D 3**, **TRELLIS 2**, **Tripo H3.1** y **Meshy 6** (PBR, hasta 1 M de caras); en tu GPU, **Hunyuan3D-2mini/2mv**.
 - **Escena / foto → 3D**: escena 2.5D, relieve y litofanía a partir de la profundidad estimada con IA.
@@ -92,7 +93,7 @@ La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por
 Se eligen en **Ajustes** dentro de la app (o con `GEN_PROVIDER` en `.env` para servidores):
 
 - **Nube (fal.ai)**: pega tu clave de <https://fal.ai/dashboard/keys>. Motores 3D: Hunyuan3D 3 (por defecto), TRELLIS 2, Tripo H3.1, Meshy 6, TRELLIS 1; FLUX para conceptos; Meshy 7 para retexturizar; Real-ESRGAN y Depth Anything.
-- **Mi GPU** (`local`, gratis): la app instala y arranca sola Hunyuan3D-2 + FlashVDM, Hunyuan3D-2mv, SDXL-Turbo, Depth Anything V2, Real-ESRGAN y el traductor Opus-MT en tu NVIDIA (8 GB bastan). Los scripts `scripts/windows/instalar.bat` / `iniciar.bat` siguen disponibles para usarla desde el código fuente.
+- **Mi GPU** (`local`, gratis): la app instala y arranca sola Hunyuan3D-2 + FlashVDM, Hunyuan3D-2mv, Zero123++, SDXL-Turbo, Depth Anything V2, Real-ESRGAN y el traductor Opus-MT en tu NVIDIA (8 GB bastan). Los scripts `scripts/windows/instalar.bat` / `iniciar.bat` siguen disponibles para usarla desde el código fuente.
 - **Demo** (`mock`): sin IA, formas procedurales para probar todo el flujo.
 
 Las herramientas de geometría, rig, animación, texturas HD (sin IA, con reescalado de calidad) y exportación funcionan en local con cualquier proveedor.
