@@ -607,6 +607,15 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         tail("forja3d.log", Path(state.settings.data_dir) / "forja3d.log", 25)
         return {"text": "\n".join(lines)}
 
+    @app.put("/api/local-ai/textures")
+    async def local_ai_textures(request: Request, enabled: bool = Query(...)):
+        ai = request.app.state.local_ai
+        if enabled and not ai.status()["ai_textures_available"]:
+            raise HTTPException(400, "El pintor de texturas con IA no está instalado en tu equipo")
+        ai.set_ai_textures(enabled)
+        request.app.state.provider.info = {}  # capabilities are read again from the restarted worker
+        return ai.status()
+
     @app.post("/api/local-ai/install")
     async def local_ai_install(request: Request):
         if settings_locked():

@@ -24,10 +24,15 @@ from pathlib import Path
 
 import httpx
 
+from ._version import UPDATE_REPO
+
 log = logging.getLogger(__name__)
 
 VERSION = 1
 TORCH_INDEX = "https://download.pytorch.org/whl/cu128"  # CUDA 12.8: first build with RTX 50 (Blackwell) kernels
+# pinned: the prebuilt texture rasterizer (.github/workflows/ai-wheels.yml) is compiled against it
+TORCH_PKGS = ("torch==2.11.0", "torchvision==0.26.0")
+WHEELS_TAG = "ai-wheels-v1"
 HUNYUAN_ZIP = "https://github.com/Tencent/Hunyuan3D-2/archive/refs/heads/main.zip"
 HUNYUAN_PYPI = "hy3dgen==2.0.2"  # fallback when GitHub is unreachable (older, without FlashVDM)
 UV_URL = "https://github.com/astral-sh/uv/releases/latest/download/{asset}"
@@ -50,7 +55,8 @@ STEPS = [
     ("Instalando PyTorch con CUDA (≈3 GB)", 30),
     ("Instalando Hunyuan3D-2 y el servidor de IA", 15),
     ("Comprobando que PyTorch ve tu GPU", 3),
-    ("Descargando los modelos de IA (≈15 GB, solo una vez)", 40),
+    ("Instalando el pintor de texturas con IA", 2),
+    ("Descargando los modelos de IA (≈15 GB, solo una vez)", 38),
     ("Terminando", 2),
 ]
 
@@ -175,6 +181,9 @@ class LocalAI:
             "error": self.error,
             "running": self.running,
             "url": self.url,
+            "light_mode": self.light_mode,
+            "ai_textures_available": (self.root / "texturas_ia.txt").is_file(),
+            "ai_textures": self.ai_textures,
             "log": list(self.log)[-12:],
         }
 
@@ -295,7 +304,7 @@ class LocalAI:
             await self._run(self._uv(), "venv", str(self.root / "venv"), "--python", "3.11", start=start)
 
     async def _step3(self, start, share):  # PyTorch
-        await self._run(self._uv(), "pip", "install", "--python", str(self.python), "torch", "torchvision",
+        await self._run(self._uv(), "pip", "install", "--python", str(self.python), *TORCH_PKGS,
                         "--index-url", TORCH_INDEX, start=start)
 
     async def _step4(self, start, share):  # Hunyuan3D-2 + worker
@@ -317,7 +326,7 @@ class LocalAI:
         shutil.copytree(worker_src / "worker", self.root / "worker", dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("__pycache__"))
         await self._run(self._uv(), "pip", "install", "--python", str(self.python), hunyuan,
-                        "-r", str(worker_src / "requirements.txt"), start=start)
+                        "-r", str(worker_src / "requirements.txt"), *TORCH_PKGS, start=start)  # keep the CUDA torch
 
     async def _step5(self, start, share):  # torch must still be the CUDA build
         check = ("import torch,sys; ok=torch.cuda.is_available() and torch.version.cuda is not None; "
@@ -328,14 +337,29 @@ class LocalAI:
         except LocalAIError:
             self._say("Reinstalando PyTorch con CUDA…")
             await self._run(self._uv(), "pip", "install", "--python", str(self.python), "--reinstall-package", "torch",
-                            "--reinstall-package", "torchvision", "torch", "torchvision", "--index-url", TORCH_INDEX,
+                            "--reinstall-package", "torchvision", *TORCH_PKGS, "--index-url", TORCH_INDEX,
                             start=start)
             await self._run(str(self.python), "-c", check, start=start)
 
-    async def _step6(self, start, share):  # models
-        await self._run(str(self.python), "-m", "worker", "--prefetch", *self.worker_args, start=start, share=share)
+    async def _step6(self, start, share):  # optional: prebuilt rasterizer for Hunyuan3D-Paint (AI textures)
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=300) as client:
+                resp = await client.get(f"https://api.github.com/repos/{UPDATE_REPO}/releases/tags/{WHEELS_TAG}")
+                resp.raise_for_status()
+                asset = next(a for a in resp.json()["assets"] if a["name"].startswith("custom_rasterizer")
+                             and a["name"].endswith("win_amd64.whl"))
+                wheel = self.root / asset["name"]
+                wheel.write_bytes((await client.get(asset["browser_download_url"])).content)
+            await self._run(self._uv(), "pip", "install", "--python", str(self.python), str(wheel), start=start)
+            (self.root / "texturas_ia.txt").write_text(asset["name"], encoding="utf-8")
+        except (httpx.HTTPError, StopIteration, KeyError, ValueError, LocalAIError) as exc:
+            self._say(f"Pintor de texturas con IA no disponible ({exc.__class__.__name__}); "
+                      "se usan las texturas proyectadas desde tus imágenes")
 
-    async def _step7(self, start, share):  # free the download cache (several GB)
+    async def _step7(self, start, share):  # models
+        await self._run(str(self.python), "-m", "worker", "--prefetch", *self.args(), start=start, share=share)
+
+    async def _step8(self, start, share):  # free the download cache (several GB)
         if self._uv():
             try:
                 await self._run(self._uv(), "cache", "clean", start=start)
@@ -391,9 +415,23 @@ class LocalAI:
         """The worker ran out of GPU memory with the full model once: start it with the light one."""
         return (self.root / "modo_ligero.txt").is_file()
 
+    @property
+    def ai_textures(self) -> bool:
+        """Hunyuan3D-Paint is usable (its rasterizer installed) and the user turned it on."""
+        return (self.root / "texturas_ia.txt").is_file() and (self.root / "texturas_ia_activadas.txt").is_file()
+
+    def set_ai_textures(self, enabled: bool) -> None:
+        flag = self.root / "texturas_ia_activadas.txt"
+        if enabled:
+            flag.write_text("1", encoding="utf-8")
+        else:
+            flag.unlink(missing_ok=True)
+        self.stop()  # the next generation starts the worker with the new setting
+
     def args(self) -> list[str]:
+        extra = ["--texture"] if self.ai_textures and "--texture" not in self.worker_args else []
         if not self.light_mode:
-            return list(self.worker_args)
+            return list(self.worker_args) + extra
         args, skip = [], 0
         for arg in self.worker_args:
             if skip:

@@ -245,7 +245,11 @@ const EN = {
   "Guardar": "Save", "Cerrar": "Close", "¡Ajustes guardados!": "Settings saved!",
 
   // ---------------------------------------------------------------- free local AI
-  "Mi GPU · gratis": "My GPU · free", "Publicar": "Publish",
+  "Mi GPU · gratis": "My GPU · free",
+  "Texturas con IA de Tencent (beta: más lento con 8 GB)": "AI textures by Tencent (beta: slower with 8 GB)",
+  "Texturas con IA activadas: se aplican desde la próxima generación": "AI textures on: they apply from the next generation",
+  "Texturas con IA desactivadas": "AI textures off", "Instalando el pintor de texturas con IA": "Installing the AI texture painter",
+  "El pintor de texturas con IA no está instalado en tu equipo": "The AI texture painter is not installed on your computer", "Publicar": "Publish",
   "Descarga un paquete con el 3MF y el STL a tu medida, fotos y la descripción lista para pegar, y abre la página de subida.": "Downloads a kit with the 3MF and STL at your size, pictures and a ready-to-paste description, and opens the upload page.",
   "Preparando el paquete para {s}: sube los archivos y pega la descripción": "Preparing the kit for {s}: upload the files and paste the description",
   "Actualizar ahora": "Update now", "Descargar": "Download", "Más tarde": "Later",

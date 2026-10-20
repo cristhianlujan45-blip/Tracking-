@@ -12,6 +12,15 @@ export function initLocalAI(context) {
   ctx = context;
   $("#btnInstallAI").addEventListener("click", install);
   $("#btnDiag").addEventListener("click", copyDiagnostics);
+  $("#aiTextures").addEventListener("change", async (e) => {
+    try {
+      render(await ctx.api(`/api/local-ai/textures?enabled=${e.target.checked}`, { method: "PUT" }));
+      ctx.toast(e.target.checked ? t("Texturas con IA activadas: se aplican desde la próxima generación") : t("Texturas con IA desactivadas"));
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      ctx.toast(err.message, true);
+    }
+  });
   $("#aiBanner").addEventListener("click", () => ctx.openSettings());
   const s = ctx.config()?.local_ai;
   if (s?.installing) refreshLocalAI();
@@ -101,6 +110,8 @@ function render(s) {
   const button = $("#btnInstallAI");
   button.hidden = s.installing || !s.supported || (s.installed && !s.error);
   button.textContent = s.error ? t("Reintentar instalación") : t("Instalar IA gratis en mi GPU");
+  $("#aiTexturesBox").hidden = !s.ai_textures_available;
+  $("#aiTextures").checked = !!s.ai_textures;
   $("#aiBanner").hidden = !s.installing;
   $("#aiBannerText").textContent = `${t("Instalando la IA gratis en tu GPU")} — ${tr(s.step) || ""}`;
   $("#aiBannerPct").textContent = `· ${pct}`;

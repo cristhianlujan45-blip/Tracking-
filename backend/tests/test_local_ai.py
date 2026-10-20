@@ -165,3 +165,16 @@ def test_diagnostics_text(tmp_path):
         text = client.get("/api/diagnostics").json()["text"]
         assert text.startswith("Forja3D ") and "IA local: instalada=False" in text and "Disco libre" in text
         assert client.get("/api/config").json()["version"]
+
+
+def test_ai_textures_toggle(tmp_path):
+    settings = Settings(provider="mock", data_dir=tmp_path, mock_step_delay=0)
+    with TestClient(create_app(settings)) as client:
+        assert client.put("/api/local-ai/textures", params={"enabled": True}).status_code == 400  # not installed
+        ai = client.app.state.local_ai
+        ai.root.mkdir(parents=True, exist_ok=True)
+        (ai.root / "texturas_ia.txt").write_text("custom_rasterizer.whl")
+        body = client.put("/api/local-ai/textures", params={"enabled": True}).json()
+        assert body["ai_textures"] and "--texture" in ai.args()
+        assert not client.put("/api/local-ai/textures", params={"enabled": False}).json()["ai_textures"]
+        assert "--texture" not in ai.args()

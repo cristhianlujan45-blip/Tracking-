@@ -1,0 +1,63 @@
+name: AI wheels (Hunyuan3D-Paint for Windows)
+
+# Hunyuan3D-Paint needs a compiled CUDA rasterizer. Building it on the user's PC needs Visual
+# Studio and the CUDA toolkit, so it is built here once and published as a release asset that the
+# app's AI installer downloads (it must match the torch version pinned in backend/app/local_ai.py).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ccr-90c69cc6-siyqqi, main]
+    paths: [.github/workflows/ai-wheels.yml]
+
+permissions:
+  contents: write
+
+env:
+  TORCH: "2.11.0"
+  WHEELS_TAG: ai-wheels-v1
+
+jobs:
+  rasterizer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: Jimver/cuda-toolkit@v0.2.24
+        with:
+          cuda: "12.8.0"
+          method: network
+          sub-packages: '["nvcc", "cudart", "visual_studio_integration", "cublas_dev", "cusparse_dev", "cusolver_dev", "curand_dev", "nvrtc_dev"]'
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build custom_rasterizer
+        shell: pwsh
+        env:
+          TORCH_CUDA_ARCH_LIST: "8.6;8.9;12.0+PTX"  # RTX 30, 40 and 50 series
+          DISTUTILS_USE_SDK: "1"
+        run: |
+          python -m pip install --upgrade pip wheel setuptools ninja
+          python -m pip install "torch==$env:TORCH" --index-url https://download.pytorch.org/whl/cu128
+          git clone --depth 1 https://github.com/Tencent/Hunyuan3D-2 hy
+          cd hy/hy3dgen/texgen/custom_rasterizer
+          python setup.py bdist_wheel
+          New-Item -ItemType Directory -Force ../../../../wheels | Out-Null
+          Copy-Item dist/*.whl ../../../../wheels/
+          python -m pip install (Get-ChildItem dist/*.whl).FullName
+          Get-ChildItem ../../../../wheels
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.WHEELS_TAG }}
+          name: Componentes de IA para Windows (torch ${{ env.TORCH }}, CUDA 12.8)
+          make_latest: false
+          files: wheels/*.whl
+          body: Rasterizador CUDA de Hunyuan3D-Paint, precompilado para Python 3.11, torch ${{ env.TORCH }} y RTX 30/40/50. Lo descarga la app al instalar la IA local.
+      - name: Publish to the public releases repo
+        if: ${{ vars.RELEASES_REPO != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ vars.RELEASES_REPO }}
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ env.WHEELS_TAG }}
+          make_latest: false
+          files: wheels/*.whl
