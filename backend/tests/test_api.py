@@ -565,3 +565,17 @@ def test_glb_vertex_colours_are_linear_and_read_back_as_srgb():
     back = next(iter(geometry.load_scene(glb).geometry.values())).visual.vertex_colors[0][:3]
     assert abs(np.asarray(back, int) - [47, 56, 59]).max() <= 1
     assert list(box.visual.vertex_colors[0][:3]) == [47, 56, 59]  # the scene itself is untouched
+
+
+def test_publish_kit(client):
+    job = make_job(client, "un dragón de juguete")
+    resp = client.get(f"/api/jobs/{job['id']}/publish", params={"size_mm": 80, "bed": "prusa_mk4"})
+    assert resp.status_code == 200 and resp.headers["content-type"] == "application/zip"
+    zf = zipfile.ZipFile(io.BytesIO(resp.content))
+    names = zf.namelist()
+    assert any(n.endswith(".3mf") for n in names) and any(n.endswith(".stl") for n in names)
+    assert sum(n.startswith("fotos/") and n.endswith(".png") for n in names) == 4
+    es = zf.read("descripcion_es.txt").decode()
+    assert "un dragón de juguete" in es and "Prusa MK4" in es and "mm" in es
+    stl = trimesh.load(io.BytesIO(zf.read(next(n for n in names if n.endswith(".stl")))), file_type="stl")
+    assert abs(stl.extents[2] - 80) < 1  # printed at the chosen height, Z up

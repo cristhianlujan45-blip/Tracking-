@@ -39,6 +39,11 @@ class ImagesIn(BaseModel):
     subject: str = ""  # the user's own words inside prompt: translated to English when they are not
 
 
+class ChatIn(BaseModel):
+    messages: list[dict] = Field(min_length=1, max_length=40)
+    max_tokens: int = Field(400, ge=16, le=1500)
+
+
 class DepthIn(BaseModel):
     image: str  # base64
 
@@ -150,6 +155,18 @@ def create_app(backend: Backend, token: str | None = None) -> FastAPI:
             log.exception("Generación de imágenes falló")
             raise HTTPException(500, friendly_error(exc)) from exc
         return {"images": [base64.b64encode(png_bytes(img)).decode() for img in result]}
+
+    @app.post("/chat")
+    async def chat(body: ChatIn):
+        if "chat" not in backend.capabilities():
+            raise HTTPException(400, "Este worker no tiene modelo de texto")
+        loop = asyncio.get_running_loop()
+        try:
+            text = await loop.run_in_executor(gpu, backend.chat, body.messages, body.max_tokens)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Chat falló")
+            raise HTTPException(500, friendly_error(exc)) from exc
+        return {"text": text}
 
     @app.post("/depth")
     async def depth(body: DepthIn):

@@ -993,6 +993,24 @@ $("#printer").addEventListener("change", () => {
   reanalyse();
 });
 $("#printSize").addEventListener("change", reanalyse);
+
+const UPLOAD_PAGES = {
+  makerworld: "https://makerworld.com/es/my/models/upload",
+  printables: "https://www.printables.com/model/create",
+  thingiverse: "https://www.thingiverse.com/upload",
+};
+$("#publishRow").addEventListener("click", (e) => {
+  const site = e.target.dataset?.site;
+  const job = selectedJob();
+  if (!site || !job) return;
+  const params = new URLSearchParams({ size_mm: $("#printSize").value || 100, bed: $("#printer").value || "bambu_a1" });
+  const link = Object.assign(document.createElement("a"), { href: `/api/jobs/${job.id}/publish?${params}` });
+  document.body.append(link);
+  link.click();  // the kit downloads while the upload page opens
+  link.remove();
+  window.open(UPLOAD_PAGES[site], "_blank", "noopener");
+  toast(t("Preparando el paquete para {s}: sube los archivos y pega la descripción", { s: e.target.textContent }));
+});
 $("#btnFitBed").addEventListener("click", (e) =>
   derive(e.currentTarget, "split", { mode: "bed", bed: $("#printer").value, size_mm: Number($("#printSize").value) || 100, fit: "height" }),
 );

@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from . import agent as ai_agent
 from ._version import VERSION
-from . import blender, creations, geometry, pipelines, printing, rigging, sheet, textures, updates
+from . import blender, creations, geometry, pipelines, printing, publishing, rigging, sheet, textures, updates
 from .config import Settings, get_settings, save_user_settings, user_settings_path, with_user_settings
 from .db import JobStore
 from .jobs import JobRunner
@@ -813,6 +813,19 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         return {**result, "print": {**report, "bed": bed, "bed_label": printer[0], "bed_mm": printer[1],
                                     "fits_bed": printing.fits(report["size_mm"], printer[1])}}
 
+    @app.get("/api/jobs/{job_id}/publish")
+    async def publish_kit(request: Request, job_id: str, size_mm: float = Query(100, gt=0, le=10_000),
+                          bed: str = "bambu_a1"):
+        """ZIP for MakerWorld / Printables / Thingiverse: 3MF + STL at size, previews, description."""
+        job, path = ready_model(request, job_id)
+        title = job_title(job)
+        try:
+            data = await asyncio.to_thread(publishing.kit, path.read_bytes(), title, size_mm, bed)
+        except geometry.GeometryError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        name = f"forja3d-publicar-{slugify(title)}.zip"
+        return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
     @app.get("/api/printers")
     async def printers():
         return {"beds": [{"id": k, "label": v[0], "size_mm": v[1]} for k, v in printing.BEDS.items()],
@@ -1241,8 +1254,13 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         key = state.settings.anthropic_key
         agent = getattr(state, "agent", None)
         if not key and agent is None:  # free built-in assistant: no key needed
-            state.offline_agent = getattr(state, "offline_agent", None) or ai_agent.OfflineAgent()
-            agent = state.offline_agent
+            if "chat" in getattr(state.provider, "capabilities", ()):  # the text model on the user's GPU
+                if getattr(state, "local_model_agent", None) is None:
+                    state.local_model_agent = ai_agent.LocalModelAgent(lambda msgs: request.app.state.provider.chat(msgs))
+                agent = state.local_model_agent
+            else:
+                state.offline_agent = getattr(state, "offline_agent", None) or ai_agent.OfflineAgent()
+                agent = state.offline_agent
         elif agent is None or getattr(state, "agent_key", None) != key:
             try:
                 agent = ai_agent.Agent(key, state.settings.anthropic_model)

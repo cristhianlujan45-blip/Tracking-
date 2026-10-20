@@ -15,6 +15,7 @@ import gc
 import io
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
@@ -76,10 +77,11 @@ class DummyBackend:
 
     name = "dummy"
 
-    def __init__(self, delay: float = 0.2, texture: bool = True, multiview: bool = True):
+    def __init__(self, delay: float = 0.2, texture: bool = True, multiview: bool = True, chat: bool = False):
         self.delay = delay
         self.texture = texture
         self.multiview = multiview
+        self.chat_enabled = chat
 
     def capabilities(self) -> set[str]:
         caps = {"text", "image", "concepts", "depth", "upscale"}
@@ -87,10 +89,19 @@ class DummyBackend:
             caps.add("multi_image")
         if self.texture:
             caps.add("retexture")
+        if self.chat_enabled:
+            caps.add("chat")
         return caps
 
     def info(self) -> dict:
         return {"gpu": "ninguna (dummy)", "vram_gb": 0, "models": ["dummy"]}
+
+    def chat(self, messages: list[dict], max_tokens: int = 400) -> str:
+        """Echoes the request as a 'create' action, in the JSON shape the app's assistant expects."""
+        import json
+
+        text = messages[-1]["content"]
+        return json.dumps({"action": "create", "prompt": text, "style": "auto", "reply": f"Creando {text}"})
 
     def upscale(self, image: Image.Image, scale: int) -> Image.Image:
         time.sleep(self.delay / 2)
@@ -162,6 +173,7 @@ class HunyuanBackend:
         texture: bool = False,
         multiview: bool = False,
         device: str = "cuda",
+        chat_model: str = "",
     ):
         import torch  # noqa: F401 - fail fast with a clear error if torch is missing
 
@@ -174,7 +186,11 @@ class HunyuanBackend:
         self.multiview = multiview
         self.device = device
         self._shape = self._mv = self._paint = self._t2i = self._rembg = self._translator = None
+        self.chat_model = chat_model
+        self._llm = self._llm_tokenizer = None
         self._on_gpu: str | None = None
+        # with 16 GB of RAM the parked models would not fit: drop them and reload from disk instead
+        self.low_ram = 0 < total_ram_gb() < 24
 
     # ------------------------------------------------------------ meta
 
@@ -184,6 +200,8 @@ class HunyuanBackend:
             caps.add("multi_image")
         if self.texture:
             caps.add("retexture")
+        if self.chat_model:
+            caps.add("chat")
         return caps
 
     def info(self) -> dict:
@@ -198,7 +216,9 @@ class HunyuanBackend:
             models.append("tencent/Hunyuan3D-2mv")
         if self.texture:
             models.append("tencent/Hunyuan3D-2 (paint)")
-        return {"gpu": gpu, "vram_gb": vram, "models": models}
+        if self.chat_model:
+            models.append(self.chat_model)
+        return {"gpu": gpu, "vram_gb": vram, "models": models, "low_ram": self.low_ram}
 
     # ------------------------------------------------------------ VRAM management
 
@@ -210,7 +230,11 @@ class HunyuanBackend:
             return
         previous = getattr(self, f"_{self._on_gpu}", None) if self._on_gpu else None
         if previous is not None and hasattr(previous, "to"):
-            previous.to("cpu")
+            if self.low_ram:
+                setattr(self, f"_{self._on_gpu}", None)  # reloaded from the disk cache when needed again
+                del previous
+            else:
+                previous.to("cpu")
         gc.collect()
         torch.cuda.empty_cache()
         current = getattr(self, f"_{key}")
@@ -268,6 +292,29 @@ class HunyuanBackend:
         return self._paint
 
     _none = None  # sentinel for _activate("none")
+
+    def _load_llm(self):
+        if self._llm is None:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+
+            log.info("Cargando %s …", self.chat_model)
+            self._llm_tokenizer = AutoTokenizer.from_pretrained(self.chat_model)
+            self._llm = AutoModelForCausalLM.from_pretrained(self.chat_model, torch_dtype=torch.float16)
+        self._activate("llm")
+        return self._llm, self._llm_tokenizer
+
+    def chat(self, messages: list[dict], max_tokens: int = 400) -> str:
+        """Small local text model for the app's assistant (understands requests, no key needed)."""
+        import torch
+
+        model, tok = self._load_llm()
+        prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = tok(prompt, return_tensors="pt").to(model.device)
+        with torch.inference_mode():
+            out = model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False,
+                                 pad_token_id=tok.eos_token_id)
+        return tok.decode(out[0, inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
 
     def to_english(self, text: str) -> str:
         """The image models only understand English: translate Spanish prompts on the CPU (Opus-MT, ~300 MB)."""
@@ -434,6 +481,25 @@ LIGHT_SHAPE = ("tencent/Hunyuan3D-2mini", "hunyuan3d-dit-v2-mini")
 LIGHT_MARKER = "modo_ligero.txt"  # written in the worker's folder; the app then starts it with the light model
 
 
+def total_ram_gb() -> float:
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class Status(ctypes.Structure):
+                _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong)] + [
+                    (name, ctypes.c_ulonglong) for name in ("total", "avail", "page_total", "page_avail",
+                                                           "virtual_total", "virtual_avail", "extended")]
+
+            status = Status()
+            status.length = ctypes.sizeof(Status)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+            return status.total / 1024**3
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024**3
+    except (AttributeError, OSError, ValueError):
+        return 0.0
+
+
 def _is_oom(exc: Exception) -> bool:
     return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
 
@@ -473,7 +539,7 @@ def esrgan_weights() -> str:
 
 
 def prefetch(shape_model: str, shape_subfolder: str, image_model: str, depth_model: str, multiview: bool,
-             texture: bool, say: Callable[[int, str], None]) -> None:
+             texture: bool, say: Callable[[int, str], None], chat_model: str = "") -> None:
     """Download every model the worker will use, once, so the first generation does not wait for it."""
     from huggingface_hub import snapshot_download
 
@@ -505,6 +571,9 @@ def prefetch(shape_model: str, shape_subfolder: str, image_model: str, depth_mod
     jobs += [("U²-Net", rembg), ("Real-ESRGAN", esrgan_weights),
              ("Opus-MT es→en", lambda: snapshot_download(
                  TRANSLATOR, allow_patterns=["*.json", "*.spm", "*.txt", "*.bin", "*.safetensors"]))]
+    if chat_model:
+        jobs.append((chat_model.split("/")[-1], lambda: snapshot_download(
+            chat_model, allow_patterns=["*.json", "*.txt", "*.safetensors", "tokenizer*"])))
     for i, (label, fn) in enumerate(jobs):
         say(int(100 * i / len(jobs)), f"Descargando: {label}")
         fn()
@@ -513,7 +582,7 @@ def prefetch(shape_model: str, shape_subfolder: str, image_model: str, depth_mod
 
 def build_backend(name: str, **kwargs) -> Backend:
     if name == "dummy":
-        return DummyBackend(**{k: v for k, v in kwargs.items() if k in ("delay", "texture", "multiview")})
+        return DummyBackend(**{k: v for k, v in kwargs.items() if k in ("delay", "texture", "multiview", "chat")})
     if name == "hunyuan":
         return HunyuanBackend(**{k: v for k, v in kwargs.items() if k != "delay"})
     raise ValueError(f"Backend desconocido: {name}")

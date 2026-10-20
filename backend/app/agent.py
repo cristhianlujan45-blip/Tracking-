@@ -231,8 +231,6 @@ class OfflineAgent:
         while len(self.memory) > MAX_CONVERSATIONS:
             self.memory.pop(next(iter(self.memory)))
         es = language == "es"
-        text = fold(message).strip()
-        creating = bool(_FILLER.match(text)) and not text.startswith(("haz que", "make it"))
         artifacts: list[dict] = []
 
         async def call(name, args):
@@ -241,72 +239,76 @@ class OfflineAgent:
             return result
 
         try:
-            if mem.get("concepts") and (m := _CONCEPT_N.search(text)) and len(text) < 40:
-                n = int(m.group(1))
-                jobs = await call("generate_3d", {"prompt": mem["prompt"], "style": mem.get("style", "auto"),
-                                                  "quality": "high", "concept_id": mem["concepts"][n - 1],
-                                                  "a_pose": mem.get("a_pose", False)})
-                mem["job"] = jobs[0]["job_id"]
-                reply = (f"¡Vamos con el concepto {n}! Estoy creando el modelo 3D en calidad alta; aparece en "
-                         "«Mis modelos» en unos minutos. Después puedo animarlo o revisar si se imprime bien."
-                         if es else f"Going with concept {n}! I'm building the 3D model in high quality; it shows up "
-                         "in “My models” in a few minutes. Then I can animate it or check it for printing.")
-            elif any(k in text for k in _LIST):
-                models = await call("list_models", {"limit": 5})
-                lines = [f"• {m['title']} ({m['status']})" for m in models] or ["—"]
-                reply = (("Tus últimos modelos:\n" if es else "Your latest models:\n") + "\n".join(lines))
-            elif not creating and any(k in text for k in _PRINT):
-                job = await self._last_model(call, mem, es)
-                size = _SIZE.search(text)
-                mm = float(size.group(1).replace(",", ".")) * (10 if size and size.group(2) == "cm" else 1) if size else 100
-                printer = next((pid for pid, words in _PRINTERS if any(re.search(rf"\b{w}\b", text) for w in words)),
-                               "bambu_a1")
-                r = await call("check_print", {"job_id": job, "size_mm": mm, "printer": printer})
-                reply = _print_reply(r, mm, es)
-            elif not creating and any(k in text for k in _ANIMATE):
-                job = await self._last_model(call, mem, es)
-                query = " ".join(w for w in text.split() if len(w) > 3 and not w.startswith(("anim", "rig")))
-                found = await call("find_animations", {"query": query, "body": "humanoid"}) if query else []
-                clips = ["idle", "walk", "run", "jump", "wave"] + [c["id"] for c in found[:5]]
-                jobs = await call("rig_character", {"job_id": job, "animations": list(dict.fromkeys(clips)),
-                                                     "body": "auto"})
-                mem["job"] = jobs[-1]["job_id"]
-                names = ", ".join(c["label"] for c in found[:5])
-                reply = ("¡Hecho! Le pongo esqueleto, texturas HD y animaciones (reposo, caminar, correr, saltar, "
-                         f"saludar{', ' + names if names else ''}). Lo verás en «Mis modelos», listo para Blender, "
-                         "Unity, Unreal o Godot." if es else
-                         "Done! Adding a skeleton, HD textures and animations (idle, walk, run, jump, wave"
-                         f"{', ' + names if names else ''}). It will appear in “My models”, ready for Blender, "
-                         "Unity, Unreal or Godot.")
-            else:
-                prompt = _FILLER.sub("", message.strip().rstrip(".!?"), count=3) or message.strip()
-                style = next((s for k, s in (("cartoon", "cartoon"), ("caricatura", "cartoon"), ("anime", "cartoon"),
-                                              ("realista", "realistic"), ("realistic", "realistic"),
-                                              ("low poly", "lowpoly"), ("lowpoly", "lowpoly"), ("voxel", "voxel"),
-                                              ("pintado", "handpainted"), ("hand painted", "handpainted"),
-                                              ("escultura", "sculpture"), ("sculpture", "sculpture")) if k in text), "auto")
-                a_pose = any(k in text for k in _CHARACTER)
-                mem.update(prompt=prompt, style=style, a_pose=a_pose)
-                if any(k in text for k in _IDEAS) or len(text.split()) <= 3:
-                    result = await call("make_concepts", {"prompt": prompt, "style": style})
-                    mem["concepts"] = result["concept_ids"]
-                    reply = ("Te dibujé 4 conceptos. Toca el que más te guste (o escribe «el 2») y lo hago en 3D."
-                             if es else "I drew 4 concepts. Tap the one you like (or type “number 2”) and I'll make it 3D.")
-                else:
-                    jobs = await call("generate_3d", {"prompt": prompt, "style": style, "quality": "high",
-                                                      "concept_id": None, "a_pose": a_pose})
-                    mem["job"] = jobs[0]["job_id"]
-                    extra_es = " Como es un personaje, va en A-pose para poder animarlo después." if a_pose else ""
-                    extra_en = " Since it's a character, it comes in an A-pose so it can be animated later." if a_pose else ""
-                    reply = (f"¡Creando «{prompt}» en 3D, calidad alta!{extra_es} Cuando termine dime «anímalo» o "
-                             "«¿se puede imprimir a 15 cm?»." if es else
-                             f"Creating “{prompt}” in 3D, high quality!{extra_en} When it's done tell me “animate it” "
-                             "or “can I print it at 15 cm?”.")
+            intent = await self._intent(message, mem, es)
+            reply = await self._act(intent, mem, call, es)
         except LookupError as exc:
             reply = str(exc)
         except Exception as exc:  # noqa: BLE001 - shown in the chat
             reply = ("No pude hacerlo: " if es else "I couldn't do it: ") + str(getattr(exc, "detail", None) or exc)
+        mem.setdefault("history", []).extend([{"role": "user", "content": message},
+                                              {"role": "assistant", "content": reply}])
+        mem["history"] = mem["history"][-8:]
         return Turn(reply, cid, artifacts)
+
+    async def _intent(self, message: str, mem: dict, es: bool) -> dict:
+        return rule_intent(message, mem)
+
+    async def _act(self, intent: dict, mem: dict, call, es: bool) -> str:
+        action = intent["action"]
+        if action == "answer":
+            return intent.get("reply") or ("¿Qué quieres crear?" if es else "What would you like to make?")
+        if action == "pick" and mem.get("concepts"):
+            n = max(1, min(int(intent.get("concept") or 1), len(mem["concepts"])))
+            jobs = await call("generate_3d", {"prompt": mem["prompt"], "style": mem.get("style", "auto"),
+                                              "quality": "high", "concept_id": mem["concepts"][n - 1],
+                                              "a_pose": mem.get("a_pose", False)})
+            mem["job"] = jobs[0]["job_id"]
+            return (f"¡Vamos con el concepto {n}! Estoy creando el modelo 3D en calidad alta; aparece en "
+                    "«Mis modelos» en unos minutos. Después puedo animarlo o revisar si se imprime bien."
+                    if es else f"Going with concept {n}! I'm building the 3D model in high quality; it shows up "
+                    "in “My models” in a few minutes. Then I can animate it or check it for printing.")
+        if action == "list":
+            models = await call("list_models", {"limit": 5})
+            lines = [f"• {m['title']} ({m['status']})" for m in models] or ["—"]
+            return ("Tus últimos modelos:\n" if es else "Your latest models:\n") + "\n".join(lines)
+        if action == "print":
+            job = await self._last_model(call, mem, es)
+            mm = float(intent.get("size_mm") or 100)
+            r = await call("check_print", {"job_id": job, "size_mm": mm,
+                                           "printer": intent.get("printer") or "bambu_a1"})
+            return _print_reply(r, mm, es)
+        if action == "animate":
+            job = await self._last_model(call, mem, es)
+            query = intent.get("query") or ""
+            found = await call("find_animations", {"query": query, "body": "humanoid"}) if query else []
+            clips = ["idle", "walk", "run", "jump", "wave"] + [c["id"] for c in found[:5]]
+            jobs = await call("rig_character", {"job_id": job, "animations": list(dict.fromkeys(clips)),
+                                                 "body": "auto"})
+            mem["job"] = jobs[-1]["job_id"]
+            names = ", ".join(c["label"] for c in found[:5])
+            return ("¡Hecho! Le pongo esqueleto, texturas HD y animaciones (reposo, caminar, correr, saltar, "
+                    f"saludar{', ' + names if names else ''}). Lo verás en «Mis modelos», listo para Blender, "
+                    "Unity, Unreal o Godot." if es else
+                    "Done! Adding a skeleton, HD textures and animations (idle, walk, run, jump, wave"
+                    f"{', ' + names if names else ''}). It will appear in “My models”, ready for Blender, "
+                    "Unity, Unreal or Godot.")
+        prompt, style, a_pose = intent["prompt"], intent.get("style") or "auto", bool(intent.get("a_pose"))
+        mem.update(prompt=prompt, style=style, a_pose=a_pose)
+        if action == "concepts":
+            result = await call("make_concepts", {"prompt": prompt, "style": style})
+            mem["concepts"] = result["concept_ids"]
+            return ("Te dibujé 4 conceptos. Toca el que más te guste (o escribe «el 2») y lo hago en 3D."
+                    if es else "I drew 4 concepts. Tap the one you like (or type “number 2”) and I'll make it 3D.")
+        jobs = await call("generate_3d", {"prompt": prompt, "style": style, "quality": "high",
+                                          "concept_id": None, "a_pose": a_pose})
+        mem["job"] = jobs[0]["job_id"]
+        name = intent.get("name") or prompt
+        extra_es = " Como es un personaje, va en A-pose para poder animarlo después." if a_pose else ""
+        extra_en = " Since it's a character, it comes in an A-pose so it can be animated later." if a_pose else ""
+        return (f"¡Creando «{name}» en 3D, calidad alta!{extra_es} Cuando termine dime «anímalo» o "
+                "«¿se puede imprimir a 15 cm?»." if es else
+                f"Creating “{name}” in 3D, high quality!{extra_en} When it's done tell me “animate it” "
+                "or “can I print it at 15 cm?”.")
 
     @staticmethod
     async def _last_model(call, mem, es: bool) -> str:
@@ -318,6 +320,96 @@ class OfflineAgent:
             raise LookupError("Primero crea un modelo: dime qué quieres hacer." if es
                               else "First make a model: tell me what you want to create.")
         return ready["job_id"]
+
+
+STYLES = ("auto", "realistic", "cartoon", "handpainted", "lowpoly", "voxel", "sculpture")
+_STYLE_WORDS = (("cartoon", "cartoon"), ("caricatura", "cartoon"), ("anime", "cartoon"), ("realista", "realistic"),
+                ("realistic", "realistic"), ("low poly", "lowpoly"), ("lowpoly", "lowpoly"), ("voxel", "voxel"),
+                ("pintado", "handpainted"), ("hand painted", "handpainted"), ("escultura", "sculpture"),
+                ("sculpture", "sculpture"))
+
+
+def _printer_in(text: str) -> str:
+    return next((pid for pid, words in _PRINTERS if any(re.search(rf"\b{w}\b", text) for w in words)), "bambu_a1")
+
+
+def _size_in(text: str) -> float:
+    size = _SIZE.search(text)
+    return float(size.group(1).replace(",", ".")) * (10 if size.group(2) == "cm" else 1) if size else 100.0
+
+
+def rule_intent(message: str, mem: dict) -> dict:
+    """Keyword understanding of a request (used without a text model, and as its safety net)."""
+    text = fold(message).strip()
+    creating = bool(_FILLER.match(text)) and not text.startswith(("haz que", "make it"))
+    if mem.get("concepts") and (m := _CONCEPT_N.search(text)) and len(text) < 40:
+        return {"action": "pick", "concept": int(m.group(1))}
+    if any(k in text for k in _LIST):
+        return {"action": "list"}
+    if not creating and any(k in text for k in _PRINT):
+        return {"action": "print", "size_mm": _size_in(text), "printer": _printer_in(text)}
+    if not creating and any(k in text for k in _ANIMATE):
+        return {"action": "animate",
+                "query": " ".join(w for w in text.split() if len(w) > 3 and not w.startswith(("anim", "rig")))}
+    prompt = _FILLER.sub("", message.strip().rstrip(".!?"), count=3) or message.strip()
+    style = next((s for k, s in _STYLE_WORDS if k in text), "auto")
+    action = "concepts" if any(k in text for k in _IDEAS) or len(text.split()) <= 3 else "create"
+    return {"action": action, "prompt": prompt, "style": style, "a_pose": any(k in text for k in _CHARACTER)}
+
+
+LOCAL_SYSTEM = """You turn a user's message for a 3D studio app into ONE JSON object, nothing else.
+Fields: "action": one of "create" (make a 3D model now), "concepts" (draw 4 concept images first, when \
+the idea is vague or they ask for ideas/options), "pick" (they chose concept number N), "animate" (rig and \
+animate their last model), "print" (check 3D printing), "list" (show their models), "answer" (a question \
+about 3D, Blender, game engines or printing: put the answer in "reply").
+"prompt": for create/concepts, a short vivid ENGLISH description of the object (subject, shape, materials, \
+colours). "name": the object in the user's language, 2-5 words. "style": one of auto, realistic, cartoon, \
+handpainted, lowpoly, voxel, sculpture. "a_pose": true for characters/creatures that will be animated. \
+"concept": number for pick. "query": English motion words for animate (e.g. "dance happy"). "size_mm": \
+number for print (convert cm to mm; default 100). "printer": one of bambu_a1mini, bambu_a1, bambu_h2d, \
+prusa_mk4, prusa_mini, ender3, creality_k1, creality_k2, elegoo_n4, anycubic_kobra3, saturn4, photon_m5. \
+"reply": for answer only, 1-4 sentences in the user's language ({language})."""
+
+
+class LocalModelAgent(OfflineAgent):
+    """Free assistant powered by the small text model on the user's GPU: it understands free-form
+    requests and turns them into the same actions; keyword rules remain the safety net."""
+
+    def __init__(self, llm: Callable[[list[dict]], Awaitable[str]]):
+        super().__init__()
+        self.llm = llm
+
+    async def _intent(self, message: str, mem: dict, es: bool) -> dict:
+        fallback = rule_intent(message, mem)
+        if fallback["action"] == "pick":  # "el 2" is unambiguous
+            return fallback
+        context = mem.get("history", [])[-4:]
+        if mem.get("concepts"):
+            context = context + [{"role": "assistant", "content": f"(4 concept images shown for: {mem['prompt']})"}]
+        messages = [{"role": "system", "content": LOCAL_SYSTEM.format(language="Spanish" if es else "English")},
+                    *context, {"role": "user", "content": message}]
+        try:
+            raw = await self.llm(messages)
+            data = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+        except Exception:  # noqa: BLE001 - model down, slow or not JSON: keyword rules
+            return fallback
+        action = data.get("action")
+        if action not in ("create", "concepts", "pick", "animate", "print", "list", "answer"):
+            return fallback
+        if action in ("create", "concepts") and not str(data.get("prompt") or "").strip():
+            return fallback
+        if action == "pick" and not mem.get("concepts"):
+            return fallback
+        intent = {**fallback, **{k: v for k, v in data.items() if v not in (None, "")}}
+        if intent.get("style") not in STYLES:
+            intent["style"] = fallback.get("style", "auto")
+        if intent.get("printer") not in {p for p, _ in _PRINTERS}:
+            intent["printer"] = fallback.get("printer", "bambu_a1")
+        try:
+            intent["size_mm"] = float(intent.get("size_mm") or 100)
+        except (TypeError, ValueError):
+            intent["size_mm"] = 100.0
+        return intent
 
 
 def _print_reply(r: dict, mm: float, es: bool) -> str:

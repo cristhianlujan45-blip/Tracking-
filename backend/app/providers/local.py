@@ -116,6 +116,13 @@ class LocalProvider:
             payload = {"kind": "texture", "images": [_b64(image)], "mesh_glb": _b64(glb), "seed": req.seed % 2**32}
             return await self._run_task(client, payload, on_progress, (15, 97))
 
+    async def chat(self, messages: list[dict], max_tokens: int = 400) -> str:
+        """The worker's small text model (assistant without a key). Does not start the worker."""
+        async with self._client() as client:
+            resp = await self._call(client.post("/chat", json={"messages": messages, "max_tokens": max_tokens},
+                                                timeout=180))
+            return resp.json()["text"]
+
     async def estimate_depth(self, image: InputImage) -> bytes:
         await self._ready()
         async with self._client() as client:

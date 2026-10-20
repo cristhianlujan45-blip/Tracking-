@@ -240,7 +240,9 @@ const EN = {
   "Guardar": "Save", "Cerrar": "Close", "¡Ajustes guardados!": "Settings saved!",
 
   // ---------------------------------------------------------------- free local AI
-  "Mi GPU · gratis": "My GPU · free",
+  "Mi GPU · gratis": "My GPU · free", "Publicar": "Publish",
+  "Descarga un paquete con el 3MF y el STL a tu medida, fotos y la descripción lista para pegar, y abre la página de subida.": "Downloads a kit with the 3MF and STL at your size, pictures and a ready-to-paste description, and opens the upload page.",
+  "Preparando el paquete para {s}: sube los archivos y pega la descripción": "Preparing the kit for {s}: upload the files and paste the description",
   "Actualizar ahora": "Update now", "Descargar": "Download", "Más tarde": "Later",
   "Nueva versión {v} disponible": "New version {v} available",
   "Instalando la actualización… Forja3D se abrirá solo": "Installing the update… Forja3D will reopen by itself",

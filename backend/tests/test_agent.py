@@ -197,3 +197,37 @@ def test_agent_drives_the_app(client):
     rig = resp.json()["artifacts"][-1]["job"]
     assert rig["mode"] == "rig"
     assert wait_done(client, rig["id"], timeout=60)["status"] == "succeeded"
+
+
+def test_local_text_model_understands_free_form_requests():
+    """The GPU's small text model turns a free-form message into an action; bad output falls back."""
+    import json as _json
+
+    answers = [_json.dumps({"action": "print", "size_mm": 150, "printer": "prusa_mk4"}),
+               "lo siento, no sé",  # not JSON: keyword rules take over
+               _json.dumps({"action": "answer", "reply": "Exporta en FBX para Unity."})]
+
+    async def llm(messages):
+        assert messages[0]["role"] == "system" and "JSON" in messages[0]["content"]
+        return answers.pop(0)
+
+    calls = []
+
+    def tool(name, result):
+        async def fn(args):
+            calls.append((name, args))
+            return result, []
+        return fn
+
+    tools = {"list_models": tool("list_models", [{"job_id": "j1", "title": "Robot", "status": "succeeded"}]),
+             "check_print": tool("check_print", {"printer": "Prusa MK4", "size_mm": [80, 60, 150], "watertight": True,
+                                                 "holes": 0, "volume_cm3": 40.0, "weight_g": 22.3, "fits_bed": True}),
+             "generate_3d": tool("generate_3d", [{"job_id": "j2", "status": "queued"}])}
+    bot = ai_agent.LocalModelAgent(llm)
+    turn = run(bot.chat("quiero sacarlo en mi impresora grandecito, como de 15 centímetros", None, tools))
+    assert calls[-1] == ("check_print", {"job_id": "j1", "size_mm": 150.0, "printer": "prusa_mk4"})
+    assert "Prusa MK4" in turn.reply
+    run(bot.chat("crea un cofre del tesoro de madera con detalles dorados", turn.conversation_id, tools))
+    assert calls[-1][0] == "generate_3d"  # rules understood it although the model failed
+    answer = run(bot.chat("¿qué formato uso para Unity?", turn.conversation_id, tools))
+    assert answer.reply == "Exporta en FBX para Unity."
