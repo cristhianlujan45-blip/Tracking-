@@ -39,6 +39,10 @@ class GenerationResult:
     reference_image_ext: str = "png"
     # other files to keep next to the model, e.g. {"depth.png": ...}
     extra_files: dict[str, bytes] = field(default_factory=dict)
+    # AI-generated views of a single picture by role ("left", "back", "right"), used to paint the model,
+    # and the (azimuth, elevation) they were actually seen from when not square on the axes
+    views: dict[str, bytes] = field(default_factory=dict)
+    view_poses: dict[str, tuple[float, float]] = field(default_factory=dict)
 
 
 class GenerationError(Exception):

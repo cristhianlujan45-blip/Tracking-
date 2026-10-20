@@ -2,7 +2,7 @@ import numpy as np
 import trimesh
 from PIL import Image, ImageDraw
 
-from app.projection import ProjectionError, bake_views, project_views
+from app.projection import AZIMUTHS, VIEWS, ProjectionError, bake_views, project_views, view_axes
 
 
 def _view(color, size=128, stripe=None):
@@ -32,6 +32,27 @@ def test_views_land_on_the_right_side_and_unseen_parts_are_filled():
     front_band = (v[:, 2] > 0.6) & (np.abs(v[:, 1]) < 0.06)
     assert colors[front_band & (v[:, 0] < -0.3)].mean() > colors[front_band & (v[:, 0] > 0.3)].mean() + 40
     assert (colors.sum(1) > 0).all()  # top and bottom poles filled by diffusion
+
+
+def test_view_axes_match_the_four_views():
+    for name, az in AZIMUTHS.items():
+        for got, want in zip(view_axes(az), VIEWS[name]):
+            assert np.allclose(got, want)
+    cam, right, up = view_axes(90, 20)  # looking down at the left side: image up leans away from the camera
+    assert cam[1] > 0.3 and up[1] > 0.9 and up[0] < -0.3 and abs(right @ up) < 1e-9
+
+
+def test_posed_views_paint_where_they_were_seen_from():
+    """Pictures taken between the axes (AI views) paint around their own azimuth, not the nearest axis."""
+    mesh = trimesh.creation.icosphere(subdivisions=5)
+    red, green = (220, 30, 30), (30, 200, 30)
+    out = project_views(mesh, {"front": _view(red), "left": _view(green)}, mirror_side=False,
+                        poses={"front": (-45, 0), "left": (45, 0)}, trust={"left": 0.6})
+    colors = out.visual.vertex_colors[:, :3].astype(int)
+    v = out.vertices
+    toward = lambda az: v @ np.array([np.sin(np.radians(az)), 0, np.cos(np.radians(az))]) > 0.9
+    assert colors[toward(45)][:, 1].mean() > 150  # green around azimuth 45 (front-left)
+    assert colors[toward(-45)][:, 0].mean() > 150  # red around azimuth -45 (front-right)
 
 
 def test_requires_views():

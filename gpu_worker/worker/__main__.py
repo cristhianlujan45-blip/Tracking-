@@ -1,4 +1,4 @@
-"""Start the GPU worker:  python -m worker --backend hunyuan [--texture] [--multiview]"""
+"""Start the GPU worker:  python -m worker --backend hunyuan [--texture] [--multiview] [--novel-views]"""
 
 from __future__ import annotations
 
@@ -25,6 +25,8 @@ def main() -> None:
     parser.add_argument("--texture", action="store_true",
                         help="activa Hunyuan3D-Paint (texturas y retexturizado). Lento con 8 GB de VRAM")
     parser.add_argument("--multiview", action="store_true", help="activa Hunyuan3D-2mv para varias vistas")
+    parser.add_argument("--novel-views", action="store_true",
+                        help="genera con Zero123++ los laterales y la espalda de una sola imagen (≈5 GB de VRAM)")
     parser.add_argument("--dummy-delay", type=float, default=0.3)
     parser.add_argument("--prefetch", action="store_true", help="solo descarga los modelos y termina")
     args = parser.parse_args()
@@ -34,17 +36,18 @@ def main() -> None:
             print("@@ 100 Modelos listos", flush=True)
             return
         prefetch(args.shape_model, args.shape_subfolder, args.image_model, args.depth_model, args.multiview,
-                 args.texture, lambda pct, text: print(f"@@ {pct} {text}", flush=True))
+                 args.texture, lambda pct, text: print(f"@@ {pct} {text}", flush=True), args.novel_views)
         return
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.backend == "dummy":
-        backend = build_backend("dummy", delay=args.dummy_delay, texture=args.texture, multiview=args.multiview)
+        backend = build_backend("dummy", delay=args.dummy_delay, texture=args.texture, multiview=args.multiview,
+                                novel_views=args.novel_views)
     else:
         backend = build_backend(
             "hunyuan", shape_model=args.shape_model, shape_subfolder=args.shape_subfolder,
             image_model=args.image_model, depth_model=args.depth_model,
-            texture=args.texture, multiview=args.multiview,
+            texture=args.texture, multiview=args.multiview, novel_views=args.novel_views,
         )
     info = backend.info()
     logging.info("Backend %s · GPU: %s (%s GB) · capacidades: %s", backend.name, info["gpu"], info["vram_gb"],

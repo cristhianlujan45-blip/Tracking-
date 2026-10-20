@@ -36,7 +36,8 @@ def wait(client, task_id, timeout=10):
 def test_health(client):
     body = client.get("/health").json()
     assert body["backend"] == "dummy"
-    assert set(body["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth", "upscale"}
+    assert set(body["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth", "upscale",
+                                        "views"}
 
 
 def test_images(client):
@@ -111,3 +112,43 @@ def test_upscale(client):
     img = Image.open(io.BytesIO(base64.b64decode(resp.json()["image"])))
     assert img.size == (256, 256)
     assert client.post("/upscale", json={"image": b64_png(), "scale": 8}).status_code == 422
+
+
+def test_novel_views(client):
+    resp = client.post("/views", json={"image": b64_png(), "quality": "draft"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body["views"]) == {"left", "back", "right"}
+    left = Image.open(io.BytesIO(base64.b64decode(body["views"]["left"])))
+    assert left.mode == "RGBA" and min(left.size) >= 512
+    assert body["poses"]["left"] == [90.0, -10.0] and len(body["poses"]["back"]) == 2
+
+
+def test_novel_views_disabled():
+    with TestClient(create_app(DummyBackend(delay=0, novel_views=False), token="")) as c:
+        assert "views" not in c.get("/health").json()["capabilities"]
+        assert c.post("/views", json={"image": b64_png()}).status_code == 400
+
+
+def test_mesh_task_roles():
+    backend = DummyBackend(delay=0)
+    with TestClient(create_app(backend, token="")) as c:
+        three = [b64_png(), b64_png((0, 255, 0)), b64_png((0, 0, 255))]
+        task = wait(c, c.post("/tasks", json={"images": three, "roles": ["front", "left", "right"]}).json()["id"])
+        assert task["status"] == "succeeded"
+        assert backend.last_job.roles == ["front", "left", "right"] and len(backend.last_job.images) == 3
+        assert c.post("/tasks", json={"images": three, "roles": ["front", "left"]}).status_code == 400
+        assert c.post("/tasks", json={"images": three[:2], "roles": ["front", "front"]}).status_code == 400
+        assert c.post("/tasks", json={"images": three[:1], "roles": ["top"]}).status_code == 422
+
+
+def test_frame_centres_the_cut_out():
+    from worker.backends import _frame
+
+    img = Image.new("RGBA", (200, 100), (0, 0, 0, 0))
+    img.paste((255, 0, 0, 255), (150, 10, 190, 90))  # an off-centre 40×80 box
+    framed = _frame(img, 320)
+    assert framed.size == (320, 320)
+    x0, y0, x1, y1 = framed.getchannel("A").point(lambda a: 255 if a > 128 else 0).getbbox()
+    assert abs((x0 + x1) / 2 - 160) <= 2 and abs((y0 + y1) / 2 - 160) <= 2
+    assert abs((y1 - y0) - 0.85 * 320) <= 3

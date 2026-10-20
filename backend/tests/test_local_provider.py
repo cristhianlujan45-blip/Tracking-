@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import httpx
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -30,8 +31,8 @@ def _png():
 PNG = _png()
 
 
-def make_client(tmp_path, **backend_opts):
-    worker = create_worker(DummyBackend(delay=0.01, **backend_opts), token="t0k")
+def make_client(tmp_path, backend=None, **backend_opts):
+    worker = create_worker(backend or DummyBackend(delay=0.01, **backend_opts), token="t0k")
     provider = LocalProvider(url="http://worker", token="t0k", poll_interval=0.02,
                              transport=httpx.ASGITransport(app=worker))
     settings = Settings(provider="local", data_dir=tmp_path, mock_step_delay=0)
@@ -58,7 +59,8 @@ def test_config_reports_worker(client):
     cfg = client.get("/api/config").json()
     assert cfg["provider"] == "local"
     assert cfg["provider_info"]["gpu"] == "ninguna (dummy)"
-    assert set(cfg["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth", "upscale"}
+    assert set(cfg["capabilities"]) == {"text", "image", "concepts", "multi_image", "retexture", "depth", "upscale",
+                                        "views"}
 
 
 def test_text_to_3d_keeps_reference_image(client):
@@ -130,5 +132,54 @@ def test_bare_shapes_are_painted_from_the_input_image(client):
     mesh = next(iter(scene.geometry.values()))
     assert mesh.visual.kind == "texture"  # baked into a real UV texture
     colors = mesh.visual.to_color().vertex_colors[:, :3].astype(int)
-    front = mesh.vertices[:, 2] > mesh.vertices[:, 2].mean()
+    z = mesh.vertices[:, 2]
+    front = z > (z.mean() + z.max()) / 2  # the sides now come from the generated views
     assert colors[front].mean(0)[0] > 150 and colors[front].mean(0)[1] < 90  # the red of the picture
+
+
+def _front_and_side_colours(glb):
+    from app.geometry import load_scene
+
+    mesh = next(iter(load_scene(glb).geometry.values()))
+    colors = mesh.visual.to_color().vertex_colors[:, :3].astype(int)
+    v = mesh.vertices - mesh.vertices.mean(0)
+    reach = np.abs(v).max(0)
+    return colors[v[:, 2] > 0.6 * reach[2]].mean(0), colors[v[:, 0] > 0.6 * reach[0]].mean(0)
+
+
+def test_single_picture_gets_ai_side_and_back_views(tmp_path):
+    backend = DummyBackend(delay=0.01)
+    with make_client(tmp_path, backend=backend) as c:
+        job = c.post("/api/jobs/image", files={"images": ("r.png", PNG, "image/png")}, data={"quality": "draft"}).json()[0]
+        job = wait_done(c, job["id"])
+        assert job["status"] == "succeeded", job["error"]
+        # the shape is built from the front and the square side views; the 30°-off back only paints
+        assert backend.last_job.roles == ["front", "left", "right"] and len(backend.last_job.images) == 3
+        assert all((tmp_path / "files" / job["id"] / f"view_{r}.png").is_file() for r in ("left", "back", "right"))
+        front, side = _front_and_side_colours(c.get(job["model_url"]).content)
+        assert front[0] > 150 and front[2] < 90  # the picture's red
+        assert side[2] > front[2] + 30  # the generated (blue-tinted) side view painted the side
+
+        text = wait_done(c, c.post("/api/jobs/text", json={"prompt": "una roca", "quality": "draft"}).json()[0]["id"])
+        assert text["status"] == "succeeded", text["error"]
+        assert backend.last_job.roles == ["front", "left", "right"]  # also after the reference image
+
+
+def test_without_views_a_single_picture_goes_alone(tmp_path):
+    backend = DummyBackend(delay=0.01, novel_views=False)
+    with make_client(tmp_path, backend=backend) as c:
+        job = c.post("/api/jobs/image", files={"images": ("r.png", PNG, "image/png")}, data={"quality": "draft"}).json()[0]
+        assert wait_done(c, job["id"])["status"] == "succeeded"
+        assert backend.last_job.roles is None and len(backend.last_job.images) == 1
+
+
+def test_failed_views_fall_back_to_the_single_picture(tmp_path):
+    class NoViews(DummyBackend):
+        def novel_views(self, image, quality="standard"):
+            raise RuntimeError("CUDA out of memory")
+
+    backend = NoViews(delay=0.01)
+    with make_client(tmp_path, backend=backend) as c:
+        job = c.post("/api/jobs/image", files={"images": ("r.png", PNG, "image/png")}, data={"quality": "draft"}).json()[0]
+        assert wait_done(c, job["id"])["status"] == "succeeded"
+        assert len(backend.last_job.images) == 1

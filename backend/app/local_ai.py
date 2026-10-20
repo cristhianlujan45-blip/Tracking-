@@ -38,7 +38,7 @@ PREMIUM_ARGS = [
     "--shape-model", "tencent/Hunyuan3D-2", "--shape-subfolder", "hunyuan3d-dit-v2-0",
     "--image-model", "stabilityai/sdxl-turbo",
     "--depth-model", "depth-anything/Depth-Anything-V2-Base-hf",
-    "--multiview",
+    "--multiview", "--novel-views",
 ]
 
 # (label, share of the whole install)
@@ -49,7 +49,7 @@ STEPS = [
     ("Instalando PyTorch con CUDA (≈3 GB)", 30),
     ("Instalando Hunyuan3D-2 y el servidor de IA", 15),
     ("Comprobando que PyTorch ve tu GPU", 3),
-    ("Descargando los modelos de IA (≈15 GB, solo una vez)", 40),
+    ("Descargando los modelos de IA (≈20 GB, solo una vez)", 40),
     ("Terminando", 2),
 ]
 

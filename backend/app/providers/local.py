@@ -23,8 +23,19 @@ DEFAULT_CAPABILITIES = frozenset({"text", "image", "concepts"})
 NEGATIVE_PROMPT = "blurry, cropped, multiple objects, text, watermark, busy background"
 
 
+# generated views by role and the azimuth each role stands for (see projection.AZIMUTHS)
+VIEW_AZIMUTHS = {"left": 90, "back": 180, "right": 270}
+# the multi-view shape model expects square side/back views: farther off ones only paint the model
+SHAPE_MAX_OFF_AXIS = 15
+
+
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
+
+
+def _off_axis(role: str, poses: dict[str, tuple[float, float]]) -> float:
+    azimuth = poses.get(role, (VIEW_AZIMUTHS[role], 0))[0]
+    return abs((azimuth - VIEW_AZIMUTHS[role] + 180) % 360 - 180)
 
 
 class LocalProvider:
@@ -100,8 +111,19 @@ class LocalProvider:
             if not images:
                 raise GenerationError("No hay imagen de entrada")
             payload = {"images": [_b64(i.data) for i in images], "seed": req.seed % 2**32, "quality": req.quality}
+            views, poses = {}, {}
+            if len(images) == 1 and {"views", "multi_image"} <= self.capabilities:
+                await on_progress(span[0], "Generando vistas laterales y de espalda")
+                views, poses = await self._views(client, images[0].data, req.quality)
+                # only views seen square from their side drive the shape; the rest just paint it
+                square = [r for r in VIEW_AZIMUTHS if r in views and _off_axis(r, poses) <= SHAPE_MAX_OFF_AXIS]
+                if square:
+                    payload["images"] += [_b64(views[r]) for r in square]
+                    payload["roles"] = ["front", *square]
+                span = (span[0] + 10, span[1])
             glb = await self._run_task(client, payload, on_progress, span)
-        return GenerationResult(model_glb=glb, reference_image=reference)
+        return GenerationResult(model_glb=glb, reference_image=reference, views=views, view_poses=poses,
+                                extra_files={f"view_{role}.png": data for role, data in views.items()})
 
     async def generate_images(self, req: GenerationRequest, count: int) -> list[bytes]:
         await self._ready()
@@ -152,6 +174,19 @@ class LocalProvider:
                 "subject": (req.prompt or "").strip()}
         resp = await self._call(client.post("/images", json=body, timeout=600))
         return [base64.b64decode(i) for i in resp.json()["images"]]
+
+    async def _views(self, client: httpx.AsyncClient, image: bytes,
+                     quality: str) -> tuple[dict[str, bytes], dict[str, tuple[float, float]]]:
+        """AI side and back views of a single picture. Optional: on failure the picture is used alone."""
+        try:
+            resp = await self._call(client.post("/views", json={"image": _b64(image), "quality": quality}, timeout=900))
+        except GenerationError as exc:
+            log.warning("No se pudieron generar las vistas laterales: %s", exc)
+            return {}, {}
+        body = resp.json()
+        views = {role: base64.b64decode(data) for role, data in body.get("views", {}).items() if role in VIEW_AZIMUTHS}
+        poses = {role: (float(p[0]), float(p[1])) for role, p in body.get("poses", {}).items() if role in views}
+        return views, poses
 
     async def _run_task(self, client: httpx.AsyncClient, payload: dict, on_progress: ProgressCallback,
                         span: tuple[int, int]) -> bytes:
