@@ -212,6 +212,9 @@ _PRINTERS = [("bambu_a1mini", ("a1 ?mini",)), ("bambu_h2d", ("h2d",)), ("bambu_a
              ("creality_k2", ("k2",)), ("creality_k1", ("k1c?",)), ("ender3", ("ender ?3", "ender")),
              ("elegoo_n4", ("neptune", "elegoo")), ("anycubic_kobra3", ("kobra", "anycubic")),
              ("saturn4", ("saturn",)), ("photon_m5", ("photon",))]
+# "make me a …": a new object for sure (unlike "quiero sacarlo…", which may be about the last model)
+_MAKE = re.compile(r"^(?:por favor |please )?(?:crea|creame|hazme|haz un|haz una|genera|generame|make|create|"
+                   r"generate|quiero un|quiero una|i want a|i want an|dame un|dame una|give me a|give me an)\b")
 _CHARACTER = ("personaje", "character", "hero", "heroe", "guerrer", "warrior", "chica", "chico", "girl", "boy",
               "robot", "monstruo", "monster", "caballero", "knight", "mago", "wizard", "animal", "perro", "dog",
               "gato", "cat", "dragon", "criatura", "creature", "humano", "human", "soldado", "soldier")
@@ -354,7 +357,8 @@ def rule_intent(message: str, mem: dict) -> dict:
     prompt = _FILLER.sub("", message.strip().rstrip(".!?"), count=3) or message.strip()
     style = next((s for k, s in _STYLE_WORDS if k in text), "auto")
     action = "concepts" if any(k in text for k in _IDEAS) or len(text.split()) <= 3 else "create"
-    return {"action": action, "prompt": prompt, "style": style, "a_pose": any(k in text for k in _CHARACTER)}
+    return {"action": action, "prompt": prompt, "style": style, "a_pose": any(k in text for k in _CHARACTER),
+            "explicit": bool(_MAKE.match(text))}
 
 
 LOCAL_SYSTEM = """You turn a user's message for a 3D studio app into ONE JSON object, nothing else.
@@ -368,7 +372,21 @@ handpainted, lowpoly, voxel, sculpture. "a_pose": true for characters/creatures 
 "concept": number for pick. "query": English motion words for animate (e.g. "dance happy"). "size_mm": \
 number for print (convert cm to mm; default 100). "printer": one of bambu_a1mini, bambu_a1, bambu_h2d, \
 prusa_mk4, prusa_mini, ender3, creality_k1, creality_k2, elegoo_n4, anycubic_kobra3, saturn4, photon_m5. \
-"reply": for answer only, 1-4 sentences in the user's language ({language})."""
+"reply": for answer only, 1-4 sentences in the user's language ({language}).
+A new object to make is always create or concepts, even if they also want to animate or print it later."""
+
+# few-shot examples: small local models follow examples better than rules
+LOCAL_EXAMPLES = [
+    ("quiero un dragón bebé morado para animarlo en mi juego",
+     {"action": "create", "prompt": "cute baby dragon, purple scales, small wings, big eyes, chubby body",
+      "name": "dragón bebé morado", "style": "cartoon", "a_pose": True}),
+    ("dame ideas para una espada mágica",
+     {"action": "concepts", "prompt": "magic sword with glowing runes on the blade and an ornate golden hilt",
+      "name": "espada mágica", "style": "auto", "a_pose": False}),
+    ("anímalo bailando", {"action": "animate", "query": "dance happy"}),
+    ("¿cabe en mi bambu a1 mini a 20 cm?", {"action": "print", "size_mm": 200, "printer": "bambu_a1mini"}),
+    ("¿qué formato uso para Unity?", {"action": "answer", "reply": "Usa FBX o GLB: los dos llevan el esqueleto y las animaciones."}),
+]
 
 
 class LocalModelAgent(OfflineAgent):
@@ -386,8 +404,10 @@ class LocalModelAgent(OfflineAgent):
         context = mem.get("history", [])[-4:]
         if mem.get("concepts"):
             context = context + [{"role": "assistant", "content": f"(4 concept images shown for: {mem['prompt']})"}]
+        shots = [m for q, a in LOCAL_EXAMPLES for m in ({"role": "user", "content": q},
+                                                         {"role": "assistant", "content": json.dumps(a, ensure_ascii=False)})]
         messages = [{"role": "system", "content": LOCAL_SYSTEM.format(language="Spanish" if es else "English")},
-                    *context, {"role": "user", "content": message}]
+                    *shots, *context, {"role": "user", "content": message}]
         try:
             raw = await self.llm(messages)
             data = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
@@ -396,6 +416,12 @@ class LocalModelAgent(OfflineAgent):
         action = data.get("action")
         if action not in ("create", "concepts", "pick", "animate", "print", "list", "answer"):
             return fallback
+        if action == "answer":
+            data["reply"] = data.get("reply") or data.get("prompt")  # small models sometimes swap the fields
+        # an explicit "make me…" is a new object, whatever the model says
+        if fallback.get("explicit") and action in ("animate", "print", "list", "answer"):
+            data = {**data, "action": fallback["action"]}
+            action = fallback["action"]
         if action in ("create", "concepts") and not str(data.get("prompt") or "").strip():
             return fallback
         if action == "pick" and not mem.get("concepts"):

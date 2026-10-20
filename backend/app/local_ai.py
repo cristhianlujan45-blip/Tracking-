@@ -44,7 +44,7 @@ PREMIUM_ARGS = [
     "--image-model", "stabilityai/sdxl-turbo",
     "--depth-model", "depth-anything/Depth-Anything-V2-Base-hf",
     "--multiview", "--novel-views",
-    "--chat-model", "Qwen/Qwen2.5-1.5B-Instruct",  # the assistant's free local text model (~3 GB)
+    "--chat-model", "Qwen/Qwen2.5-3B-Instruct",  # the assistant's free local text model (~6 GB on disk)
 ]
 
 # (label, share of the whole install)
