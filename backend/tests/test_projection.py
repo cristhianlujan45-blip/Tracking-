@@ -2,7 +2,7 @@ import numpy as np
 import trimesh
 from PIL import Image, ImageDraw
 
-from app.projection import ProjectionError, project_views
+from app.projection import ProjectionError, bake_views, project_views
 
 
 def _view(color, size=128, stripe=None):
@@ -40,3 +40,37 @@ def test_requires_views():
     except ProjectionError:
         return
     raise AssertionError("expected ProjectionError")
+
+
+def test_single_picture_paints_the_back_without_copying_details():
+    """One front picture: the back takes its colour regions but not its details (no second face)."""
+    mesh = trimesh.creation.icosphere(subdivisions=5)
+    img = _view((40, 120, 220))
+    ImageDraw.Draw(img).ellipse([59, 40, 69, 50], fill=(250, 250, 250, 255))  # an "eye" in the middle
+    out = project_views(mesh, {"front": img})
+    colors = out.visual.vertex_colors[:, :3].astype(int)
+    v = out.vertices
+    eye = lambda z: (np.abs(v[:, 0]) < 0.05) & (v[:, 1] > 0.33) & (v[:, 1] < 0.45) & (z * v[:, 2] > 0.7)
+    assert colors[eye(1)].mean() > 180  # the eye on the front
+    back_eye = colors[eye(-1)]
+    assert back_eye[:, 2].mean() > 150 and back_eye.mean() < 170  # blue on the back, no white eye
+
+
+def test_baked_texture_keeps_detail_finer_than_the_vertices():
+    """A thin stripe narrower than the triangles survives in the baked texture."""
+    mesh = trimesh.creation.icosphere(subdivisions=3)  # ~640 faces: coarse
+    img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse([8, 8, 248, 248], fill=(30, 160, 60, 255))
+    d.rectangle([8, 126, 248, 130], fill=(255, 255, 255, 255))  # 5 px stripe across the equator
+    out = bake_views(mesh, {"front": img, "back": img}, size=512)
+    assert out.visual.kind == "texture" and out.visual.material.baseColorTexture.size == (512, 512)
+    tex = np.asarray(out.visual.material.baseColorTexture.convert("RGB"), dtype=int)
+    # sample the texture where the front equator and a point above it land
+    def colour_at(point):  # texture colour at the point on the surface closest to `point`
+        closest, _, face = trimesh.proximity.closest_point(out, [point])
+        bary = trimesh.triangles.points_to_barycentric(out.triangles[face], closest)[0]
+        uv = bary @ out.visual.uv[out.faces[face[0]]]
+        return tex[int((1 - uv[1]) * 511), int(uv[0] * 511)]
+    assert colour_at(np.array([0, 0.0, 1.0])).mean() > 180  # white stripe kept
+    assert colour_at(np.array([0, 0.5, 0.86]))[1] > 120  # green above it

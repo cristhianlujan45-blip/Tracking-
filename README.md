@@ -26,7 +26,7 @@ La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por
 **Texturas**
 - **Full HD 2K / 4K / 8K**: ampliación con IA (Real-ESRGAN) y mapas **PBR** (normal, rugosidad, oclusión). Si el motor ya entregó mapas PBR reales, se conservan y se amplían en lugar de sustituirlos.
 - **Retexturizado IA** (Meshy 7 hasta 8K) desde una descripción.
-- **Pintado desde las vistas**: cuando el motor devuelve solo la forma (Hunyuan3D-2mini en GPUs de 8 GB), el modelo se colorea proyectando tus imágenes: cada vista se alinea con la silueta del modelo, solo pinta las superficies que ve de frente (nada de manchas estiradas en los costados) y sin los bordes del dibujo; lo que ninguna vista ve se rellena por difusión.
+- **Pintado desde las vistas**: cuando el motor devuelve solo la forma (Hunyuan3D-2mini en GPUs de 8 GB), el modelo se colorea proyectando tus imágenes: cada vista se alinea con la silueta del modelo, solo pinta las superficies que ve de frente (nada de manchas estiradas en los costados) y sin los bordes del dibujo; lo que ninguna vista ve se rellena por difusión. El resultado se hornea en una **textura UV real de 2048 px** (lista para ampliar a 4K/8K con PBR), y con una sola foto la espalda toma los colores de los bordes de la figura (pelo, ropa, piel) sin copiar la cara ni otros detalles.
 - **Inspector de materiales** en el visor: ver solo el color, normal, rugosidad, metal u oclusión, y la malla sobre la textura.
 
 **Personajes: rig y animación**

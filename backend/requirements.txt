@@ -16,4 +16,5 @@ rtree>=1.2
 mapbox-earcut>=1.0
 matplotlib>=3.8
 pynanoinstantmeshes>=0.0.3   # Instant Meshes: remallado en quads
+xatlas>=0.0.9                # mapas UV para hornear texturas desde las vistas
 opencv-python-headless>=4.8  # recorte de vistas y fondo (hojas de personaje)

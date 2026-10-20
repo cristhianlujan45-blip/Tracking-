@@ -128,6 +128,7 @@ def test_bare_shapes_are_painted_from_the_input_image(client):
     assert job["status"] == "succeeded", job
     scene = load_scene(client.get(job["model_url"]).content)  # COLOR_0 is linear: read back as sRGB
     mesh = next(iter(scene.geometry.values()))
-    colors = mesh.visual.vertex_colors[:, :3].astype(int)
+    assert mesh.visual.kind == "texture"  # baked into a real UV texture
+    colors = mesh.visual.to_color().vertex_colors[:, :3].astype(int)
     front = mesh.vertices[:, 2] > mesh.vertices[:, 2].mean()
     assert colors[front].mean(0)[0] > 150 and colors[front].mean(0)[1] < 90  # the red of the picture
