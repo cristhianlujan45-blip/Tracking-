@@ -240,7 +240,11 @@ const EN = {
   "Guardar": "Save", "Cerrar": "Close", "¡Ajustes guardados!": "Settings saved!",
 
   // ---------------------------------------------------------------- free local AI
-  "Mi GPU · gratis": "My GPU · free",
+  "Mi GPU · gratis": "My GPU · free", "⧉ Copiar diagnóstico": "⧉ Copy diagnostics",
+  "Copia el estado de la app, la GPU y los últimos errores para enviarlo": "Copies the app, GPU and latest errors so you can send them",
+  "Diagnóstico copiado: pégalo en tu mensaje": "Diagnostics copied: paste them in your message",
+  "Poca memoria de GPU: reintentando en modo ligero": "Low GPU memory: retrying in light mode",
+  "Sin conexión a internet para descargar la IA: revisa tu conexión": "No internet connection to download the AI: check your connection",
   "Recomendado. Ilimitado y privado en tu NVIDIA RTX: se instala y arranca sola, sin claves.": "Recommended. Unlimited and private on your NVIDIA RTX: installs and starts by itself, no keys.",
   "Opcional y de pago por uso: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy. Necesita clave.": "Optional, pay per use: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy. Needs a key.",
   "Comprobando la IA local…": "Checking the local AI…", "Instalar IA gratis en mi GPU": "Install free AI on my GPU",
@@ -385,6 +389,8 @@ const EN = {
 
 // server messages with variable parts: [regex, English template]
 const PATTERNS = [
+  [/^Actualiza el driver de NVIDIA \(nvidia\.com\/drivers\): tienes el (\S+) y la IA necesita el (\d+) o más nuevo$/, "Update the NVIDIA driver (nvidia.com/drivers): you have $1 and the AI needs $2 or newer"],
+  [/^Necesitas al menos (\d+) GB libres en el disco para la IA \(tienes (\d+) GB\): libera espacio y vuelve a intentarlo$/, "You need at least $1 GB free on disk for the AI (you have $2 GB): free some space and try again"],
   [/^Descargando: (.+)$/, "Downloading: $1"],
   [/^La IA local se cerró al arrancar: (.*)$/s, "The local AI closed while starting: $1"],
   [/^No se puede conectar con la IA local en (\S+): ábrela desde Ajustes → «Mi GPU»$/, "Cannot reach the local AI at $1: open it from Settings → “My GPU”"],

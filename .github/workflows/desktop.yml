@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ccr-90c69cc6-siyqqi, main]
-    paths: [backend/**, frontend/**, desktop/**, integrations/**, .github/workflows/desktop.yml]
+    paths: [backend/**, frontend/**, desktop/**, integrations/**, gpu_worker/**, .github/workflows/desktop.yml]
     tags: ["v*"]
 
 permissions:
@@ -33,6 +33,9 @@ jobs:
         with: { python-version: "3.12", cache: pip }
       - name: Install
         run: pip install -r backend/requirements.txt pywebview pyinstaller
+      - name: Version
+        shell: bash
+        run: echo "VERSION = \"$APP_VERSION\"" > backend/app/_version.py
       - name: Build app
         run: pyinstaller desktop/forja3d.spec --noconfirm
       - name: Smoke test (starts the packaged server)
@@ -69,6 +72,8 @@ jobs:
         with: { python-version: "3.12", cache: pip }
       - name: Install
         run: pip install -r backend/requirements.txt pywebview pyinstaller
+      - name: Version
+        run: echo "VERSION = \"$APP_VERSION\"" > backend/app/_version.py
       - name: Build app
         run: pyinstaller desktop/forja3d.spec --noconfirm
       - name: Smoke test (starts the packaged server)
@@ -102,4 +107,5 @@ jobs:
           body: |
             **Windows 10/11 (64 bits):** descarga `Forja3D-Setup-*.exe` y ejecútalo. Si Windows SmartScreen avisa, pulsa «Más información» → «Ejecutar de todas formas» (el instalador no está firmado).
             **macOS (Apple Silicon):** abre el `.dmg` y arrastra Forja3D a Aplicaciones. La primera vez: clic derecho sobre la app → «Abrir» (no está firmada por Apple).
-            La IA en la nube (fal.ai) funciona en ambos. La IA en tu propia GPU NVIDIA es un complemento aparte para Windows (`scripts\windows\instalar.bat` y luego `iniciar.bat -SoloWorker`).
+            **IA gratis en tu GPU NVIDIA (Windows):** la app la instala y la arranca sola la primera vez (≈20 GB, una sola vez). Sin claves ni tokens.
+            Si ya tienes Forja3D, la app se actualiza sola: no hace falta descargar esto de nuevo.

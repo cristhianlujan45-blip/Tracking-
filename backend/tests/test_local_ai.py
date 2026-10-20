@@ -109,7 +109,12 @@ def test_install_runs_in_a_fresh_data_folder(tmp_path, monkeypatch):
     async def no_start(self, timeout=600):
         return self.url
 
+    async def online(self):
+        return True
+
     monkeypatch.setattr(la.LocalAI, "ensure_running", no_start)
+    monkeypatch.setattr(la.LocalAI, "_online", online)
+    monkeypatch.setattr(la.shutil, "disk_usage", lambda p: type("U", (), {"free": 300 * 1024**3})())
 
     async def scenario():
         ai.start_install()
@@ -118,3 +123,45 @@ def test_install_runs_in_a_fresh_data_folder(tmp_path, monkeypatch):
     asyncio.run(scenario())
     assert ai.error == "" and ai.progress == 100 and ai.installed, (ai.error, list(ai.log))
     assert any("RTX 5060" in line for line in ai.log)
+
+
+def test_pre_checks_explain_old_driver_and_full_disk(tmp_path, monkeypatch):
+    def fake_smi(driver):
+        smi = tmp_path / f"smi-{driver}"
+        smi.write_text(f"#!{sys.executable}\nprint('NVIDIA GeForce RTX 5060 Laptop GPU, 8151 MiB, {driver}')\n")
+        smi.chmod(0o755)
+        return str(smi)
+
+    async def online(self):
+        return True
+
+    monkeypatch.setattr(la.LocalAI, "_online", online)
+    ai = la.LocalAI(tmp_path / "data", ROOT)
+    ai.root.mkdir(parents=True)
+
+    monkeypatch.setattr(la, "find_nvidia_smi", lambda: fake_smi("560.94"))
+    with pytest.raises(la.LocalAIError, match="driver"):
+        asyncio.run(ai._step0(0, 2))
+
+    monkeypatch.setattr(la, "find_nvidia_smi", lambda: fake_smi("581.57"))
+    monkeypatch.setattr(la.shutil, "disk_usage", lambda p: type("U", (), {"free": 10 * 1024**3})())
+    with pytest.raises(la.LocalAIError, match="25 GB libres"):
+        asyncio.run(ai._step0(0, 2))
+
+
+def test_light_mode_after_running_out_of_memory(tmp_path):
+    ai = la.LocalAI(tmp_path, ROOT)
+    assert "--multiview" in ai.args() and "hunyuan3d-dit-v2-0" in ai.args()
+    ai.root.mkdir(parents=True)
+    (ai.root / "modo_ligero.txt").write_text("sin memoria")
+    args = ai.args()
+    assert "--multiview" not in args and "hunyuan3d-dit-v2-0" not in args
+    assert args[-4:] == ["--shape-model", "tencent/Hunyuan3D-2mini", "--shape-subfolder", "hunyuan3d-dit-v2-mini"]
+
+
+def test_diagnostics_text(tmp_path):
+    settings = Settings(provider="mock", data_dir=tmp_path, mock_step_delay=0)
+    with TestClient(create_app(settings)) as client:
+        text = client.get("/api/diagnostics").json()["text"]
+        assert text.startswith("Forja3D ") and "IA local: instalada=False" in text and "Disco libre" in text
+        assert client.get("/api/config").json()["version"]

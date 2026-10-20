@@ -54,6 +54,23 @@ STEPS = [
 ]
 
 
+MIN_DRIVER = (570, 0)  # CUDA 12.8
+MIN_FREE_GB = 25
+
+
+def _driver_version(line: str) -> tuple[int, int] | None:
+    """'NVIDIA GeForce RTX 5060 Laptop GPU, 8151 MiB, 581.57' -> (581, 57)."""
+    try:
+        major, minor = line.rsplit(",", 1)[1].strip().split(".")[:2]
+        return int(major), int(minor)
+    except (IndexError, ValueError):
+        return None
+
+
+def _folder_gb(path: Path) -> float:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 1024**3 if path.is_dir() else 0.0
+
+
 class LocalAIError(Exception):
     """User-facing error."""
 
@@ -221,9 +238,27 @@ class LocalAI:
             tail = " · ".join(list(self.log)[-3:])
             raise LocalAIError(f"Falló «{self.step}»: {tail}"[:600])
 
-    async def _step0(self, start, share):  # GPU
+    async def _step0(self, start, share):  # GPU, driver, disk space and internet before downloading anything
         smi = find_nvidia_smi()
         await self._run(smi, "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader", start=start)
+        driver = _driver_version(list(self.log)[-1])
+        if driver and driver < MIN_DRIVER:
+            raise LocalAIError(f"Actualiza el driver de NVIDIA (nvidia.com/drivers): tienes el {driver[0]}.{driver[1]:02d} "
+                               f"y la IA necesita el {MIN_DRIVER[0]} o más nuevo")
+        free_gb = shutil.disk_usage(self.root).free / 1024**3
+        needed = max(2.0, MIN_FREE_GB - _folder_gb(self.root))  # a retry reuses what is already downloaded
+        if free_gb < needed:
+            raise LocalAIError(f"Necesitas al menos {needed:.0f} GB libres en el disco para la IA "
+                               f"(tienes {free_gb:.0f} GB): libera espacio y vuelve a intentarlo")
+        if not await self._online():
+            raise LocalAIError("Sin conexión a internet para descargar la IA: revisa tu conexión")
+
+    async def _online(self) -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                return (await client.head("https://huggingface.co")).status_code < 500
+        except httpx.HTTPError:
+            return False
 
     async def _step1(self, start, share):  # uv
         self.root.mkdir(parents=True, exist_ok=True)
@@ -328,7 +363,7 @@ class LocalAI:
                     break
         self.root.mkdir(parents=True, exist_ok=True)
         logfile = open(self.root / "worker.log", "ab")  # noqa: SIM115 - owned by the child process
-        argv = [str(self.python), "-m", "worker", "--backend", self.backend, "--port", str(self.port), *self.worker_args]
+        argv = [str(self.python), "-m", "worker", "--backend", self.backend, "--port", str(self.port), *self.args()]
         log.info("Iniciando la IA local: %s", " ".join(argv))
         cwd = self.root if (self.root / "worker").is_dir() else self.resources / "gpu_worker"
         self.proc = subprocess.Popen(argv, cwd=cwd, env=self.env(), stdout=logfile, stderr=subprocess.STDOUT,
@@ -349,6 +384,24 @@ class LocalAI:
                     raise LocalAIError("La IA local se cerró al arrancar: " + self.worker_log_tail())
                 await asyncio.sleep(1)
             raise LocalAIError("La IA local tarda demasiado en arrancar")
+
+    @property
+    def light_mode(self) -> bool:
+        """The worker ran out of GPU memory with the full model once: start it with the light one."""
+        return (self.root / "modo_ligero.txt").is_file()
+
+    def args(self) -> list[str]:
+        if not self.light_mode:
+            return list(self.worker_args)
+        args, skip = [], 0
+        for arg in self.worker_args:
+            if skip:
+                skip -= 1
+            elif arg in ("--shape-model", "--shape-subfolder"):
+                skip = 1
+            elif arg != "--multiview":
+                args.append(arg)
+        return args + ["--shape-model", "tencent/Hunyuan3D-2mini", "--shape-subfolder", "hunyuan3d-dit-v2-mini"]
 
     def worker_log_tail(self, lines: int = 3) -> str:
         try:

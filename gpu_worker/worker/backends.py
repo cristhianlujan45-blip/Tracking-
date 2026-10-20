@@ -315,21 +315,17 @@ class HunyuanBackend:
         progress(5, "Quitando fondo")
         images = [self._remove_background(img) for img in job.images]
 
-        generator = torch.Generator(device="cpu").manual_seed(job.seed)
-        if len(images) > 1 and self.multiview:
-            progress(15, "Cargando modelo multi-vista")
-            pipe = self._load_mv()
-            image_arg = dict(zip(VIEW_NAMES, images))
-        else:
-            progress(15, "Cargando modelo de forma")
-            pipe = self._load_shape()
-            image_arg = images[0]
-
         progress(25, "Generando forma 3D")
-        mesh = pipe(
-            image=image_arg, num_inference_steps=steps, octree_resolution=octree,
-            num_chunks=8000, generator=generator, output_type="trimesh",
-        )[0]
+        try:
+            mesh = self._shape_pass(images, job.seed, steps, octree, progress)
+        except Exception as exc:  # noqa: BLE001 - only out-of-memory is retried
+            if not _is_oom(exc):
+                raise
+            # plan B for small GPUs: free everything and retry lighter (smaller model, coarser grid)
+            log.warning("Sin memoria de GPU; reintentando con un modelo más ligero")
+            progress(30, "Poca memoria de GPU: reintentando en modo ligero")
+            self._use_light_model()
+            mesh = self._shape_pass(images[:1], job.seed, steps, min(octree, 320), progress, chunks=4000)
 
         progress(80, "Limpiando malla")
         mesh = FloaterRemover()(mesh)
@@ -340,6 +336,41 @@ class HunyuanBackend:
             progress(85, "Texturizando (puede tardar)")
             mesh = self._load_paint()(mesh, image=images[0])
         return mesh.export(file_type="glb")
+
+    def _shape_pass(self, images, seed: int, steps: int, octree: int, progress: Progress, chunks: int = 8000):
+        import torch
+
+        generator = torch.Generator(device="cpu").manual_seed(seed)
+        if len(images) > 1 and self.multiview:
+            progress(15, "Cargando modelo multi-vista")
+            pipe = self._load_mv()
+            image_arg = dict(zip(VIEW_NAMES, images))
+        else:
+            progress(15, "Cargando modelo de forma")
+            pipe = self._load_shape()
+            image_arg = images[0]
+        return pipe(
+            image=image_arg, num_inference_steps=steps, octree_resolution=octree,
+            num_chunks=chunks, generator=generator, output_type="trimesh",
+        )[0]
+
+    def _use_light_model(self) -> None:
+        """Switch to Hunyuan3D-2mini for the rest of the session and remember it for the next start."""
+        import torch
+
+        for key in ("shape", "mv", "t2i", "paint"):
+            setattr(self, f"_{key}", None)
+        self._on_gpu = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        if self.shape_model != LIGHT_SHAPE[0]:
+            self.shape_model, self.shape_subfolder = LIGHT_SHAPE
+            self.multiview = False  # the multi-view model is as big as the full one
+            try:
+                with open(LIGHT_MARKER, "w", encoding="utf-8") as fh:
+                    fh.write("Hunyuan3D-2mini: la GPU se quedó sin memoria con el modelo completo\n")
+            except OSError:
+                pass
 
     def estimate_depth(self, image: Image.Image) -> Image.Image:
         """Depth Anything V2. Small (~25 M params) stays on the GPU next to whatever else is loaded."""
@@ -399,6 +430,14 @@ class HunyuanBackend:
         return self._load_paint()(mesh, image=image).export(file_type="glb")
 
 
+LIGHT_SHAPE = ("tencent/Hunyuan3D-2mini", "hunyuan3d-dit-v2-mini")
+LIGHT_MARKER = "modo_ligero.txt"  # written in the worker's folder; the app then starts it with the light model
+
+
+def _is_oom(exc: Exception) -> bool:
+    return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
+
+
 def _fast_decoding(pipe) -> None:
     """FlashVDM (newer Hunyuan3D-2 code): the mesh decoding step goes from minutes to seconds."""
     if hasattr(pipe, "enable_flashvdm"):
@@ -444,6 +483,9 @@ def prefetch(shape_model: str, shape_subfolder: str, image_model: str, depth_mod
     jobs = [(shape_model.split("/")[-1], lambda: snapshot_download(
         shape_model, allow_patterns=[f"{shape_subfolder}/*"])),
             ("FlashVDM", lambda: snapshot_download(vae_repo, allow_patterns=[f"{vae}/*"]))]
+    if shape_model != LIGHT_SHAPE[0]:  # plan B when the GPU runs out of memory with the full model
+        jobs.append((LIGHT_SHAPE[0].split("/")[-1] + " (plan B)", lambda: snapshot_download(
+            LIGHT_SHAPE[0], allow_patterns=[f"{LIGHT_SHAPE[1]}/*", "hunyuan3d-vae-v2-mini-turbo/*"])))
     if multiview:
         jobs.append(("Hunyuan3D-2mv", lambda: snapshot_download(
             "tencent/Hunyuan3D-2mv", allow_patterns=["hunyuan3d-dit-v2-mv/*"])))

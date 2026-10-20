@@ -12,6 +12,7 @@ import logging
 import random
 import re
 import shutil
+import subprocess
 import unicodedata
 import sys
 import uuid
@@ -27,10 +28,12 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from . import agent as ai_agent
+from ._version import VERSION
 from . import blender, creations, geometry, pipelines, printing, rigging, sheet, textures
 from .config import Settings, get_settings, save_user_settings, user_settings_path, with_user_settings
 from .db import JobStore
 from .jobs import JobRunner
+from . import local_ai as local_ai_module
 from .local_ai import LocalAI, LocalAIError
 from .providers import GenerationError, GenerationRequest, GenerationResult, InputImage, Provider, build_provider
 from .providers.fal import ENGINES as FAL_ENGINES
@@ -418,6 +421,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             "poses": [{"id": k, "label": v[0]} for k, v in POSES.items()],
             "export_formats": list(geometry.EXPORT_FORMATS) + (list(blender.FORMATS) if app.state.blender else []),
             "blender": bool(app.state.blender),
+            "version": VERSION,
             "agent": bool(request.app.state.settings.anthropic_key),
             "local_ai": {k: v for k, v in request.app.state.local_ai.status().items() if k != "log"},
             "upload_types": sorted(geometry.UPLOAD_TYPES),
@@ -489,6 +493,53 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
     async def local_ai_status(request: Request):
         status = request.app.state.local_ai.status()
         return {**status, "worker_up": bool(await request.app.state.local_ai.healthy(1))}
+
+    @app.get("/api/diagnostics")
+    async def diagnostics(request: Request):
+        """Everything needed to understand a problem, as text the user can paste in a message."""
+        state = request.app.state
+        ai = state.local_ai
+        status = ai.status()
+        lines = [f"Forja3D {VERSION} · {sys.platform} · Python {sys.version.split()[0]}",
+                 f"Motor: {state.settings.provider} (activo: {state.provider.name})"
+                 + (f" · error: {state.provider_error}" if state.provider_error else "")]
+        smi = local_ai_module.find_nvidia_smi()
+        if smi:
+            try:
+                out = await asyncio.to_thread(
+                    subprocess.run, [smi, "--query-gpu=name,driver_version,memory.used,memory.total",
+                                     "--format=csv,noheader"], capture_output=True, text=True, timeout=10)
+                lines.append(f"GPU: {out.stdout.strip() or out.stderr.strip()}")
+            except (OSError, subprocess.SubprocessError) as exc:
+                lines.append(f"GPU: nvidia-smi falló ({exc})")
+        else:
+            lines.append("GPU: no se encontró nvidia-smi (sin NVIDIA o sin driver)")
+        try:
+            lines.append(f"Disco libre: {shutil.disk_usage(state.settings.data_dir).free / 1024**3:.0f} GB")
+        except OSError:
+            pass
+        health = await ai.healthy(2)
+        lines.append(f"IA local: instalada={status['installed']} instalando={status['installing']} "
+                     f"paso={status['step'] or '-'} {status['progress']}% en marcha={bool(health)} "
+                     f"modo_ligero={ai.light_mode} url={status['url']}")
+        if status["error"]:
+            lines.append(f"Error de instalación: {status['error']}")
+        if health:
+            lines.append(f"Worker: {health.get('gpu')} · {', '.join(health.get('capabilities', []))}")
+        failed = [j for j in state.store.list(30) if j["status"] == "failed"][:3]
+        lines += [f"Trabajo fallido ({j['mode']}): {j.get('error')}" for j in failed]
+
+        def tail(title: str, path: Path, n: int) -> None:
+            try:
+                text = path.read_text("utf-8", errors="replace").strip().splitlines()[-n:]
+            except OSError:
+                return
+            lines.extend(["", f"--- {title} ---", *text])
+
+        lines += ["", "--- Instalación (últimas líneas) ---", *status["log"]]
+        tail("worker.log", ai.root / "worker.log", 25)
+        tail("forja3d.log", Path(state.settings.data_dir) / "forja3d.log", 25)
+        return {"text": "\n".join(lines)}
 
     @app.post("/api/local-ai/install")
     async def local_ai_install(request: Request):

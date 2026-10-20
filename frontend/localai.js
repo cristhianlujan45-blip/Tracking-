@@ -11,6 +11,7 @@ let wasInstalling = false;
 export function initLocalAI(context) {
   ctx = context;
   $("#btnInstallAI").addEventListener("click", install);
+  $("#btnDiag").addEventListener("click", copyDiagnostics);
   $("#aiBanner").addEventListener("click", () => ctx.openSettings());
   const s = ctx.config()?.local_ai;
   if (s?.installing) refreshLocalAI();
@@ -28,6 +29,24 @@ async function install() {
     ctx.toast(err.message, true);
   } finally {
     button.disabled = false;
+  }
+}
+
+async function copyDiagnostics() {
+  try {
+    const { text } = await ctx.api("/api/diagnostics");
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {  // older webviews: select the text in a hidden field and copy it
+      const area = Object.assign(document.createElement("textarea"), { value: text });
+      document.body.append(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+    ctx.toast(t("Diagnóstico copiado: pégalo en tu mensaje"));
+  } catch (err) {
+    ctx.toast(err.message, true);
   }
 }
 
