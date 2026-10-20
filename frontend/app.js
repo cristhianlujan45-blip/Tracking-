@@ -2,6 +2,7 @@ import { applyI18n, lang, t, title, tr } from "./i18n.js";
 import { clipLabel, initRig, renderRig } from "./rig.js";
 import { initAgent } from "./agent.js";
 import { initLocalAI } from "./localai.js";
+import { initUpdates } from "./updates.js";
 import { initSettings, openSettings } from "./settings.js";
 import { Viewer } from "./viewer.js";
 
@@ -1109,6 +1110,7 @@ function sakura(count = 14) {
   const first = state.jobs.find((j) => j.status === "succeeded");
   if (first && !state.selected) selectJob(first.id);
   initLocalAI({ api, toast, openSettings: () => openSettings(), config: () => state.config });
+  initUpdates({ api, toast });
   initSettings({ api, toast });
   initAgent({
     api, onCreated, openSettings: () => openSettings(), config: () => state.config,

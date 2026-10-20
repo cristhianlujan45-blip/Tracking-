@@ -240,7 +240,14 @@ const EN = {
   "Guardar": "Save", "Cerrar": "Close", "¡Ajustes guardados!": "Settings saved!",
 
   // ---------------------------------------------------------------- free local AI
-  "Mi GPU · gratis": "My GPU · free", "⧉ Copiar diagnóstico": "⧉ Copy diagnostics",
+  "Mi GPU · gratis": "My GPU · free",
+  "Actualizar ahora": "Update now", "Descargar": "Download", "Más tarde": "Later",
+  "Nueva versión {v} disponible": "New version {v} available",
+  "Instalando la actualización… Forja3D se abrirá solo": "Installing the update… Forja3D will reopen by itself",
+  "La actualización falló: {e}": "The update failed: {e}", "Descargando la versión {v}… {p}%": "Downloading version {v}… {p}%",
+  "Esta versión no se puede actualizar sola: descárgala desde la página de versiones": "This version can't update itself: download it from the releases page",
+  "No hay un instalador para este sistema en la última versión": "The latest version has no installer for this system",
+  "La descarga de la actualización llegó incompleta": "The update download was incomplete", "⧉ Copiar diagnóstico": "⧉ Copy diagnostics",
   "Copia el estado de la app, la GPU y los últimos errores para enviarlo": "Copies the app, GPU and latest errors so you can send them",
   "Diagnóstico copiado: pégalo en tu mensaje": "Diagnostics copied: paste them in your message",
   "Poca memoria de GPU: reintentando en modo ligero": "Low GPU memory: retrying in light mode",

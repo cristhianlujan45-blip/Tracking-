@@ -634,3 +634,15 @@ input[type="color"] { width: 100%; height: 38px; padding: 2px; background: rgba(
 .diag-btn { margin: 8px 0 0 8px; background: none; border: 1px solid var(--line-2); color: var(--muted); border-radius: 8px;
   padding: 6px 12px; cursor: pointer; font: 12px var(--body); }
 .diag-btn:hover { color: var(--cyan); border-color: var(--cyan); }
+
+/* ---------- update banner ---------- */
+.update-banner {
+  position: fixed; top: 74px; left: 50%; transform: translateX(-50%); z-index: 56; display: flex; gap: 12px;
+  align-items: center; padding: 8px 10px 8px 18px; border-radius: 999px; font-size: 14px; max-width: calc(100vw - 32px);
+  background: linear-gradient(120deg, rgba(255, 79, 154, .95), rgba(120, 80, 255, .95)); color: white;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+}
+.update-banner button, .update-banner a { border: 0; border-radius: 999px; padding: 6px 14px; cursor: pointer;
+  background: white; color: #10132a; font-weight: 700; text-decoration: none; font-size: 13px; }
+.update-banner button:disabled { opacity: .6; cursor: default; }
+.update-banner .x { background: none; color: white; padding: 4px 8px; }

@@ -12,6 +12,9 @@ permissions:
 
 env:
   APP_VERSION: 1.0.${{ github.run_number }}
+  # optional public repo that only hosts the installers (the code can stay private): in-app updates
+  # download from it. Set the repository variable RELEASES_REPO (owner/name) and the secret RELEASES_TOKEN.
+  UPDATE_REPO: ${{ vars.RELEASES_REPO || github.repository }}
 
 jobs:
   tests:
@@ -35,7 +38,9 @@ jobs:
         run: pip install -r backend/requirements.txt pywebview pyinstaller
       - name: Version
         shell: bash
-        run: echo "VERSION = \"$APP_VERSION\"" > backend/app/_version.py
+        run: |
+          sed -i.bak -e "s/^VERSION = .*/VERSION = \"$APP_VERSION\"/" -e "s#^UPDATE_REPO = .*#UPDATE_REPO = \"$UPDATE_REPO\"#" backend/app/_version.py
+          rm -f backend/app/_version.py.bak
       - name: Build app
         run: pyinstaller desktop/forja3d.spec --noconfirm
       - name: Smoke test (starts the packaged server)
@@ -62,6 +67,21 @@ jobs:
         with:
           name: Forja3D-Windows
           path: dist-installer/*.exe
+      # Microsoft Store package: free individual developer account, the Store signs it (no SmartScreen).
+      # Set the repository variables MSIX_IDENTITY_NAME, MSIX_PUBLISHER and MSIX_PUBLISHER_DISPLAY
+      # from Partner Center → Product identity to turn it on (see docs/firma-gratis.md).
+      - name: Microsoft Store package (MSIX)
+        if: ${{ vars.MSIX_PUBLISHER != '' }}
+        env:
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY: ${{ vars.MSIX_PUBLISHER_DISPLAY }}
+        run: python desktop/windows/make_msix.py
+      - uses: actions/upload-artifact@v4
+        if: ${{ vars.MSIX_PUBLISHER != '' }}
+        with:
+          name: Forja3D-Microsoft-Store
+          path: dist-installer/*.msix
 
   macos:
     needs: tests
@@ -73,7 +93,9 @@ jobs:
       - name: Install
         run: pip install -r backend/requirements.txt pywebview pyinstaller
       - name: Version
-        run: echo "VERSION = \"$APP_VERSION\"" > backend/app/_version.py
+        run: |
+          sed -i.bak -e "s/^VERSION = .*/VERSION = \"$APP_VERSION\"/" -e "s#^UPDATE_REPO = .*#UPDATE_REPO = \"$UPDATE_REPO\"#" backend/app/_version.py
+          rm -f backend/app/_version.py.bak
       - name: Build app
         run: pyinstaller desktop/forja3d.spec --noconfirm
       - name: Smoke test (starts the packaged server)
@@ -109,3 +131,13 @@ jobs:
             **macOS (Apple Silicon):** abre el `.dmg` y arrastra Forja3D a Aplicaciones. La primera vez: clic derecho sobre la app → «Abrir» (no está firmada por Apple).
             **IA gratis en tu GPU NVIDIA (Windows):** la app la instala y la arranca sola la primera vez (≈20 GB, una sola vez). Sin claves ni tokens.
             Si ya tienes Forja3D, la app se actualiza sola: no hace falta descargar esto de nuevo.
+      - name: Publish to the public releases repo
+        if: ${{ vars.RELEASES_REPO != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ vars.RELEASES_REPO }}
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: desktop-v${{ env.APP_VERSION }}
+          name: Forja3D ${{ env.APP_VERSION }}
+          make_latest: true
+          files: out/*

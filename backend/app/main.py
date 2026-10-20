@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from . import agent as ai_agent
 from ._version import VERSION
-from . import blender, creations, geometry, pipelines, printing, rigging, sheet, textures
+from . import blender, creations, geometry, pipelines, printing, rigging, sheet, textures, updates
 from .config import Settings, get_settings, save_user_settings, user_settings_path, with_user_settings
 from .db import JobStore
 from .jobs import JobRunner
@@ -267,6 +267,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         app.state.settings = settings
         app.state.provider_error = None
         app.state.local_ai = local_ai = LocalAI(settings.data_dir, RESOURCES)
+        app.state.updater = updates.Updater(VERSION, settings.data_dir / "actualizaciones")
         try:
             app.state.provider = provider or make_provider(settings)
         except (GenerationError, ValueError) as exc:  # e.g. cloud mode without a key: start in demo mode
@@ -493,6 +494,31 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
     async def local_ai_status(request: Request):
         status = request.app.state.local_ai.status()
         return {**status, "worker_up": bool(await request.app.state.local_ai.healthy(1))}
+
+    # ------------------------------------------------------------ updates
+
+    @app.get("/api/update")
+    async def update_status(request: Request, force: bool = False):
+        return await request.app.state.updater.check(force)
+
+    @app.post("/api/update/install")
+    async def update_install(request: Request):
+        """Windows desktop app: download the new installer, run it silently and reopen the app."""
+        updater = request.app.state.updater
+        status = await updater.check()
+        if not status.get("can_install") or not getattr(sys, "frozen", False):
+            raise HTTPException(400, "Esta versión no se puede actualizar sola: descárgala desde la página de versiones")
+        loop = asyncio.get_running_loop()
+
+        def ready(installer: Path) -> None:
+            updates.run_windows_installer(installer)
+            loop.call_later(1.0, os._exit, 0)  # quit so the installer can replace the app's files
+
+        try:
+            updater.start(ready)
+        except updates.UpdateError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return await updater.check()
 
     @app.get("/api/diagnostics")
     async def diagnostics(request: Request):
