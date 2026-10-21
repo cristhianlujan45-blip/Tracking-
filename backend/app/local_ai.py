@@ -86,7 +86,45 @@ def _digest(path: Path) -> str:
 
 
 def _folder_gb(path: Path) -> float:
-    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 1024**3 if path.is_dir() else 0.0
+    """Size of a folder. Links are not followed: Windows refuses to even look through some (os error 448)."""
+    total = 0
+    for folder, dirs, files in os.walk(path, onerror=lambda exc: None):
+        dirs[:] = [d for d in dirs if not _is_link(Path(folder, d))]
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(folder, name)).st_size
+            except OSError:
+                pass
+    return total / 1024**3
+
+
+def _is_link(path: Path) -> bool:
+    try:
+        return path.is_symlink() or _is_junction(path)
+    except OSError:
+        return True
+
+
+def _drop_links(folder: Path) -> None:
+    """Remove the folder links (junctions) uv leaves in its Python folder: once Windows refuses one,
+    every look at it fails. Removing a link never touches what it points to."""
+    try:
+        entries = list(os.scandir(folder))
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            link = entry.is_symlink() or getattr(entry, "is_junction", lambda: False)()
+        except OSError:
+            link = True
+        if not link:
+            continue
+        for remove in (os.rmdir, os.unlink):
+            try:
+                remove(entry.path)
+                break
+            except OSError:
+                continue
 
 
 def _is_junction(path: Path) -> bool:
@@ -186,6 +224,8 @@ class LocalAI:
                "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",  # Windows pipes default to cp1252
                "PYTHONPATH": str(self.root), "UV_PYTHON_INSTALL_DIR": str(self.root / "python"),
                "UV_CACHE_DIR": str(self.root / "cache"), "UV_LINK_MODE": "copy"}
+        if sys.platform == "win32":
+            env["UV_PYTHON_DOWNLOADS"] = "never"  # its Python folder links can be refused: see _step2
         env.pop("VIRTUAL_ENV", None)
         return env
 
@@ -324,30 +364,29 @@ class LocalAI:
         if self.python.is_file():
             return
         venv = self.root / "venv"
-        try:
+        if sys.platform != "win32":
             await self._run(self._uv(), "venv", str(venv), "--python", "3.11", start=start)
             return
-        except LocalAIError as exc:
-            if sys.platform != "win32":
-                raise
-            # Windows can refuse the folder link uv makes for its Python ("untrusted mount point",
-            # os error 448): use a Python from a plain folder of ours instead
-            log.warning("uv no pudo preparar su Python (%s); se usa una copia propia", exc)
+        # On Windows uv's own Python needs a folder link that some PCs refuse ("untrusted mount
+        # point", os error 448): the environment is built from a Python in a plain folder of ours
+        _drop_links(self.root / "python")
         base = self._own_python() or await self._python_org()
         shutil.rmtree(venv, ignore_errors=True)
         await self._run(self._uv(), "venv", str(venv), "--python", str(base), start=start)
 
     def _own_python(self) -> Path | None:
-        """Python 3.11 in ai/py311: the copy uv already downloaded, moved out of uv's own folder."""
+        """Python 3.11 in ai/py311: python.org's, or a copy uv downloaded earlier, moved out of uv's folder."""
         target = self.root / "py311"
-        if (target / "python.exe").is_file():
-            return target / "python.exe"
-        for folder in sorted((self.root / "python").glob("cpython-3.11.*"), reverse=True):
-            if folder.is_dir() and not folder.is_symlink() and not _is_junction(folder) \
-                    and (folder / "python.exe").is_file():
-                shutil.rmtree(target, ignore_errors=True)
-                shutil.move(str(folder), str(target))
+        try:
+            if (target / "python.exe").is_file():
                 return target / "python.exe"
+            for folder in sorted((self.root / "python").glob("cpython-3.11.*"), reverse=True):
+                if not _is_link(folder) and folder.is_dir() and (folder / "python.exe").is_file():
+                    shutil.rmtree(target, ignore_errors=True)
+                    shutil.move(str(folder), str(target))
+                    return target / "python.exe"
+        except OSError as exc:
+            log.warning("No se pudo reutilizar el Python descargado: %s", exc)
         return None
 
     async def _python_org(self) -> Path:

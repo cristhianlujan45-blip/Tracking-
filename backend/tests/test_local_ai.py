@@ -230,27 +230,29 @@ def test_stale_worker_is_replaced(tmp_path, monkeypatch):
 
 
 def test_python_from_a_plain_folder_when_windows_refuses_uvs_link(tmp_path, monkeypatch):
-    """uv can fail to link its Python on Windows (os error 448): the app uses that Python, moved to a
-    plain folder of its own, or python.org's package when there is none."""
+    """On Windows uv's own Python needs a folder link some PCs refuse (os error 448), and once one is
+    left behind every look at it fails: the links are removed, the Python uv downloaded is moved to a
+    plain folder (or python.org's package is used) and the environment is built from it."""
     ai = la.LocalAI(tmp_path, ROOT)
     managed = ai.root / "python" / "cpython-3.11.17-windows-x86_64-none"
     managed.mkdir(parents=True)
-    (managed / "python.exe").write_text("")
+    (managed / "python.exe").write_text("x" * 1000)
+    link = ai.root / "python" / "cpython-3.11-windows-x86_64-none"
+    link.symlink_to(link, target_is_directory=True)  # a link nothing can look through
+    assert la._folder_gb(ai.root) > 0  # the disk check does not trip over it
     calls = []
 
     async def fake_run(self, *argv, start=0, share=0, cwd=None):
         calls.append(argv)
-        if argv[-1] == "3.11":
-            raise la.LocalAIError("Falló «Instalando Python»: error: Failed to create Python minor version link "
-                                  "directory (os error 448)")
 
     monkeypatch.setattr(la.LocalAI, "_run", fake_run)
     monkeypatch.setattr(la.LocalAI, "_uv", lambda self: "uv")
     monkeypatch.setattr(la.sys, "platform", "win32")
+    assert ai.env()["UV_PYTHON_DOWNLOADS"] == "never"
     asyncio.run(ai._step2(0, 0))
     own = ai.root / "py311" / "python.exe"
-    assert calls[-1] == ("uv", "venv", str(ai.root / "venv"), "--python", str(own))
-    assert own.is_file() and not managed.exists()
+    assert calls == [("uv", "venv", str(ai.root / "venv"), "--python", str(own))]
+    assert own.is_file() and not managed.exists() and not link.is_symlink()
 
     # no copy from uv at all: python.org's package
     shutil.rmtree(ai.root / "py311")
