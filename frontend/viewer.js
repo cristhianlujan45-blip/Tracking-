@@ -65,6 +65,38 @@ function gradientTexture(stops) {
   return tex;
 }
 
+// Mesh lines drawn from each triangle's barycentric coordinates (no GL lines: those alias badly and
+// turn a 100k-triangle model into a solid blob). Needs the triangles unshared: a non-indexed copy.
+function wireGeometry(geometry) {
+  const g = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+  const count = g.attributes.position.count;
+  const bary = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) bary[i * 3 + (i % 3)] = 1;
+  g.setAttribute("bary", new THREE.BufferAttribute(bary, 3));
+  return g;
+}
+
+function wireMaterial(color, opacity, fade) {
+  const material = new THREE.MeshBasicMaterial({
+    color, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.lineOpacity = { value: opacity };
+    shader.uniforms.lineFade = { value: fade };
+    shader.vertexShader = "attribute vec3 bary;\nvarying vec3 vBary;\n" +
+      shader.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\n  vBary = bary;");
+    shader.fragmentShader = "uniform float lineOpacity;\nuniform float lineFade;\nvarying vec3 vBary;\n" +
+      shader.fragmentShader.replace("#include <dithering_fragment>", `#include <dithering_fragment>
+  vec3 d = fwidth(vBary);
+  vec3 a = smoothstep(vec3(0.0), d * 1.1, vBary);
+  float line = 1.0 - min(min(a.x, a.y), a.z);
+  float tiny = smoothstep(0.35, 1.0, max(max(d.x, d.y), d.z));  // triangle only a pixel or two wide
+  gl_FragColor.a = line * lineOpacity * (1.0 - lineFade * tiny);`);
+  };
+  material.customProgramCacheKey = () => "wire";
+  return material;
+}
+
 export class Viewer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -99,9 +131,10 @@ export class Viewer {
     this.action = null;
     this.viewMode = "textured";
     this.mapView = "";
-    this.wireMaterial = new THREE.MeshBasicMaterial({ color: 0xd4ff5a, wireframe: true, transparent: true, opacity: 0.35 });
+    this.wireDark = wireMaterial(0x1b2142, 0.85, 0.55);  // on the grey model
+    this.wireLight = wireMaterial(0x0a0d22, 0.5, 0.85);  // over the texture: fades more from afar
     this.overrides = {
-      clay: new THREE.MeshStandardMaterial({ color: 0xd9d3cc, roughness: 0.85, metalness: 0 }),
+      clay: new THREE.MeshStandardMaterial({ color: 0xc9ccd6, roughness: 0.8, metalness: 0 }),
       normals: new THREE.MeshNormalMaterial(),
     };
     this.turntable = null;
@@ -218,23 +251,31 @@ export class Viewer {
   }
 
   // textured | wireover (texture + wireframe on top) | clay | normals | wireframe
+  // textured · wireover (texture + mesh lines) · clay (no texture) · normals · wireframe (clay + lines)
   setViewMode(mode) {
     this.viewMode = mode;
     const meshes = [];
     this.model?.traverse((o) => o.isMesh && !o.userData.isOverlay && meshes.push(o));
+    const lines = mode === "wireframe" ? this.wireDark : mode === "wireover" ? this.wireLight : null;
     for (const o of meshes) {
       const original = o.userData.original;
-      o.material = this.overrides[mode] || this._mapMaterial(o) || original;
-      [].concat(original).forEach((m) => (m.wireframe = mode === "wireframe"));
-      if (mode === "wireover" && !o.userData.overlay) {
-        const overlay = o.isSkinnedMesh ? new THREE.SkinnedMesh(o.geometry, this.wireMaterial) : new THREE.Mesh(o.geometry, this.wireMaterial);
-        if (o.isSkinnedMesh) overlay.bind(o.skeleton, o.bindMatrix);
+      o.material = (mode === "wireframe" ? this.overrides.clay : this.overrides[mode]) || this._mapMaterial(o) || original;
+      if (lines && !o.userData.overlay) {
+        // the mesh's own triangles, drawn as thin anti-aliased lines by a shader (like Meshy / Tripo):
+        // the same width at any zoom, fading where triangles get smaller than a few pixels
+        const geometry = wireGeometry(o.geometry);
+        const overlay = o.isSkinnedMesh ? new THREE.SkinnedMesh(geometry, lines) : new THREE.Mesh(geometry, lines);
+        if (o.isSkinnedMesh) overlay.bind(o.skeleton, o.bindMatrix);  // follows the animation
         overlay.userData.isOverlay = true;
         overlay.renderOrder = 1;
+        overlay.frustumCulled = o.frustumCulled;
         o.add(overlay); // same transform as the mesh it outlines
         o.userData.overlay = overlay;
-      } else if (mode !== "wireover" && o.userData.overlay) {
+      } else if (lines) {
+        o.userData.overlay.material = lines;
+      } else if (o.userData.overlay) {
         o.remove(o.userData.overlay);
+        o.userData.overlay.geometry.dispose();
         delete o.userData.overlay;
       }
     }
