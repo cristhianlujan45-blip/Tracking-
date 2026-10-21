@@ -66,6 +66,9 @@ STEPS = [
 ]
 
 
+STEP_RETRIES = 2  # a failed install step is tried again by itself
+RETRY_WAIT_S = 10.0
+
 MIN_DRIVER = (570, 0)  # CUDA 12.8
 MIN_FREE_GB = 45
 
@@ -96,6 +99,27 @@ def _folder_gb(path: Path) -> float:
             except OSError:
                 pass
     return total / 1024**3
+
+
+def ram_gb() -> tuple[float, float]:
+    """(total, free) system memory in GB, for the diagnostics."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class Status(ctypes.Structure):
+                _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong)] + [
+                    (name, ctypes.c_ulonglong) for name in ("total", "avail", "page_total", "page_avail",
+                                                           "virtual_total", "virtual_avail", "extended")]
+
+            status = Status()
+            status.length = ctypes.sizeof(Status)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+            return status.total / 1024**3, status.avail / 1024**3
+        page = os.sysconf("SC_PAGE_SIZE")
+        return page * os.sysconf("SC_PHYS_PAGES") / 1024**3, page * os.sysconf("SC_AVPHYS_PAGES") / 1024**3
+    except (AttributeError, OSError, ValueError):
+        return 0.0, 0.0
 
 
 def _is_link(path: Path) -> bool:
@@ -269,9 +293,20 @@ class LocalAI:
         done = 0
         try:
             for i, (label, share) in enumerate(STEPS):
-                self.step = label
-                self.progress = done
-                await getattr(self, f"_step{i}")(done, share)
+                for attempt in range(STEP_RETRIES + 1):
+                    self.step = label
+                    self.progress = done
+                    try:
+                        await getattr(self, f"_step{i}")(done, share)
+                        break
+                    except LocalAIError as exc:
+                        # the checks (step 0) say something to fix by hand; anything later is usually a
+                        # dropped download: everything finished is reused, so trying again is cheap
+                        if i == 0 or attempt == STEP_RETRIES:
+                            raise
+                        self._say(f"Falló ({exc}); reintentando en {RETRY_WAIT_S:.0f} s…")
+                        self.step = f"{label} · reintentando ({attempt + 2}/{STEP_RETRIES + 1})"
+                        await asyncio.sleep(RETRY_WAIT_S)
                 done += share
             self.marker.write_text(json.dumps({"version": VERSION, "date": time.time()}))
             self.step, self.progress = "Listo", 100
@@ -571,6 +606,13 @@ class LocalAI:
     def light_mode(self) -> bool:
         """The worker ran out of GPU memory with the full model once: start it with the light one."""
         return (self.root / "modo_ligero.txt").is_file()
+
+    def use_light_mode(self, reason: str) -> None:
+        """The worker died while generating (out of memory, most likely): from now on start it with the
+        light model, like after a GPU out-of-memory error. Deleting modo_ligero.txt undoes it."""
+        log.warning("La IA local se cerró generando; se pasa al modo ligero: %s", reason)
+        (self.root / "modo_ligero.txt").write_text(f"La IA local se cerró generando: {reason}\n", encoding="utf-8")
+        self.stop()
 
     @property
     def ai_textures(self) -> bool:

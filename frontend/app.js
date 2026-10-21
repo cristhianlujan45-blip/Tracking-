@@ -593,6 +593,7 @@ async function showModel(job) {
     $("#animBar").hidden = true;
     $("#mapView").hidden = true;
     const failed = job?.status === "failed";
+    $("#btnDiagFailed").hidden = !failed;
     empty.hidden = !!job && !failed;
     emptyMsg(failed ? t("La generación falló: {e}", { e: tr(job.error) }) : "");
     loading.hidden = !job || failed;
@@ -600,6 +601,7 @@ async function showModel(job) {
     return;
   }
 
+  $("#btnDiagFailed").hidden = true;
   if (state.loadedModel === job.model_url) return;
   state.loadedModel = job.model_url;
   empty.hidden = true;
@@ -1202,7 +1204,7 @@ function sakura(count = 14) {
   await refreshJobs();
   const first = state.jobs.find((j) => j.status === "succeeded");
   if (first && !state.selected) selectJob(first.id);
-  initUpdates({ api, toast });
+  initUpdates({ api, toast, busy: () => state.jobs.some((j) => j.status === "queued" || j.status === "running") });
   initLocalAI({ api, toast, openSettings: () => openSettings(), config: () => state.config });
   initSettings({ api, toast });
   initAgent({

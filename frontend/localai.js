@@ -13,6 +13,7 @@ export function initLocalAI(context) {
   ctx = context;
   $("#btnInstallAI").addEventListener("click", install);
   $("#btnDiag").addEventListener("click", copyDiagnostics);
+  $("#btnDiagFailed").addEventListener("click", copyDiagnostics);
   $("#aiTextures").addEventListener("change", async (e) => {
     try {
       render(await ctx.api(`/api/local-ai/textures?enabled=${e.target.checked}`, { method: "PUT" }));
@@ -42,7 +43,7 @@ async function install() {
   }
 }
 
-async function copyDiagnostics() {
+export async function copyDiagnostics() {
   try {
     const { text } = await ctx.api("/api/diagnostics");
     try {

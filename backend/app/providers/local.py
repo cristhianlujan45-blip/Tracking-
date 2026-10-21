@@ -49,6 +49,10 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
 
 
+class WorkerCrashed(GenerationError):
+    """The worker process went away in the middle of a generation."""
+
+
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -122,6 +126,18 @@ class LocalProvider:
     # ------------------------------------------------------------ provider API
 
     async def generate(self, req: GenerationRequest, on_progress: ProgressCallback) -> GenerationResult:
+        try:
+            return await self._generate(req, on_progress)
+        except WorkerCrashed as exc:
+            if self.launcher is None or self.launcher.light_mode:
+                raise
+            # plan B: the full models did not fit this PC; the light ones are started and the job retried
+            await on_progress(5, "La IA local se cerró: reintentando en modo ligero")
+            await asyncio.to_thread(self.launcher.use_light_mode, str(exc))
+            self.info = {}  # capabilities change with the light model
+            return await self._generate(req, on_progress)
+
+    async def _generate(self, req: GenerationRequest, on_progress: ProgressCallback) -> GenerationResult:
         await self._ready()
         async with self._client() as client:
             reference = None
@@ -206,6 +222,8 @@ class LocalProvider:
         try:
             resp = await self._call(client.post("/cutout", json={"image": _b64(data)}, timeout=300))
             return base64.b64decode(resp.json()["image"])
+        except WorkerCrashed:
+            raise
         except GenerationError:  # an older worker or a failed cut: the shape step removes it again
             return data
 
@@ -234,11 +252,18 @@ class LocalProvider:
         try:
             resp = await coro
         except httpx.ConnectError as exc:
+            if self.launcher is not None and self.info:  # it was up a moment ago: it died
+                raise WorkerCrashed("La IA local se cerró mientras generaba (ConnectError): "
+                                    + self.launcher.worker_log_tail()) from exc
             raise GenerationError(
                 f"No se puede conectar con la IA local en {self.url}: ábrela desde Ajustes → «Mi GPU»"
             ) from exc
         except httpx.TimeoutException as exc:
             raise GenerationError("El worker de IA local no respondió a tiempo") from exc
+        except httpx.HTTPError as exc:  # the worker closed the connection: it usually crashed (memory)
+            tail = self.launcher.worker_log_tail() if self.launcher is not None else ""
+            raise WorkerCrashed(f"La IA local se cerró mientras generaba ({exc.__class__.__name__})"
+                                + (f": {tail}" if tail else "")) from exc
         if not resp.is_success:
             try:
                 detail = resp.json().get("detail", resp.text)
@@ -259,6 +284,8 @@ class LocalProvider:
         try:
             body = {"image": _b64(image), "quality": quality, **({"seed": seed} if seed else {})}
             resp = await self._call(client.post("/views", json=body, timeout=900))
+        except WorkerCrashed:
+            raise
         except GenerationError as exc:
             log.warning("No se pudieron generar las vistas laterales: %s", exc)
             return {}, {}

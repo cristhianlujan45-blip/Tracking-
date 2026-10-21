@@ -40,6 +40,8 @@ def generation(provider: Provider, req: GenerationRequest, preview: bool = False
                         projection.paint_glb, result.model_glb, pictures, roles, trust, result.view_poses)
                 except projection.ProjectionError as exc:  # keep the shape: an unpainted model beats no model
                     log.warning("No se pudo pintar el modelo: %s", exc)
+                except Exception:  # noqa: BLE001 - same, for anything unexpected (logged for the diagnostics)
+                    log.exception("Error inesperado al pintar el modelo; se deja sin pintar")
         if req.style in ("lowpoly", "voxel", "sculpture"):
             await on_progress(96, "Aplicando estilo")
             result.model_glb = await asyncio.to_thread(geometry.apply_style, result.model_glb, req.style)

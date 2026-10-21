@@ -34,6 +34,10 @@ class JobRunner:
         task.add_done_callback(self._tasks.discard)
         task.add_done_callback(lambda _t: self._by_job.pop(job_id, None))
 
+    @property
+    def busy(self) -> bool:
+        return bool(self._tasks)
+
     def cancel(self, job_id: str) -> None:
         task = self._by_job.get(job_id)
         if task is not None:
@@ -69,9 +73,11 @@ class JobRunner:
             except (GenerationError, GeometryError) as exc:
                 self.store.update(job_id, status="failed", error=str(exc))
                 return
-            except Exception:  # noqa: BLE001 - never leave a job hanging
+            except Exception as exc:  # noqa: BLE001 - never leave a job hanging
                 log.exception("Job %s crashed", job_id)
-                self.store.update(job_id, status="failed", error="Error interno durante el procesamiento")
+                detail = f"{exc.__class__.__name__}: {exc}".strip().rstrip(":")
+                self.store.update(job_id, status="failed",
+                                  error=f"Error interno durante el procesamiento ({detail[:300]})")
                 return
 
             if self.store.get(job_id) is None:

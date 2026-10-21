@@ -569,6 +569,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         updater = request.app.state.updater
         if request.app.state.local_ai.installing:  # quitting would throw away a half-done download
             raise HTTPException(409, "Espera a que termine la instalación de la IA y actualiza después")
+        if request.app.state.runner.busy:  # nor a model being generated
+            raise HTTPException(409, "Espera a que terminen los trabajos en curso y actualiza después")
         status = await updater.check()
         if not status.get("can_install") or not getattr(sys, "frozen", False):
             raise HTTPException(400, "Esta versión no se puede actualizar sola: descárgala desde la página de versiones")
@@ -609,6 +611,9 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             lines.append(f"Disco libre: {shutil.disk_usage(state.settings.data_dir).free / 1024**3:.0f} GB")
         except OSError:
             pass
+        total, free = local_ai_module.ram_gb()
+        if total:
+            lines.append(f"RAM: {total:.0f} GB ({free:.1f} GB libres)")
         health = await ai.healthy(2)
         lines.append(f"IA local: instalada={status['installed']} instalando={status['installing']} "
                      f"paso={status['step'] or '-'} {status['progress']}% en marcha={bool(health)} "
@@ -616,20 +621,40 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         if status["error"]:
             lines.append(f"Error de instalación: {status['error']}")
         if health:
-            lines.append(f"Worker: {health.get('gpu')} · {', '.join(health.get('capabilities', []))}")
+            lines.append(f"Worker: {health.get('gpu')} · {', '.join(health.get('capabilities', []))} · "
+                         f"modelos {', '.join(health.get('models', []))} · poca RAM={health.get('low_ram')}")
         failed = [j for j in state.store.list(30) if j["status"] == "failed"][:3]
         lines += [f"Trabajo fallido ({j['mode']}): {j.get('error')}" for j in failed]
 
-        def tail(title: str, path: Path, n: int) -> None:
-            try:
-                text = path.read_text("utf-8", errors="replace").strip().splitlines()[-n:]
+        def read(path: Path) -> list[str]:
+            try:  # only the end of big logs
+                with open(path, "rb") as fh:
+                    fh.seek(max(0, fh.seek(0, 2) - 400_000))
+                    return fh.read().decode("utf-8", errors="replace").splitlines()
             except OSError:
-                return
-            lines.extend(["", f"--- {title} ---", *text])
+                return []
+
+        def quiet(text: list[str]) -> list[str]:  # the app polls all the time: drop request lines
+            return [line for line in text if '"GET /' not in line and "uvicorn.access" not in line]
+
+        def last_error(text: list[str]) -> list[str]:
+            starts = [i for i, line in enumerate(text) if line.startswith("Traceback")]
+            if not starts:
+                return []
+            block = text[max(0, starts[-1] - 2):starts[-1] + 40]
+            end = next((i + 1 for i, line in enumerate(block) if i > 2 and line[:1].strip()
+                        and not line.startswith(("Traceback", "  ", "During", "The above"))), len(block))
+            return block[:end]
 
         lines += ["", "--- Instalación (últimas líneas) ---", *status["log"]]
-        tail("worker.log", ai.root / "worker.log", 25)
-        tail("forja3d.log", Path(state.settings.data_dir) / "forja3d.log", 25)
+        app_log = read(Path(state.settings.data_dir) / "forja3d.log")
+        worker_log = read(ai.root / "worker.log")
+        for title, text in (("forja3d.log", app_log), ("worker.log", worker_log)):
+            error = last_error(text)
+            if error:
+                lines += ["", f"--- Último error ({title}) ---", *error]
+        lines += ["", "--- worker.log ---", *quiet(worker_log)[-30:]]
+        lines += ["", "--- forja3d.log ---", *quiet(app_log)[-30:]]
         return {"text": "\n".join(lines)}
 
     @app.put("/api/local-ai/textures")

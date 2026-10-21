@@ -125,6 +125,21 @@ def test_install_runs_in_a_fresh_data_folder(tmp_path, monkeypatch):
     assert ai.error == "" and ai.progress == 100 and ai.installed, (ai.error, list(ai.log))
     assert any("RTX 5060" in line for line in ai.log)
 
+    # a step that fails (a dropped download) is tried again by itself
+    ai.marker.unlink()
+    failures = []
+
+    async def flaky(self, start, share):
+        if len(failures) < 2:
+            failures.append(1)
+            raise la.LocalAIError("Falló «Descargando»: Connection reset by peer")
+
+    monkeypatch.setattr(la.LocalAI, "_step7", flaky)
+    monkeypatch.setattr(la, "RETRY_WAIT_S", 0)
+    asyncio.run(scenario())
+    assert ai.error == "" and ai.installed and len(failures) == 2
+    assert sum("reintentando" in line for line in ai.log) == 2
+
 
 def test_pre_checks_explain_old_driver_and_full_disk(tmp_path, monkeypatch):
     def fake_smi(driver):

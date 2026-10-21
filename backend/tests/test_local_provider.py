@@ -16,6 +16,7 @@ from worker.server import create_app as create_worker  # noqa: E402
 
 from app.config import Settings  # noqa: E402
 from app.main import create_app  # noqa: E402
+from app.providers.base import GenerationError  # noqa: E402
 from app.providers.local import LocalProvider  # noqa: E402
 
 def _png():
@@ -250,3 +251,55 @@ def test_shape_variants_are_built_differently_and_one_is_kept(tmp_path):
         assert parent["params"]["variant_label"] == "Forma libre"
         refined = c.post(f"/api/jobs/{jobs[1]['id']}/refine").json()[0]
         assert refined["params"]["variant"] == 1 and "group" not in refined["params"]
+
+
+def test_worker_crash_mid_generation_retries_in_light_mode(tmp_path):
+    """The worker dying while generating (memory) restarts it with the light model and retries once."""
+    import asyncio
+
+    from app.providers.base import GenerationRequest, InputImage
+
+    worker = create_worker(DummyBackend(delay=0.01), token="t0k")
+    inner = httpx.ASGITransport(app=worker)
+
+    class Dropping(httpx.AsyncBaseTransport):
+        drops = 1
+
+        async def handle_async_request(self, request):
+            if request.url.path == "/tasks" and request.method == "POST" and self.drops:
+                self.drops -= 1
+                raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+            return await inner.handle_async_request(request)
+
+    class Launcher:
+        light_mode = False
+        reasons = []
+
+        async def ensure_running(self):
+            return "http://worker"
+
+        def worker_log_tail(self):
+            return "CUDA error: out of memory"
+
+        def use_light_mode(self, reason):
+            self.light_mode = True
+            self.reasons.append(reason)
+
+    launcher = Launcher()
+    provider = LocalProvider(url="http://worker", token="t0k", poll_interval=0.02, transport=Dropping(),
+                             launcher=launcher)
+    stages = []
+
+    async def progress(pct, stage):
+        stages.append(stage)
+
+    req = GenerationRequest(mode="image", prompt=None, quality="draft", images=[InputImage(PNG)], seed=3)
+    result = asyncio.run(provider.generate(req, progress))
+    assert result.model_glb[:4] == b"glTF"
+    assert launcher.light_mode and "RemoteProtocolError" in launcher.reasons[0] and "out of memory" in launcher.reasons[0]
+    assert "La IA local se cerró: reintentando en modo ligero" in stages
+
+    # already in light mode: the error is reported, not retried forever
+    provider.transport = Dropping()
+    with pytest.raises(GenerationError, match="se cerró mientras generaba"):
+        asyncio.run(provider.generate(req, progress))
