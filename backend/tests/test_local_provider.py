@@ -285,6 +285,9 @@ def test_worker_crash_mid_generation_retries_in_light_mode(tmp_path):
             self.light_mode = True
             self.reasons.append(reason)
 
+        def stop(self):
+            pass
+
     launcher = Launcher()
     provider = LocalProvider(url="http://worker", token="t0k", poll_interval=0.02, transport=Dropping(),
                              launcher=launcher)
@@ -303,3 +306,49 @@ def test_worker_crash_mid_generation_retries_in_light_mode(tmp_path):
     provider.transport = Dropping()
     with pytest.raises(GenerationError, match="se cerró mientras generaba"):
         asyncio.run(provider.generate(req, progress))
+
+
+def test_a_hung_task_restarts_the_worker_in_light_mode(tmp_path):
+    """No progress for too long (e.g. a full GPU spilling into RAM): restarted lighter and retried."""
+    import asyncio
+
+    from app.providers.base import GenerationRequest, InputImage
+
+    class Slow(DummyBackend):
+        hangs = 1
+
+        def image_to_mesh(self, job, progress):
+            if self.hangs:
+                self.hangs -= 1
+                progress(15, "Cargando modelo multi-vista")
+                time.sleep(1.5)  # stuck, as far as the app can tell
+            return super().image_to_mesh(job, progress)
+
+    worker = create_worker(Slow(delay=0.01), token="t0k")
+
+    class Launcher:
+        light_mode = False
+        stopped = 0
+
+        async def ensure_running(self):
+            return "http://worker"
+
+        def worker_log_tail(self):
+            return ""
+
+        def use_light_mode(self, reason):
+            self.light_mode, self.reason = True, reason
+
+        def stop(self):
+            self.stopped += 1
+
+    launcher = Launcher()
+    provider = LocalProvider(url="http://worker", token="t0k", poll_interval=0.05, stall_s=0.5,
+                             transport=httpx.ASGITransport(app=worker), launcher=launcher)
+
+    async def progress(pct, stage):
+        pass
+
+    req = GenerationRequest(mode="image", prompt=None, quality="draft", images=[InputImage(PNG)], seed=1)
+    result = asyncio.run(provider.generate(req, progress))
+    assert result.model_glb[:4] == b"glTF" and launcher.light_mode and "no avanza" in launcher.reason

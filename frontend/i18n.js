@@ -462,6 +462,10 @@ const PATTERNS = [
   [/^Tiempo de espera agotado en (.+)$/, "Timed out waiting for $1"],
   [/^Error (\d+)$/, "Error $1"],
   [/^Variante (\d+)$/, "Variant $1"],
+  [/^Cargando modelo (multi-vista|de forma): (modelo de forma|decodificador|lector de imágenes)(?: \((GPU|RAM)\))?$/,
+    (m, which, part, where) => `Loading ${which === "de forma" ? "shape" : "multi-view"} model: ${
+      { "modelo de forma": "shape model", decodificador: "decoder", "lector de imágenes": "image reader" }[part]}${where ? ` (${where})` : ""}`],
+  [/^La IA local no avanza desde hace (\d+) min en «(.+)»$/, "The local AI has made no progress for $1 min at “$2”"],
   [/^Error interno durante el procesamiento \((.*)\)$/s, "Internal error while processing ($1)"],
   [/^La IA local se cerró mientras generaba \((\w+)\)(.*)$/s, "The local AI closed while generating ($1)$2"],
   [/^Descargando PyTorch con CUDA: ([\d.]+) de ≈([\d.]+) GB \(sin avance: revisa tu conexión a internet\)$/,

@@ -307,19 +307,20 @@ class HunyuanBackend:
             current.to(self.device)
         self._on_gpu = key
 
-    def _load_shape(self):
+    def _load_shape(self, progress: Progress | None = None):
         if self._shape is None:
             if self.low_ram:  # make room in RAM first: these load ~6 GB at once
                 self._free_memory()
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
             log.info("Cargando %s …", self.shape_model)
-            self._shape = self._load_hunyuan(Hunyuan3DDiTFlowMatchingPipeline, self.shape_model, self.shape_subfolder)
+            self._shape = self._load_hunyuan(Hunyuan3DDiTFlowMatchingPipeline, self.shape_model, self.shape_subfolder,
+                                             progress, "Cargando modelo de forma")
             _fast_decoding(self._shape)
         self._activate("shape")
         return self._shape
 
-    def _load_hunyuan(self, cls, repo: str, subfolder: str):
+    def _load_hunyuan(self, cls, repo: str, subfolder: str, progress: Progress | None = None, label: str = ""):
         """Built straight on the GPU a tensor at a time (little system RAM, see lowmem.py); Hunyuan's own
         loader (everything in RAM first) when that is not possible."""
         from .lowmem import load_pipeline
@@ -330,7 +331,8 @@ class HunyuanBackend:
                 folder = os.path.join(hy3d_models_dir(), repo, subfolder)
                 if not os.path.isfile(os.path.join(folder, "model.fp16.safetensors")):
                     folder = hy3d_local(repo, subfolder)
-                pipe = load_pipeline(cls, folder, repo, subfolder, device=self.device)
+                report = (lambda fraction, text: progress(15 + int(9 * fraction), f"{label}: {text}")) if progress else None
+                pipe = load_pipeline(cls, folder, repo, subfolder, device=self.device, progress=report)
                 self._on_gpu = None  # it is already on the GPU: _activate only records it
                 return pipe
             except Exception as exc:  # noqa: BLE001 - any problem: the regular loader below
@@ -341,14 +343,15 @@ class HunyuanBackend:
                 torch.cuda.empty_cache()
         return cls.from_pretrained(repo, subfolder=subfolder, use_safetensors=True, device="cpu")
 
-    def _load_mv(self):
+    def _load_mv(self, progress: Progress | None = None):
         if self._mv is None:
             if self.low_ram:  # make room in RAM first: these load ~6 GB at once
                 self._free_memory()
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
             log.info("Cargando Hunyuan3D-2mv …")
-            self._mv = self._load_hunyuan(Hunyuan3DDiTFlowMatchingPipeline, "tencent/Hunyuan3D-2mv", "hunyuan3d-dit-v2-mv")
+            self._mv = self._load_hunyuan(Hunyuan3DDiTFlowMatchingPipeline, "tencent/Hunyuan3D-2mv", "hunyuan3d-dit-v2-mv",
+                                          progress, "Cargando modelo multi-vista")
             _fast_decoding(self._mv)
         self._activate("mv")
         return self._mv
@@ -561,11 +564,11 @@ class HunyuanBackend:
         generator = torch.Generator(device="cpu").manual_seed(seed)
         if len(images) > 1 and self.multiview:
             progress(15, "Cargando modelo multi-vista")
-            pipe = self._load_mv()
+            pipe = self._load_mv(progress)
             image_arg = dict(zip(roles or VIEW_NAMES, images))
         else:
             progress(15, "Cargando modelo de forma")
-            pipe = self._load_shape()
+            pipe = self._load_shape(progress)
             image_arg = images[0]
         return pipe(
             image=image_arg, num_inference_steps=steps, octree_resolution=octree,

@@ -75,11 +75,13 @@ class LocalProvider:
         poll_interval: float = 1.0,
         transport: httpx.AsyncBaseTransport | None = None,
         launcher=None,
+        stall_s: float = 900,
     ):
         """`launcher`: the app's LocalAI, which installs and starts the worker by itself when needed."""
         self.url = url.rstrip("/")
         self.headers = {"Authorization": f"Bearer {token}"} if token else {}
         self.timeout_s = timeout_s
+        self.stall_s = stall_s  # a task that shows no progress for this long is treated as hung
         self.poll_interval = poll_interval
         self.transport = transport  # tests inject the worker app in-process
         self.launcher = launcher
@@ -129,7 +131,10 @@ class LocalProvider:
         try:
             return await self._generate(req, on_progress)
         except WorkerCrashed as exc:
-            if self.launcher is None or self.launcher.light_mode:
+            if self.launcher is None:
+                raise
+            if self.launcher.light_mode:
+                await asyncio.to_thread(self.launcher.stop)  # a hung worker would block the next job
                 raise
             # plan B: the full models did not fit this PC; the light ones are started and the job retried
             await on_progress(5, "La IA local se cerró: reintentando en modo ligero")
@@ -298,12 +303,20 @@ class LocalProvider:
                         span: tuple[int, int]) -> bytes:
         task_id = (await self._call(client.post("/tasks", json=payload))).json()["id"]
         lo, hi = span
-        started = time.monotonic()
+        started = last_change = time.monotonic()
+        last_seen = None
         try:
             while True:
                 if time.monotonic() - started > self.timeout_s:
                     raise GenerationError("La GPU local tardó demasiado")
                 task = (await self._call(client.get(f"/tasks/{task_id}"))).json()
+                seen = (task["status"], task["progress"], task["stage"])
+                if seen != last_seen:
+                    last_seen, last_change = seen, time.monotonic()
+                elif task["status"] == "running" and time.monotonic() - last_change > self.stall_s:
+                    # e.g. a full 8 GB card spilling into system RAM: the worker is restarted lighter
+                    raise WorkerCrashed(f"La IA local no avanza desde hace {self.stall_s / 60:.0f} min en "
+                                        f"«{task['stage']}»")
                 if task["status"] == "failed":
                     raise GenerationError(task.get("error") or "La GPU local falló")
                 if task["status"] == "succeeded":
