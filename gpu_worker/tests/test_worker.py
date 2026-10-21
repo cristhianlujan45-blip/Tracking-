@@ -1,4 +1,6 @@
 import base64
+import os
+import sys
 import io
 import time
 
@@ -167,3 +169,22 @@ def test_clean_cutout_drops_specks_and_fills_pinholes():
     d.rectangle([5, 5, 8, 8], fill=(90, 90, 90, 255))       # a speck of background
     alpha = np.asarray(clean_cutout(img))[:, :, 3]
     assert alpha[6, 6] == 0 and alpha[102, 97] == 255 and alpha[110, 100] == 255
+
+
+def test_model_files_are_copied_not_linked_on_windows(monkeypatch):
+    """Some Windows PCs refuse the links Hugging Face's cache makes (WinError 1314)."""
+    import types
+
+    from worker import __main__ as entry
+
+    fake = types.ModuleType("huggingface_hub.file_download")
+    fake.are_symlinks_supported = lambda *a, **k: True
+    package = types.ModuleType("huggingface_hub")
+    package.file_download = fake
+    monkeypatch.setitem(sys.modules, "huggingface_hub", package)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.file_download", fake)
+    monkeypatch.delenv("HF_HUB_DISABLE_SYMLINKS", raising=False)
+    monkeypatch.setattr(entry.os, "name", "nt")
+    entry.copy_instead_of_links()
+    monkeypatch.setattr(entry.os, "name", "posix")
+    assert fake.are_symlinks_supported() is False and os.environ["HF_HUB_DISABLE_SYMLINKS"] == "1"

@@ -226,6 +226,8 @@ class LocalAI:
                "UV_CACHE_DIR": str(self.root / "cache"), "UV_LINK_MODE": "copy"}
         if sys.platform == "win32":
             env["UV_PYTHON_DOWNLOADS"] = "never"  # its Python folder links can be refused: see _step2
+            # model files are copied instead of linked: some PCs refuse links (WinError 1314)
+            env["HF_HUB_DISABLE_SYMLINKS"] = env["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
         env.pop("VIRTUAL_ENV", None)
         return env
 

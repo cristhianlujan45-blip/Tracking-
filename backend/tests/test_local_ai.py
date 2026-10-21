@@ -248,7 +248,7 @@ def test_python_from_a_plain_folder_when_windows_refuses_uvs_link(tmp_path, monk
     monkeypatch.setattr(la.LocalAI, "_run", fake_run)
     monkeypatch.setattr(la.LocalAI, "_uv", lambda self: "uv")
     monkeypatch.setattr(la.sys, "platform", "win32")
-    assert ai.env()["UV_PYTHON_DOWNLOADS"] == "never"
+    assert ai.env()["UV_PYTHON_DOWNLOADS"] == "never" and ai.env()["HF_HUB_DISABLE_SYMLINKS"] == "1"
     asyncio.run(ai._step2(0, 0))
     own = ai.root / "py311" / "python.exe"
     assert calls == [("uv", "venv", str(ai.root / "venv"), "--python", str(own))]

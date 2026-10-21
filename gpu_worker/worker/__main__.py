@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 
 import uvicorn
 
@@ -11,7 +12,22 @@ from .backends import build_backend, prefetch
 from .server import create_app
 
 
+def copy_instead_of_links() -> None:
+    """Hugging Face's cache links each model file to its blob. Some Windows PCs refuse links even
+    when its test passes ("WinError 1314: El cliente no dispone de un privilegio requerido"): copy."""
+    if os.name != "nt":
+        return
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    try:
+        from huggingface_hub import file_download
+    except ImportError:
+        return
+    file_download.are_symlinks_supported = lambda *args, **kwargs: False  # older versions lack the setting
+
+
 def main() -> None:
+    copy_instead_of_links()
     parser = argparse.ArgumentParser(description="Forja3D: servidor de IA local en tu GPU")
     parser.add_argument("--backend", choices=["hunyuan", "dummy"], default="hunyuan")
     parser.add_argument("--host", default="127.0.0.1", help="usa 0.0.0.0 para exponerlo en tu red (pon un token)")
