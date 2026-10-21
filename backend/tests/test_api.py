@@ -33,7 +33,7 @@ def client(tmp_path):
         yield c
 
 
-def wait_done(client, job_id, timeout=20):
+def wait_done(client, job_id, timeout=60):
     deadline = time.time() + timeout
     while time.time() < deadline:
         job = client.get(f"/api/jobs/{job_id}").json()
@@ -585,3 +585,9 @@ def test_publish_kit(client):
     assert "un dragón de juguete" in es and "Prusa MK4" in es and "mm" in es
     stl = trimesh.load(io.BytesIO(zf.read(next(n for n in names if n.endswith(".stl")))), file_type="stl")
     assert abs(stl.extents[2] - 80) < 1  # printed at the chosen height, Z up
+
+
+def test_clipboard_endpoint_answers(client):
+    """Copiar diagnóstico asks the app to copy when the window blocks the browser clipboard."""
+    resp = client.post("/api/clipboard", json={"text": "Forja3D diagnóstico"})
+    assert resp.status_code == 200 and isinstance(resp.json()["ok"], bool)

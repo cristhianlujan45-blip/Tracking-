@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from . import agent as ai_agent
 from ._version import VERSION
-from . import blender, creations, geometry, pipelines, printing, publishing, quads, rigging, sheet, textures, updates
+from . import blender, clipboard, creations, geometry, pipelines, printing, publishing, quads, rigging, sheet, textures, updates
 from .config import Settings, get_settings, save_user_settings, user_settings_path, with_user_settings
 from .db import JobStore
 from .jobs import JobRunner
@@ -109,6 +109,10 @@ class ConceptsIn(BaseModel):
 class JobPatch(BaseModel):
     name: str | None = Field(None, max_length=120)
     favorite: bool | None = None
+
+
+class ClipboardIn(BaseModel):
+    text: str = Field(max_length=500_000)
 
 
 class RemeshIn(BaseModel):
@@ -656,6 +660,11 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         lines += ["", "--- worker.log ---", *quiet(worker_log)[-30:]]
         lines += ["", "--- forja3d.log ---", *quiet(app_log)[-30:]]
         return {"text": "\n".join(lines)}
+
+    @app.post("/api/clipboard")
+    async def copy_to_clipboard(body: ClipboardIn):
+        """The desktop window may not let the page use the clipboard: the app (same PC) copies instead."""
+        return {"ok": await asyncio.to_thread(clipboard.copy, body.text)}
 
     @app.put("/api/local-ai/textures")
     async def local_ai_textures(request: Request, enabled: bool = Query(...)):

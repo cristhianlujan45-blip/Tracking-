@@ -1198,14 +1198,15 @@ function sakura(count = 14) {
     el.textContent = t("sin conexión");
     el.classList.add("bad");
   }
+  // before the slower parts below: diagnostics and updates must work even if something else fails
+  initUpdates({ api, toast, busy: () => state.jobs.some((j) => j.status === "queued" || j.status === "running") });
+  initLocalAI({ api, toast, openSettings: () => openSettings(), config: () => state.config });
   buildForm();
   updateRemeshUi();
   await initRig({ api, viewer, toast, onCreated, selectedJob });
   await refreshJobs();
   const first = state.jobs.find((j) => j.status === "succeeded");
   if (first && !state.selected) selectJob(first.id);
-  initUpdates({ api, toast, busy: () => state.jobs.some((j) => j.status === "queued" || j.status === "running") });
-  initLocalAI({ api, toast, openSettings: () => openSettings(), config: () => state.config });
   initSettings({ api, toast });
   initAgent({
     api, onCreated, openSettings: () => openSettings(), config: () => state.config,

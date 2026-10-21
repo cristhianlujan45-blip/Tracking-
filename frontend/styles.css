@@ -673,3 +673,9 @@ input[type="color"] { width: 100%; height: 38px; padding: 2px; background: rgba(
 .variant.failed .pic { color: var(--danger); }
 .variant .name { font-weight: 700; line-height: 1.2; }
 #btnKeep { width: 100%; }
+
+/* ---------- diagnostics dialog ---------- */
+.diag #diagText {
+  width: 100%; min-height: 220px; margin: 8px 0 12px; padding: 8px 10px; resize: vertical;
+  font: 11px/1.45 var(--mono); color: var(--text); background: var(--ink-2); border: 1px solid var(--line-2);
+}

@@ -306,6 +306,8 @@ class HunyuanBackend:
 
     def _load_shape(self):
         if self._shape is None:
+            if self.low_ram:  # make room in RAM first: these load ~6 GB at once
+                self._free_memory()
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
             log.info("Cargando %s …", self.shape_model)
@@ -318,6 +320,8 @@ class HunyuanBackend:
 
     def _load_mv(self):
         if self._mv is None:
+            if self.low_ram:  # make room in RAM first: these load ~6 GB at once
+                self._free_memory()
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
             log.info("Cargando Hunyuan3D-2mv …")
@@ -347,6 +351,8 @@ class HunyuanBackend:
             import torch
             from diffusers import DiffusionPipeline, EulerAncestralDiscreteScheduler
 
+            if self.low_ram:
+                self._free_memory(keep="rembg")
             log.info("Cargando %s …", NOVEL_VIEW_MODEL)
             pipe = DiffusionPipeline.from_pretrained(
                 hub_dir(NOVEL_VIEW_MODEL), custom_pipeline=hub_dir(NOVEL_VIEW_PIPELINE),
@@ -421,7 +427,19 @@ class HunyuanBackend:
 
         if self._rembg is None:
             self._rembg = background_session()
-        return clean_cutout(remove(img.convert("RGB"), session=self._rembg, post_process_mask=True).convert("RGBA"))
+        try:
+            cut = remove(img.convert("RGB"), session=self._rembg, post_process_mask=True)
+        except Exception as exc:  # noqa: BLE001 - only memory problems have a plan B
+            if not _is_oom(exc):
+                raise
+            log.warning("BiRefNet sin memoria (%s); se usa U²-Net", exc)
+            from rembg import new_session
+
+            self._rembg = None
+            gc.collect()
+            self._rembg = new_session("u2net")  # ~170 MB instead of ~1 GB
+            cut = remove(img.convert("RGB"), session=self._rembg, post_process_mask=True)
+        return clean_cutout(cut.convert("RGBA"))
 
     # ------------------------------------------------------------ tasks
 
@@ -466,19 +484,29 @@ class HunyuanBackend:
         images = [self._remove_background(img) for img in job.images]
 
         progress(25, "Generando forma 3D")
-        out_of_memory = False
-        try:
-            mesh = self._shape_pass(images, job.roles, job.seed, steps, octree, progress)
-        except Exception as exc:  # noqa: BLE001 - only out-of-memory is retried
-            if not _is_oom(exc):
-                raise
-            out_of_memory = True  # retried below: inside `except` the failed frame still holds the GPU
-        if out_of_memory:
-            # plan B for small GPUs: free everything and retry lighter (smaller model, coarser grid)
-            log.warning("Sin memoria de GPU; reintentando con un modelo más ligero")
-            progress(30, "Poca memoria de GPU: reintentando en modo ligero")
-            self._use_light_model()
-            mesh = self._shape_pass(images[:1], None, job.seed, steps, min(octree, 320), progress, chunks=4000)
+        mesh = None
+        for attempt in ("full", "freed", "light"):
+            out_of_memory = False
+            try:
+                if attempt == "light":
+                    mesh = self._shape_pass(images[:1], None, job.seed, steps, min(octree, 320), progress,
+                                            chunks=4000)
+                else:
+                    mesh = self._shape_pass(images, job.roles, job.seed, steps, octree, progress)
+                break
+            except Exception as exc:  # noqa: BLE001 - only out-of-memory is retried
+                if not _is_oom(exc) or attempt == "light":
+                    raise
+                log.warning("Sin memoria (%s) en el intento %s", exc, attempt)
+                out_of_memory = True  # handled below: inside `except` the failed frame still holds memory
+            if out_of_memory and attempt == "full":
+                # plan A': everything else out of RAM and VRAM, same model again
+                progress(28, "Poca memoria: liberando memoria y reintentando")
+                self._free_memory()
+            elif out_of_memory:
+                # plan B for small PCs: the light model (smaller, coarser grid), from now on
+                progress(30, "Poca memoria: reintentando en modo ligero")
+                self._use_light_model()
 
         progress(80, "Limpiando malla")
         mesh = FloaterRemover()(mesh)
@@ -508,6 +536,28 @@ class HunyuanBackend:
             image=image_arg, num_inference_steps=steps, octree_resolution=octree,
             num_chunks=chunks, generator=generator, output_type="trimesh",
         )[0]
+
+    def _free_memory(self, keep: str | None = None) -> None:
+        """Drop every loaded model except `keep` (they are reloaded from disk when needed): before a big
+        load on a PC with little RAM, and after running out of memory."""
+        import torch
+
+        for key in ("shape", "mv", "t2i", "paint", "mv_gen", "llm", "depth", "translator", "rembg", "esrgan"):
+            if key == keep or getattr(self, f"_{key}", None) is None:
+                continue
+            pipe = getattr(self, f"_{key}")
+            if key == self._on_gpu and hasattr(pipe, "to"):
+                try:
+                    pipe.to("cpu")
+                except Exception:  # noqa: BLE001 - dropping the reference is what matters
+                    pass
+            setattr(self, f"_{key}", None)
+            if key == self._on_gpu:
+                self._on_gpu = None
+            del pipe
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _use_light_model(self) -> None:
         """Switch to Hunyuan3D-2mini for the rest of the session and remember it for the next start."""
@@ -690,7 +740,12 @@ def tidy_mesh(mesh):
 
 
 def _is_oom(exc: Exception) -> bool:
-    return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
+    """Out of GPU memory, or of system memory: Windows reports a full commit limit (RAM + page file)
+    as os error 1455 "the paging file is too small" when a model is loaded."""
+    text = str(exc).lower()
+    return (type(exc).__name__ in ("OutOfMemoryError", "MemoryError") or getattr(exc, "winerror", None) == 1455
+            or any(k in text for k in ("out of memory", "paging file", "archivo de paginación", "1455",
+                                       "not enough memory", "can't allocate", "unable to allocate")))
 
 
 def _frame(img: Image.Image, size: int, fill: float = 0.85) -> Image.Image:

@@ -82,7 +82,13 @@ class Task:
 
 
 def friendly_error(exc: Exception) -> str:
-    if type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower():
+    text = str(exc).lower()
+    if getattr(exc, "winerror", None) == 1455 or "paginación" in text or "paging file" in text:
+        return ("Windows se quedó sin memoria (RAM + archivo de paginación). Cierra programas abiertos "
+                "(navegador, juegos) o aumenta el archivo de paginación: Configuración → Sistema → Información → "
+                "Configuración avanzada del sistema → Rendimiento → Opciones avanzadas → Memoria virtual → "
+                "«Administrar automáticamente».")
+    if type(exc).__name__ == "OutOfMemoryError" or "out of memory" in text:
         return "Sin memoria de GPU (VRAM). Prueba calidad Borrador o cierra otros programas que usen la GPU."
     return f"{type(exc).__name__}: {exc}"[:500]
 

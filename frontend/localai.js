@@ -14,6 +14,12 @@ export function initLocalAI(context) {
   $("#btnInstallAI").addEventListener("click", install);
   $("#btnDiag").addEventListener("click", copyDiagnostics);
   $("#btnDiagFailed").addEventListener("click", copyDiagnostics);
+  $("#btnDiagCopy").addEventListener("click", async () => {
+    const copied = await copyText($("#diagText").value);
+    $("#diagNote").textContent = copied
+      ? t("✔ Copiado. Pégalo en tu mensaje (Ctrl+V o mantén pulsado → Pegar).")
+      : t("Selecciona todo el texto de abajo (Ctrl+A) y cópialo (Ctrl+C).");
+  });
   $("#aiTextures").addEventListener("change", async (e) => {
     try {
       render(await ctx.api(`/api/local-ai/textures?enabled=${e.target.checked}`, { method: "PUT" }));
@@ -44,20 +50,38 @@ async function install() {
 }
 
 export async function copyDiagnostics() {
+  let text;
   try {
-    const { text } = await ctx.api("/api/diagnostics");
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {  // older webviews: select the text in a hidden field and copy it
-      const area = Object.assign(document.createElement("textarea"), { value: text });
-      document.body.append(area);
-      area.select();
-      document.execCommand("copy");
-      area.remove();
-    }
-    ctx.toast(t("Diagnóstico copiado: pégalo en tu mensaje"));
+    ({ text } = await ctx.api("/api/diagnostics"));
   } catch (err) {
-    ctx.toast(err.message, true);
+    return ctx.toast(tr(err.message), true);
+  }
+  // always shown too: whatever happens with the clipboard, the text can be selected and copied by hand
+  $("#diagText").value = text;
+  $("#diagNote").textContent = t("Copiando…");
+  if (!$("#diagDlg").open) $("#diagDlg").showModal();
+  const copied = await copyText(text);
+  $("#diagNote").textContent = copied
+    ? t("✔ Copiado. Pégalo en tu mensaje (Ctrl+V o mantén pulsado → Pegar).")
+    : t("Selecciona todo el texto de abajo (Ctrl+A) y cópialo (Ctrl+C).");
+  $("#diagText").focus();
+  $("#diagText").select();
+  if (copied) ctx.toast(t("Diagnóstico copiado: pégalo en tu mensaje"));
+}
+
+async function copyText(text) {
+  try {  // the app itself (same PC): works even when the window blocks the clipboard
+    if ((await ctx.api("/api/clipboard", { method: "POST", json: { text } })).ok) return true;
+  } catch {}
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {}
+  try {
+    $("#diagText").select();
+    return document.execCommand("copy");
+  } catch {
+    return false;
   }
 }
 

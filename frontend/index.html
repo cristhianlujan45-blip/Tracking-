@@ -525,6 +525,22 @@
     </aside>
   </main>
 
+  <!-- ============ DIAGNOSTICS ============ -->
+  <dialog class="settings diag" id="diagDlg">
+    <form method="dialog">
+      <header>
+        <h2 class="sec"><span class="tag">⧉</span>Diagnóstico</h2>
+        <button class="icon" value="close" title="Cerrar">✕</button>
+      </header>
+      <p class="muted small" id="diagNote"></p>
+      <textarea id="diagText" readonly rows="14" spellcheck="false"></textarea>
+      <div class="dlg-actions">
+        <button type="button" class="primary" id="btnDiagCopy">⧉ Copiar</button>
+        <button class="secondary" value="close">Cerrar</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- ============ SETTINGS ============ -->
   <dialog class="settings" id="settingsDlg">
     <form method="dialog" id="settingsForm" autocomplete="off">

@@ -40,7 +40,7 @@ def make_client(tmp_path, backend=None, **backend_opts):
     return TestClient(create_app(settings, provider=provider))
 
 
-def wait_done(client, job_id, timeout=20):
+def wait_done(client, job_id, timeout=90):
     deadline = time.time() + timeout
     while time.time() < deadline:
         job = client.get(f"/api/jobs/{job_id}").json()

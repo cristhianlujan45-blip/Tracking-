@@ -188,3 +188,13 @@ def test_model_files_are_copied_not_linked_on_windows(monkeypatch):
     entry.copy_instead_of_links()
     monkeypatch.setattr(entry.os, "name", "posix")
     assert fake.are_symlinks_supported() is False and os.environ["HF_HUB_DISABLE_SYMLINKS"] == "1"
+
+
+def test_windows_running_out_of_virtual_memory_counts_as_out_of_memory():
+    """os error 1455 ("the paging file is too small") while loading a model gets the memory plan B."""
+    from worker.backends import _is_oom
+    from worker.server import friendly_error
+
+    err = OSError(22, "El archivo de paginación es demasiado pequeño para completar la operación. (os error 1455)")
+    assert _is_oom(err) and _is_oom(MemoryError()) and not _is_oom(ValueError("bad image"))
+    assert "archivo de paginación" in friendly_error(err) and "Memoria virtual" in friendly_error(err)
