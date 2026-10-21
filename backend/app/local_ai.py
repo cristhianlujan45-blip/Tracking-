@@ -499,10 +499,24 @@ class LocalAI:
         shutil.copytree(self.resources / "gpu_worker" / "worker", self.root / "worker", dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("__pycache__"))
 
+    def _drop_duplicate_models(self) -> None:
+        """Older versions kept full copies of the Hunyuan repos (several GB each) in the Hugging Face cache;
+        the worker now reads them from models/hy3dgen. Drop a cached repo once its own folder is there."""
+        hub = self.root / "models" / "huggingface" / "hub"
+        local = self.root / "models" / "hy3dgen" / "tencent"
+        for repo, needed in (("Hunyuan3D-2", "hunyuan3d-dit-v2-0"), ("Hunyuan3D-2mv", "hunyuan3d-dit-v2-mv"),
+                             ("Hunyuan3D-2mini", "hunyuan3d-dit-v2-mini")):
+            cached = hub / f"models--tencent--{repo}"
+            if cached.is_dir() and (local / repo / needed / "model.fp16.safetensors").is_file():
+                size = _folder_gb(cached)
+                shutil.rmtree(cached, ignore_errors=True)
+                log.info("Liberados %.1f GB: copia repetida de %s", size, repo)
+
     async def _refresh(self) -> None:
         """After an app update: the worker code always matches the app, and new dependencies get installed."""
         if self._python or not self.installed or not (self.resources / "gpu_worker" / "worker").is_dir():
             return
+        await asyncio.to_thread(self._drop_duplicate_models)
         self._copy_worker()
         requirements = self.resources / "gpu_worker" / "requirements.txt"
         stamp = self.root / "requirements.sha"

@@ -129,7 +129,10 @@ const EN = {
   "Variante elegida": "Variant kept",
   "Descargando Python 3.11 (python.org)…": "Downloading Python 3.11 (python.org)…",
   "⧉ Copiar diagnóstico para enviarlo": "⧉ Copy diagnostics to send them",
-  "Reportar error": "Report a problem", "⚑ Reportar este error": "⚑ Report this error",
+  "Reportar error": "Report a problem",
+  "Texturas con IA de Tencent (necesita 10 GB de VRAM y 24 GB de RAM; en equipos más pequeños se pinta desde las vistas, que es rápido)":
+    "Tencent AI textures (needs 10 GB of VRAM and 24 GB of RAM; smaller PCs paint from the views, which is fast)",
+  "Texturizando con IA (puede tardar)": "AI texturing (may take a while)", "⚑ Reportar este error": "⚑ Report this error",
   "Reportar un error: copia el diagnóstico para enviarlo": "Report a problem: copies the diagnostics to send them",
   "¿Qué pasó? (opcional)": "What happened? (optional)", "Qué pasó": "What happened",
   "Ej.: al generar el monstruo se quedó en 35 % y no avanzó": "E.g. making the monster it stopped at 35 % and did not move",

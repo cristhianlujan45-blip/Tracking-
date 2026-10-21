@@ -303,3 +303,19 @@ def test_big_downloads_show_how_much_arrived(tmp_path):
     (step, progress), stalled = asyncio.run(scenario())
     assert step.startswith("Descargando PyTorch con CUDA: 0.0 de") and 10 < progress <= 10 + 30 * 0.95
     assert "sin avance" in stalled
+
+
+def test_duplicate_model_copies_are_removed(tmp_path):
+    """Full Hub copies of a Hunyuan repo go once the worker's own folder has the model."""
+    ai = la.LocalAI(tmp_path, ROOT)
+    hub = ai.root / "models" / "huggingface" / "hub"
+    for repo in ("Hunyuan3D-2", "Hunyuan3D-2mv"):
+        blob = hub / f"models--tencent--{repo}" / "blobs" / "x"
+        blob.parent.mkdir(parents=True)
+        blob.write_bytes(b"0" * 1000)
+    own = ai.root / "models" / "hy3dgen" / "tencent" / "Hunyuan3D-2" / "hunyuan3d-dit-v2-0"
+    own.mkdir(parents=True)
+    (own / "model.fp16.safetensors").write_bytes(b"1")
+    ai._drop_duplicate_models()
+    assert not (hub / "models--tencent--Hunyuan3D-2").exists()
+    assert (hub / "models--tencent--Hunyuan3D-2mv").exists()  # its own folder is missing: kept

@@ -246,6 +246,9 @@ class HunyuanBackend:
         # with 16 GB of RAM the parked models would not fit: drop them and reload from disk instead
         self.low_ram = 0 < total_ram_gb() < 24
         self.vram_gb = _vram_gb() if device != "cpu" else 0.0
+        # Hunyuan3D-Paint needs ~16 GB: with less VRAM or RAM it swaps for many minutes or runs out of
+        # memory, and painting from the views (done by the app) is the better result there
+        self.texture_fits = not self.low_ram and self.vram_gb >= 10
         # 8 GB cards: big image models run with only the active part on the GPU (CPU offload)
         self.small_gpu = 0 < self.vram_gb < 10
 
@@ -283,7 +286,9 @@ class HunyuanBackend:
             models.append(NOVEL_VIEW_MODEL)
         if self.chat_model:
             models.append(self.chat_model)
-        return {"gpu": gpu, "vram_gb": vram, "models": models, "low_ram": self.low_ram}
+        return {"gpu": gpu, "vram_gb": vram, "models": models, "low_ram": self.low_ram,
+                "ai_textures": "sí" if self.texture and self.texture_fits else
+                ("omitidas: poca memoria" if self.texture else "no")}
 
     # ------------------------------------------------------------ VRAM management
 
@@ -405,8 +410,12 @@ class HunyuanBackend:
             from hy3dgen.texgen import Hunyuan3DPaintPipeline
 
             log.info("Cargando Hunyuan3D-Paint …")
+            if self.low_ram:
+                self._make_room(10)
             self._activate("none")  # its models go straight to the GPU while loading: make room first
-            self._paint = Hunyuan3DPaintPipeline.from_pretrained("tencent/Hunyuan3D-2", subfolder=PAINT_SUBFOLDER)
+            # its own folder lookup misses our download and falls back to a second copy in the Hub cache:
+            # hand it the folder directly (downloaded first when missing)
+            self._paint = Hunyuan3DPaintPipeline.from_pretrained(paint_folder(), subfolder=PAINT_SUBFOLDER)
             # The paint pipeline needs ~16 GB if fully resident; offload streams it through 8 GB.
             if hasattr(self._paint, "enable_model_cpu_offload"):
                 self._paint.enable_model_cpu_offload()
@@ -554,9 +563,16 @@ class HunyuanBackend:
         mesh = FaceReducer()(mesh, max_facenum=max_faces)
         mesh = tidy_mesh(mesh)
 
-        if self.texture and job.quality != "draft":
-            progress(85, "Texturizando (puede tardar)")
-            mesh = self._load_paint()(mesh, image=images[0])
+        if self.texture and self.texture_fits and job.quality != "draft":
+            progress(85, "Texturizando con IA (puede tardar)")
+            try:
+                mesh = self._load_paint()(mesh, image=images[0])
+            except Exception as exc:  # noqa: BLE001 - the shape is kept: the app paints it from the views
+                log.exception("Hunyuan3D-Paint falló; el modelo se pinta desde las vistas")
+                self._paint = None
+                self._free_memory()
+                if _is_oom(exc):  # it does not fit this PC: not tried again until the worker restarts
+                    self.texture_fits = False
         return mesh.export(file_type="glb")
 
     def _shape_pass(self, images, roles, seed: int, steps: int, octree: int, progress: Progress,
@@ -798,6 +814,17 @@ def total_ram_gb() -> float:
 
 
 PAINT_SUBFOLDER = "hunyuan3d-paint-v2-0-turbo"  # the one Hunyuan3DPaintPipeline loads by default
+
+
+def paint_folder() -> str:
+    """Local folder with Hunyuan3D-Paint's two models (downloaded there once when missing)."""
+    from huggingface_hub import snapshot_download
+
+    folder = os.path.join(hy3d_models_dir(), "tencent/Hunyuan3D-2")
+    if not all(os.path.isdir(os.path.join(folder, sub)) for sub in (PAINT_SUBFOLDER, "hunyuan3d-delight-v2-0")):
+        snapshot_download("tencent/Hunyuan3D-2", local_dir=folder,
+                          allow_patterns=[f"{PAINT_SUBFOLDER}/*", "hunyuan3d-delight-v2-0/*"])
+    return folder
 
 
 def hy3d_models_dir() -> str:
