@@ -79,8 +79,11 @@ class Backend(Protocol):
 # convention: (azimuth from the front towards the model's left, elevation)
 NOVEL_VIEW_MODEL = "sudo-ai/zero123plus-v1.2"
 NOVEL_VIEW_PIPELINE = "sudo-ai/zero123plus-pipeline"  # its custom diffusers pipeline code
-NOVEL_VIEW_CELLS = {"left": 1, "back": 3, "right": 4}
-NOVEL_VIEW_POSES = {"left": (90.0, -10.0), "back": (210.0, -10.0), "right": (270.0, 20.0)}
+# Zero123++ v1.2 draws six views around the object (azimuth 30…330, elevation 20/-10 alternating).
+# left/back/right also shape the model; the diagonal ones only help paint it (fewer guessed areas)
+NOVEL_VIEW_CELLS = {"v30": 0, "left": 1, "v150": 2, "back": 3, "right": 4, "v330": 5}
+NOVEL_VIEW_POSES = {"v30": (30.0, 20.0), "left": (90.0, -10.0), "v150": (150.0, 20.0), "back": (210.0, -10.0),
+                    "right": (270.0, 20.0), "v330": (330.0, -10.0)}
 NOVEL_VIEW_STEPS = {"draft": 28, "standard": 50, "high": 75}
 NOVEL_VIEW_SIZE = 640
 

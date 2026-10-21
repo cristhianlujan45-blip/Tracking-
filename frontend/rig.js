@@ -58,7 +58,10 @@ export async function initRig(context) {
   $("#btnCancelMarkers").addEventListener("click", closeEditor);
   $("#btnApplyMarkers").addEventListener("click", () => run($("#btnApplyMarkers"), applyMarkers));
   $("#markerSym").addEventListener("change", (e) => ctx.viewer.setMarkerSymmetry(e.target.checked));
-  $("#showBones").addEventListener("change", (e) => ctx.viewer.setSkeletonVisible(e.target.checked));
+  $("#showBones").addEventListener("change", (e) => {
+    ctx.viewer.setSkeletonVisible(e.target.checked);
+    $("#btnAnimBones").classList.toggle("on", e.target.checked);  // same switch as in the viewer
+  });
   $("#weightBone").addEventListener("pointerdown", fillBones);
   $("#weightBone").addEventListener("focus", fillBones);
   $("#weightBone").addEventListener("change", (e) => ctx.viewer.setWeightBone(e.target.value));
@@ -176,7 +179,7 @@ export function renderRig(next) {
     }),
   );
   $("#rigView").hidden = !isRig || job.status !== "succeeded";
-  $("#showBones").checked = false;
+  $("#showBones").checked = $("#btnAnimBones").classList.contains("on");
   $("#weightBone").replaceChildren(new Option(t("Pesos: ninguno"), ""));
 }
 

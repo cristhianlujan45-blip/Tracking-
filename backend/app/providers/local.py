@@ -295,8 +295,11 @@ class LocalProvider:
             log.warning("No se pudieron generar las vistas laterales: %s", exc)
             return {}, {}
         body = resp.json()
-        views = {role: base64.b64decode(data) for role, data in body.get("views", {}).items() if role in VIEW_AZIMUTHS}
-        poses = {role: (float(p[0]), float(p[1])) for role, p in body.get("poses", {}).items() if role in views}
+        poses = {role: (float(p[0]), float(p[1])) for role, p in body.get("poses", {}).items()}
+        # the named sides, and any other view that says where it was seen from (paints only)
+        views = {role: base64.b64decode(data) for role, data in body.get("views", {}).items()
+                 if role in VIEW_AZIMUTHS or role in poses}
+        poses = {role: pose for role, pose in poses.items() if role in views}
         return views, poses
 
     async def _run_task(self, client: httpx.AsyncClient, payload: dict, on_progress: ProgressCallback,

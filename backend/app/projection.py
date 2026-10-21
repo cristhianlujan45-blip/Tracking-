@@ -121,6 +121,7 @@ class _View:
     def __init__(self, name: str, image: Image.Image, verts: np.ndarray, size: float, depth_res: int,
                  trust: float = 1.0, pose: tuple[float, float] | None = None):
         # pose (azimuth, elevation) places pictures taken off the four axes, e.g. AI-generated views
+        self.name = name
         self.cam, self.right, self.up = view_axes(*pose) if pose else VIEWS[name]
         self.trust = trust * (0.8 if name in ("left", "right") else 1.0)  # side pictures are usually narrower
         self.img = np.asarray(image.convert("RGBA"), dtype=float)
@@ -190,10 +191,12 @@ def _back_from_front(front: Image.Image) -> Image.Image:
 
 def _prepare(mesh: trimesh.Trimesh, views: dict[str, Image.Image], mirror_side: bool, depth_res: int,
              trust: dict[str, float] | None = None, poses: dict[str, tuple[float, float]] | None = None) -> list[_View]:
-    views = {k: v for k, v in views.items() if k in VIEWS and v is not None and _has_silhouette(v)}
+    trust, poses = dict(trust or {}), dict(poses or {})
+    # the four named sides, plus any view that says where it was seen from (e.g. AI diagonals)
+    views = {k: v for k, v in views.items()
+             if (k in VIEWS or k in poses) and v is not None and _has_silhouette(v)}
     if not views:
         raise ProjectionError("Hacen falta vistas (frente, lateral o espalda) para texturizar")
-    trust, poses = dict(trust or {}), dict(poses or {})
     if mirror_side:  # symmetric characters: the missing side is the mirror of the other one
         for a, b in (("left", "right"), ("right", "left")):
             if a in views and b not in views:
@@ -206,8 +209,37 @@ def _prepare(mesh: trimesh.Trimesh, views: dict[str, Image.Image], mirror_side: 
         views["back"], trust["back"] = _back_from_front(views["front"]), 0.5
     verts = np.asarray(mesh.vertices, dtype=float)
     size = float(np.ptp(verts, axis=0).max())
-    return [_View(name, image, verts, size, depth_res, trust.get(name, 1.0), poses.get(name))
-            for name, image in views.items()]
+    prepared = [_View(name, image, verts, size, depth_res, trust.get(name, 1.0), poses.get(name))
+                for name, image in views.items()]
+    _harmonise(prepared, verts, np.asarray(mesh.vertex_normals, dtype=float))
+    return prepared
+
+
+def _harmonise(views: list[_View], verts: np.ndarray, normals: np.ndarray) -> None:
+    """AI-generated views come out a little brighter, darker or tinted compared with the photo, which
+    shows on the model as patches. Where a generated view and the front photo see the same surface the
+    colours should agree: fit a per-channel gain and offset there and apply it to the whole view.
+    Large differences are content (another colour really is there), not light: left alone."""
+    front = next((v for v in views if v.name == "front"), None)
+    if front is None:
+        return
+    ref_rgb, ref_w = front.colour(verts, normals)
+    for view in views:
+        if view is front or view.trust >= 1.0:
+            continue
+        rgb, w = view.colour(verts, normals)
+        both = (ref_w > 0.05) & (w > 0.05)
+        if both.sum() < 200:  # too little overlap to tell (e.g. the back)
+            continue
+        x, y = rgb[both], ref_rgb[both]
+        gain = np.clip(y.std(0) / np.maximum(x.std(0), 1e-6), 0.75, 1.33)
+        offset = y.mean(0) - x.mean(0) * gain
+        moved = np.abs((x * gain + offset) - x).mean(0)
+        if (moved > 45).any():  # not a lighting difference
+            continue
+        img = view.img.copy()
+        img[..., :3] = np.clip(img[..., :3] * gain + offset, 0, 255)
+        view.img = img
 
 
 def _has_silhouette(image: Image.Image) -> bool:

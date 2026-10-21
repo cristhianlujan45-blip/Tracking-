@@ -97,3 +97,15 @@ def test_baked_texture_keeps_detail_finer_than_the_vertices():
         return tex[int((1 - uv[1]) * (side - 1)), int(uv[0] * (side - 1))]
     assert colour_at(np.array([0, 0.0, 1.0])).mean() > 180  # white stripe kept
     assert colour_at(np.array([0, 0.5, 0.86]))[1] > 120  # green above it
+
+
+def test_generated_views_take_the_photos_light():
+    """A generated view a bit darker than the photo is brought to the photo's light (no patches)."""
+    mesh = trimesh.creation.icosphere(subdivisions=5)
+    photo, darker = (200, 120, 90), (160, 96, 72)  # same surface, 20 % less light
+    out = project_views(mesh, {"front": _view(photo), "v60": _view(darker)}, mirror_side=False,
+                        poses={"v60": (60, 0)}, trust={"v60": 0.6})
+    colors = out.visual.vertex_colors[:, :3].astype(int)
+    v = out.vertices
+    side = v @ np.array([np.sin(np.radians(80)), 0, np.cos(np.radians(80))]) > 0.95  # mostly the AI view
+    assert np.abs(colors[side].mean(0) - photo).max() < 15

@@ -130,6 +130,14 @@ const EN = {
   "Descargando Python 3.11 (python.org)…": "Downloading Python 3.11 (python.org)…",
   "⧉ Copiar diagnóstico para enviarlo": "⧉ Copy diagnostics to send them",
   "Reportar error": "Report a problem",
+  "Preparando…": "Preparing…", "Descargando Blender · {p}%": "Downloading Blender · {p}%",
+  "FBX y .blend necesitan Blender: la app lo descarga sola (≈{mb} MB, una sola vez) y después guarda tu archivo.":
+    "FBX and .blend need Blender: the app downloads it by itself (≈{mb} MB, only once) and then saves your file.",
+  "Guardado en {p}": "Saved to {p}", "Abrir carpeta": "Open folder", "Carpeta no permitida": "Folder not allowed",
+  "❚❚ Pausa": "❚❚ Pause", "▶ Reproducir": "▶ Play", "🦴 Esqueleto": "🦴 Skeleton", "▶ Ver animado": "▶ See it animated",
+  "Reproducir o pausar la animación": "Play or pause the animation", "Animación": "Animation",
+  "Ver el esqueleto (rig) sobre el modelo": "Show the skeleton (rig) over the model",
+  "Abrir la versión con esqueleto y animaciones": "Open the version with skeleton and animations",
   "Texturas con IA de Tencent (necesita 10 GB de VRAM y 24 GB de RAM; en equipos más pequeños se pinta desde las vistas, que es rápido)":
     "Tencent AI textures (needs 10 GB of VRAM and 24 GB of RAM; smaller PCs paint from the views, which is fast)",
   "Texturizando con IA (puede tardar)": "AI texturing (may take a while)", "⚑ Reportar este error": "⚑ Report this error",

@@ -273,9 +273,12 @@
             <button class="primary" id="btnApplyMarkers">✔ Crear rig</button>
           </div>
           <div class="anim-bar" id="animBar" hidden>
-            <span class="anim-tag">▶</span>
-            <select id="animClip"></select>
-            <button class="tool" id="btnAnimPlay">❚❚</button>
+            <button class="tool play" id="btnAnimPlay" title="Reproducir o pausar la animación">❚❚ Pausa</button>
+            <select id="animClip" title="Animación"></select>
+            <button class="tool" id="btnAnimBones" title="Ver el esqueleto (rig) sobre el modelo">🦴 Esqueleto</button>
+          </div>
+          <div class="anim-bar" id="rigLink" hidden>
+            <button class="tool play" id="btnGoRig" title="Abrir la versión con esqueleto y animaciones">▶ Ver animado</button>
           </div>
         </div>
         <ol class="flow" id="flow">

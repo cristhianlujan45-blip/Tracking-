@@ -319,6 +319,9 @@ textarea#prompt { font-size: 15px; border-left: 3px solid var(--sakura); }
 .viewer-hud select { width: auto; padding: 6px 10px; }
 .anim-bar { position: absolute; bottom: 12px; left: 12px; display: flex; gap: 6px; align-items: center; }
 .anim-bar select { width: auto; background: rgba(8, 10, 23, .8); }
+.anim-bar .tool { width: auto; padding: 0 12px; white-space: nowrap; }
+.anim-bar .tool.play { background: var(--sakura); border-color: var(--sakura); color: #fff; font-weight: 700; }
+.anim-bar .tool.on { background: var(--cyan); border-color: var(--cyan); color: #04121a; }
 .anim-tag { display: grid; place-items: center; width: 32px; height: 32px; background: var(--hanko); color: white; font-size: 12px; }
 .hud-right { display: flex; gap: 8px; background: none !important; backdrop-filter: none !important; }
 .hud-right select { width: auto; padding: 6px 10px; background: rgba(8, 10, 23, .72); backdrop-filter: blur(8px); }

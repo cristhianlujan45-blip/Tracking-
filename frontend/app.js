@@ -616,8 +616,14 @@ async function showModel(job) {
       { t: s.triangles.toLocaleString(), v: s.vertices.toLocaleString(), m: s.meshes }) + dims +
       (res ? ` · ${t("Textura {r}", { r: res })}` : "");
     $("#animBar").hidden = !s.animations.length;
-    $("#btnAnimPlay").textContent = "❚❚";
+    $("#btnAnimPlay").textContent = t("❚❚ Pausa");
     $("#animClip").replaceChildren(...s.animations.map((n, i) => new Option(clipLabel(n), i)));
+    // a rig is shown with its skeleton (the bones are the point of it); the original links to it
+    setBones(job.mode === "rig" && viewer.skinnedMeshes().length > 0);
+    const rigged = job.mode === "rig" ? null
+      : state.jobs.find((j) => j.parent_id === job.id && j.mode === "rig" && j.status === "succeeded");
+    $("#rigLink").hidden = !rigged || s.animations.length > 0;
+    $("#btnGoRig").onclick = rigged ? () => selectJob(rigged.id) : null;
     const maps = viewer.availableMaps();
     $("#mapView").hidden = !maps.length;
     $("#mapView").value = "";
@@ -676,8 +682,19 @@ function textureLabel(px) {
   if (!px) return "";
   return px >= 8192 ? "8K" : px >= 4096 ? "4K" : px >= 2048 ? "2K" : px >= 1024 ? "1K" : `${px} px`;
 }
-$("#animClip").addEventListener("change", (e) => viewer.playClip(Number(e.target.value)));
-$("#btnAnimPlay").addEventListener("click", () => ($("#btnAnimPlay").textContent = viewer.toggleAnimation() ? "❚❚" : "▶"));
+$("#animClip").addEventListener("change", (e) => {
+  viewer.playClip(Number(e.target.value));
+  $("#btnAnimPlay").textContent = t("❚❚ Pausa");
+});
+$("#btnAnimPlay").addEventListener("click", () => {
+  $("#btnAnimPlay").textContent = viewer.toggleAnimation() ? t("❚❚ Pausa") : t("▶ Reproducir");
+});
+function setBones(on) {
+  viewer.setSkeletonVisible(on);
+  $("#btnAnimBones").classList.toggle("on", on);
+  if ($("#showBones")) $("#showBones").checked = on;
+}
+$("#btnAnimBones").addEventListener("click", () => setBones(!$("#btnAnimBones").classList.contains("on")));
 $("#btnShot").addEventListener("click", async () => {
   if (!viewer.model) return toast(t("Carga un modelo primero"), true);
   downloadBlob(await viewer.snapshot(), `${slug(selectedJob()?.title)}.png`);
@@ -971,8 +988,8 @@ $("#exportFit").addEventListener("change", updateExportLink);
 $("#exportHeight").addEventListener("input", updateExportLink);
 $("#exportColors").addEventListener("input", updateExportLink);
 $("#btnExport").addEventListener("click", async (e) => {
-  if (!CLIENT_FORMATS.includes($("#exportFormat").value)) return;
   e.preventDefault();
+  if (!CLIENT_FORMATS.includes($("#exportFormat").value)) return exportFile($("#btnExport").href);
   if (!viewer.model) return toast(t("Espera a que el modelo cargue en el visor"), true);
   try {
     downloadBlob(await viewer.exportUSDZ(), `${slug(selectedJob()?.title)}.usdz`);
@@ -980,6 +997,64 @@ $("#btnExport").addEventListener("click", async (e) => {
     toast(t("No se pudo crear el USDZ: {e}", { e: err.message }), true);
   }
 });
+
+// Downloads go through fetch: errors become messages (never a saved JSON file), the desktop app
+// saves the file itself in Downloads/Forja3D, and FBX/.blend wait while Blender downloads (once).
+async function exportFile(url) {
+  const button = $("#btnExport");
+  if (button.classList.contains("busy")) return;
+  const label = button.textContent;
+  button.classList.add("busy");
+  const desktop = !!state.config.desktop;
+  let saved = null;
+  try {
+    for (;;) {
+      button.textContent = t("Preparando…");
+      const resp = await fetch(desktop ? `${url}&save=1` : url);
+      if (resp.status === 202) {
+        const s = (await resp.json()).blender;
+        if (s.state === "error") throw new Error(s.error);
+        button.textContent = t("Descargando Blender · {p}%", { p: s.progress });
+        $("#exportHint").textContent = t("FBX y .blend necesitan Blender: la app lo descarga sola (≈{mb} MB, una sola vez) y después guarda tu archivo.", { mb: s.size_mb });
+        await new Promise((r) => setTimeout(r, 1500));
+        continue;
+      }
+      if (!resp.ok) {
+        let detail = `Error ${resp.status}`;
+        try {
+          detail = (await resp.json()).detail || detail;
+        } catch {}
+        throw new Error(detail);
+      }
+      if (desktop) {
+        saved = (await resp.json()).saved;
+      } else {
+        const name = /filename="([^"]+)"/.exec(resp.headers.get("content-disposition") || "")?.[1] || "modelo";
+        downloadBlob(await resp.blob(), name);
+      }
+      return;
+    }
+  } catch (err) {
+    toast(tr(err.message), true);
+  } finally {
+    button.classList.remove("busy");
+    button.textContent = label;
+    updateExportLink();
+    if (saved) showSaved(saved);  // after the hint is reset: it says where the file went
+  }
+}
+
+function showSaved(path) {
+  toast(t("Guardado en {p}", { p: path }));
+  const hint = $("#exportHint");
+  hint.replaceChildren(document.createTextNode(`✔ ${t("Guardado en {p}", { p: path })} `));
+  const open = Object.assign(document.createElement("a"), { href: "#", textContent: t("Abrir carpeta") });
+  open.addEventListener("click", (e) => {
+    e.preventDefault();
+    api("/api/open-folder", { method: "POST", json: { url: path } }).catch((err) => toast(tr(err.message), true));
+  });
+  hint.append(open);
+}
 
 // remesh controls: faces slider is logarithmic (200 .. 200k)
 const facesFromSlider = () => Math.round(10 ** Number($("#remeshFaces").value) / 100) * 100;

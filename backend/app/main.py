@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
@@ -259,6 +259,10 @@ def slugify(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "-", ascii_text).strip("-").lower()[:60] or "modelo"
 
 
+def downloads_folder() -> Path:
+    return Path(os.getenv("FORJA_DOWNLOADS") or Path.home() / "Downloads") / "Forja3D"
+
+
 def new_seed() -> int:
     return random.randint(0, 2**31 - 1)
 
@@ -291,6 +295,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             await app.state.provider.start()
         app.state.runner = JobRunner(store, settings.files_dir, settings.max_concurrent_jobs)
         app.state.blender = blender.find_blender(settings.blender_path)
+        app.state.portable_blender = blender.PortableBlender(Path(settings.data_dir) / "blender")
+        app.state.blender = app.state.blender or app.state.portable_blender.path()
         yield
         await app.state.runner.shutdown()
         local_ai.stop()
@@ -451,7 +457,9 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             "capabilities": sorted(provider.capabilities),
             "styles": [{"id": k, "label": v[0]} for k, v in STYLES.items()],
             "poses": [{"id": k, "label": v[0]} for k, v in POSES.items()],
-            "export_formats": list(geometry.EXPORT_FORMATS) + (list(blender.FORMATS) if app.state.blender else []),
+            "export_formats": list(geometry.EXPORT_FORMATS) + (list(blender.FORMATS) if app.state.blender
+                                                                or app.state.portable_blender.supported else []),
+            "desktop": bool(os.getenv("FORJA_DESKTOP")),
             "blender": bool(app.state.blender),
             "version": VERSION,
             "report_url": f"https://github.com/{UPDATE_REPO}/issues/new",
@@ -1002,7 +1010,46 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         colors: int = Query(4, ge=1, le=16, description="filamentos para 3mf_color / stl_colors"),
         height_mm: float | None = Query(None, gt=0, le=10_000, description="alias de size_mm con fit=height"),
         bed: str = Query("bambu_a1", max_length=40, description="impresora: reparte las piezas en su cama (3MF)"),
+        save: bool = Query(False, description="desktop app: save it in Downloads/Forja3D instead of sending it"),
     ):
+        response = await export_response(request, job_id, format, size_mm, fit, colors, height_mm, bed)
+        if not save or response.status_code != 200:
+            return response
+        return {"saved": await asyncio.to_thread(save_download, response)}
+
+    def save_download(response: Response) -> str:
+        """The desktop window does not always save downloads well: the app writes the file itself."""
+        match = re.search(r'filename="([^"]+)"', response.headers.get("content-disposition", ""))
+        name = match.group(1) if match else "modelo.bin"
+        folder = downloads_folder()
+        folder.mkdir(parents=True, exist_ok=True)
+        stem, dot, ext = name.rpartition(".")
+        target, n = folder / name, 2
+        while target.exists():
+            target, n = folder / f"{stem} ({n}){dot}{ext}", n + 1
+        target.write_bytes(response.body)
+        return str(target)
+
+    @app.post("/api/open-folder")
+    async def open_folder(body: OpenIn):
+        """Show a saved download in the file explorer (only files in Downloads/Forja3D)."""
+        target = Path(body.url)
+        if downloads_folder() not in target.parents:
+            raise HTTPException(400, "Carpeta no permitida")
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", str(target)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(target)])
+        else:
+            subprocess.Popen(["xdg-open", str(target.parent)])
+        return {"ok": True}
+
+    @app.get("/api/blender")
+    async def blender_status(request: Request):
+        """FBX / .blend need Blender: the app downloads it once by itself (progress for the UI)."""
+        return request.app.state.portable_blender.status()
+
+    async def export_response(request, job_id, format, size_mm, fit, colors, height_mm, bed) -> Response:
         job, path = ready_model(request, job_id)
         if size_mm is None and height_mm is not None:
             size_mm, fit = height_mm, "height"
@@ -1021,8 +1068,14 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             return Response(buf.getvalue(), media_type="application/zip",
                             headers={"Content-Disposition": f'attachment; filename="{filename}.zip"'})
         if format in blender.FORMATS:
+            portable = request.app.state.portable_blender
+            if not request.app.state.blender and portable.path():
+                request.app.state.blender = portable.path()
             if not request.app.state.blender:
-                raise HTTPException(400, "Para FBX/.blend instala Blender (o indica BLENDER_PATH en .env) y reinicia la app")
+                if not portable.supported:
+                    raise HTTPException(400, "Para FBX/.blend instala Blender (blender.org) y reinicia la app")
+                portable.start()  # once, in the background: the page shows its progress and asks again
+                return JSONResponse({"blender": portable.status()}, status_code=202)
             source, ext = (quad_obj.read_bytes(), "obj") if quad_obj.is_file() else (path.read_bytes(), "glb")
             try:
                 data = await asyncio.to_thread(blender.convert, source, format, request.app.state.blender, 300, ext,

@@ -591,3 +591,66 @@ def test_clipboard_endpoint_answers(client):
     """Copiar diagnóstico asks the app to copy when the window blocks the browser clipboard."""
     resp = client.post("/api/clipboard", json={"text": "Forja3D diagnóstico"})
     assert resp.status_code == 200 and isinstance(resp.json()["ok"], bool)
+
+
+def test_desktop_downloads_are_saved_by_the_app(client, tmp_path, monkeypatch):
+    """The desktop window can mangle downloads (an error saved as a .json file): the app saves them."""
+    monkeypatch.setenv("FORJA_DOWNLOADS", str(tmp_path / "dl"))
+    job = make_job(client, "un cubo")
+    saved = client.get(f"/api/jobs/{job['id']}/export", params={"format": "glb", "save": True}).json()["saved"]
+    assert saved.endswith(".glb") and open(saved, "rb").read(4) == b"glTF"
+    again = client.get(f"/api/jobs/{job['id']}/export", params={"format": "glb", "save": True}).json()["saved"]
+    assert again != saved and again.endswith("(2).glb")  # never overwrites
+    assert client.post("/api/open-folder", json={"url": "/etc/passwd"}).status_code == 400
+
+
+def test_fbx_without_blender_downloads_it_first(client):
+    """FBX/.blend for Unity, Unreal or Blender: with no Blender the app fetches it and the page waits."""
+    started = []
+
+    class Portable:
+        supported = True
+
+        def path(self):
+            return None
+
+        def start(self):
+            started.append(1)
+
+        def status(self):
+            return {"state": "downloading", "progress": 12, "error": "", "size_mb": 366}
+
+    client.app.state.blender = None
+    client.app.state.portable_blender = Portable()
+    job = make_job(client, "un cubo")
+    resp = client.get(f"/api/jobs/{job['id']}/export", params={"format": "fbx"})
+    assert resp.status_code == 202 and resp.json()["blender"]["progress"] == 12 and started
+    assert "fbx" in client.get("/api/config").json()["export_formats"]
+
+
+def test_portable_blender_download_is_checked_and_unpacked(tmp_path, monkeypatch):
+    import asyncio
+    import hashlib
+
+    import httpx
+
+    from app import blender
+
+    monkeypatch.setattr(blender.shutil, "disk_usage", lambda p: type("U", (), {"free": 50 * 1024**3})())
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(f"blender-{blender.PORTABLE_VERSION}-windows-x64/blender.exe", b"MZ")
+    data = buf.getvalue()
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=data))
+    portable = blender.PortableBlender(tmp_path / "b", client=httpx.AsyncClient(transport=transport))
+
+    async def run():
+        portable.start()
+        await portable.task
+
+    asyncio.run(run())  # wrong checksum: refused, nothing kept
+    assert portable.status()["state"] == "error" and "dañada" in portable.error and not portable.path()
+    monkeypatch.setattr(blender, "PORTABLE_SHA256", hashlib.sha256(data).hexdigest())
+    portable.client = httpx.AsyncClient(transport=transport)
+    asyncio.run(run())
+    assert portable.status()["state"] == "ready" and portable.path().endswith("blender.exe")
