@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from functools import partial
 from pathlib import Path
 from typing import Callable
@@ -23,7 +24,9 @@ def generation(provider: Provider, req: GenerationRequest, preview: bool = False
     """`preview`: also render a gallery picture (variants are compared before they are opened)."""
 
     async def work(on_progress: ProgressCallback) -> GenerationResult:
+        started = time.monotonic()
         result = await provider.generate(req, on_progress)
+        log.info("Forma lista en %.0f s", time.monotonic() - started)
         if getattr(provider, "paints_from_views", False):
             pictures = result.inputs or [img.data for img in req.images] or (
                 [result.reference_image] if result.reference_image else [])
@@ -35,9 +38,11 @@ def generation(provider: Provider, req: GenerationRequest, preview: bool = False
                         roles, pictures = [*roles, role], [*pictures, data]
                         trust[role] = GENERATED_VIEW_TRUST
                 await on_progress(97, "Pintando el modelo desde las imágenes")
+                painting = time.monotonic()
                 try:
                     result.model_glb = await asyncio.to_thread(
                         projection.paint_glb, result.model_glb, pictures, roles, trust, result.view_poses)
+                    log.info("Pintado en %.0f s", time.monotonic() - painting)
                 except projection.ProjectionError as exc:  # keep the shape: an unpainted model beats no model
                     log.warning("No se pudo pintar el modelo: %s", exc)
                 except Exception:  # noqa: BLE001 - same, for anything unexpected (logged for the diagnostics)

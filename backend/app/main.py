@@ -28,7 +28,7 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 from . import agent as ai_agent
-from ._version import VERSION
+from ._version import UPDATE_REPO, VERSION
 from . import blender, clipboard, creations, geometry, pipelines, printing, publishing, quads, rigging, sheet, textures, updates
 from .config import Settings, get_settings, save_user_settings, user_settings_path, with_user_settings
 from .db import JobStore
@@ -113,6 +113,10 @@ class JobPatch(BaseModel):
 
 class ClipboardIn(BaseModel):
     text: str = Field(max_length=500_000)
+
+
+class OpenIn(BaseModel):
+    url: str = Field(max_length=16_000)
 
 
 class RemeshIn(BaseModel):
@@ -450,6 +454,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             "export_formats": list(geometry.EXPORT_FORMATS) + (list(blender.FORMATS) if app.state.blender else []),
             "blender": bool(app.state.blender),
             "version": VERSION,
+            "report_url": f"https://github.com/{UPDATE_REPO}/issues/new",
             "agent": bool(request.app.state.settings.anthropic_key),
             "local_ai": {k: v for k, v in request.app.state.local_ai.status().items() if k != "log"},
             "upload_types": sorted(geometry.UPLOAD_TYPES),
@@ -660,6 +665,19 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         lines += ["", "--- worker.log ---", *quiet(worker_log)[-30:]]
         lines += ["", "--- forja3d.log ---", *quiet(app_log)[-30:]]
         return {"text": "\n".join(lines)}
+
+    @app.post("/api/open")
+    async def open_in_browser(body: OpenIn):
+        """Open a page in the PC's browser (the desktop window does not open new tabs itself).
+        Only the pages the app links to: error reports and the 3D model sites."""
+        from urllib.parse import urlparse
+
+        allowed = {"github.com", "makerworld.com", "www.printables.com", "www.thingiverse.com"}
+        if urlparse(body.url).scheme != "https" or urlparse(body.url).hostname not in allowed:
+            raise HTTPException(400, "Dirección no permitida")
+        import webbrowser
+
+        return {"ok": await asyncio.to_thread(webbrowser.open, body.url)}
 
     @app.post("/api/clipboard")
     async def copy_to_clipboard(body: ClipboardIn):

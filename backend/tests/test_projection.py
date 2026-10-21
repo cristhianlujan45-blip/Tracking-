@@ -85,13 +85,15 @@ def test_baked_texture_keeps_detail_finer_than_the_vertices():
     d.ellipse([8, 8, 248, 248], fill=(30, 160, 60, 255))
     d.rectangle([8, 126, 248, 130], fill=(255, 255, 255, 255))  # 5 px stripe across the equator
     out = bake_views(mesh, {"front": img, "back": img}, size=512)
-    assert out.visual.kind == "texture" and out.visual.material.baseColorTexture.size == (512, 512)
+    side = out.visual.material.baseColorTexture.size[0]
+    # at least the size asked for: it grows when the UV charts leave gaps, to keep the texel density
+    assert out.visual.kind == "texture" and 512 <= side <= 1024
     tex = np.asarray(out.visual.material.baseColorTexture.convert("RGB"), dtype=int)
     # sample the texture where the front equator and a point above it land
     def colour_at(point):  # texture colour at the point on the surface closest to `point`
         closest, _, face = trimesh.proximity.closest_point(out, [point])
         bary = trimesh.triangles.points_to_barycentric(out.triangles[face], closest)[0]
         uv = bary @ out.visual.uv[out.faces[face[0]]]
-        return tex[int((1 - uv[1]) * 511), int(uv[0] * 511)]
+        return tex[int((1 - uv[1]) * (side - 1)), int(uv[0] * (side - 1))]
     assert colour_at(np.array([0, 0.0, 1.0])).mean() > 180  # white stripe kept
     assert colour_at(np.array([0, 0.5, 0.86]))[1] > 120  # green above it

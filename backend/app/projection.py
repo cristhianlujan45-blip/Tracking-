@@ -251,19 +251,19 @@ def bake_views(mesh: trimesh.Trimesh, views: dict[str, Image.Image], size: int =
     """Textured copy of `mesh`: UV-unwrapped with xatlas and every texel painted from the views.
     `trust` weighs views by role (e.g. AI-generated ones below real pictures), `poses` gives
     (azimuth, elevation) for views not taken square on the four axes."""
-    import xatlas
+    from .quads import fast_unwrap
 
     prepared = _prepare(mesh, views, mirror_side, depth_res, trust, poses)
     verts = np.asarray(mesh.vertices, dtype=float)
     normals = np.asarray(mesh.vertex_normals, dtype=float)
     vcol = _vertex_colours(mesh, prepared)  # smooth fallback where no picture is trustworthy
 
-    atlas = xatlas.Atlas()
-    atlas.add_mesh(verts, mesh.faces)
-    pack = xatlas.PackOptions()
-    pack.resolution, pack.padding, pack.bilinear = size, 4, True
-    atlas.generate(xatlas.ChartOptions(), pack)
-    vmap, faces, uv = atlas[0]
+    # UV charts + packing in seconds (xatlas takes ~30 s on a 100k-face model); the packing leaves
+    # more gaps, so the texture grows to give the model as many painted texels as xatlas would
+    vmap, faces, uv = fast_unwrap(verts, mesh.faces, size)
+    used = float(np.abs(((uv[faces[:, 1]] - uv[faces[:, 0]])[:, 0] * (uv[faces[:, 2]] - uv[faces[:, 0]])[:, 1]
+                         - (uv[faces[:, 2]] - uv[faces[:, 0]])[:, 0] * (uv[faces[:, 1]] - uv[faces[:, 0]])[:, 1])).sum() / 2)
+    size = int(min(2 * size, round(size * np.sqrt(0.8 / max(used, 0.05)) / 4) * 4))
 
     # which face covers each texel: draw the UV triangles with their index as the "colour"
     corners = np.column_stack([uv[:, 0] * size, (1 - uv[:, 1]) * size])  # image rows go down

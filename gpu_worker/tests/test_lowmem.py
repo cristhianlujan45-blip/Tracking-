@@ -80,3 +80,18 @@ def test_a_file_that_does_not_match_is_refused(hunyuan):
     (folder / "config.yaml").write_text(yaml.safe_dump(config))
     with pytest.raises(lowmem.LoadError):
         lowmem.load_pipeline(Pipeline, str(folder), "r", "s", device="cpu")
+
+
+def test_model_sizes_for_parking_decisions():
+    """The worker parks a model in RAM only when it fits: it needs to know how big it is."""
+    from worker.backends import _size_gb
+
+    class Pipe:  # a Hunyuan-style pipeline: modules as attributes
+        def __init__(self):
+            self.model = torch.nn.Linear(1024, 1024)  # ~4 MB in fp32
+            self.vae = torch.nn.Linear(1024, 512).half()
+            self.name = "x"
+
+    size = _size_gb(Pipe()) * 1024**3
+    assert size == pytest.approx((1024 * 1024 + 1024) * 4 + (1024 * 512 + 512) * 2)
+    assert _size_gb("not a model") == 0

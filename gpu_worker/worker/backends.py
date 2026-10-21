@@ -295,8 +295,10 @@ class HunyuanBackend:
             return
         previous = getattr(self, f"_{self._on_gpu}", None) if self._on_gpu else None
         if previous is not None and hasattr(previous, "to"):
-            if self.low_ram:
-                setattr(self, f"_{self._on_gpu}", None)  # reloaded from the disk cache when needed again
+            # parked in RAM when there is room for it (no reload from disk next time); with little
+            # free RAM it is dropped and reloaded from the disk cache when needed again
+            if self.low_ram and ram_free_gb() - _size_gb(previous) < RAM_MARGIN_GB:
+                setattr(self, f"_{self._on_gpu}", None)
                 del previous
             else:
                 previous.to("cpu")
@@ -309,8 +311,8 @@ class HunyuanBackend:
 
     def _load_shape(self, progress: Progress | None = None):
         if self._shape is None:
-            if self.low_ram:  # make room in RAM first: these load ~6 GB at once
-                self._free_memory()
+            if self.low_ram:  # make room in RAM first: building it can take a few GB
+                self._make_room(6)
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
             log.info("Cargando %s …", self.shape_model)
@@ -345,8 +347,8 @@ class HunyuanBackend:
 
     def _load_mv(self, progress: Progress | None = None):
         if self._mv is None:
-            if self.low_ram:  # make room in RAM first: these load ~6 GB at once
-                self._free_memory()
+            if self.low_ram:  # make room in RAM first: building it can take a few GB
+                self._make_room(6)
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
             log.info("Cargando Hunyuan3D-2mv …")
@@ -363,7 +365,7 @@ class HunyuanBackend:
 
             log.info("Cargando %s …", self.image_model)
             if self.low_ram:
-                self._free_memory()
+                self._make_room(8)
             self._t2i = AutoPipelineForText2Image.from_pretrained(
                 self.image_model, torch_dtype=torch.float16, variant="fp16"
             )
@@ -386,7 +388,7 @@ class HunyuanBackend:
             from diffusers import DiffusionPipeline, EulerAncestralDiscreteScheduler
 
             if self.low_ram:
-                self._free_memory(keep="rembg")
+                self._make_room(4, keep="rembg")
             log.info("Cargando %s …", NOVEL_VIEW_MODEL)
             pipe = DiffusionPipeline.from_pretrained(
                 hub_dir(NOVEL_VIEW_MODEL), custom_pipeline=hub_dir(NOVEL_VIEW_PIPELINE),
@@ -575,12 +577,47 @@ class HunyuanBackend:
             num_chunks=chunks, generator=generator, output_type="trimesh",
         )[0]
 
+    def _make_room(self, need_gb: float, keep: str | None = None) -> None:
+        """Drop parked models (biggest first) until `need_gb` of RAM is free, keeping the rest loaded."""
+        parked = [k for k in MODEL_KEYS if k not in (keep, self._on_gpu) and getattr(self, f"_{k}", None) is not None]
+        parked.sort(key=lambda k: -_size_gb(getattr(self, f"_{k}")))
+        for key in parked:
+            if ram_free_gb() >= need_gb + RAM_MARGIN_GB:
+                break
+            log.info("Liberando %s de la RAM", key)
+            setattr(self, f"_{key}", None)
+            gc.collect()
+
+    def warm_up(self) -> None:
+        """Read the model files once in the background so the first loads come from Windows' file cache
+        (memory the system takes back whenever it needs it), not from the disk."""
+        roots = [os.path.join(hy3d_models_dir(), self.shape_model, self.shape_subfolder)]
+        if self.multiview:
+            roots.append(os.path.join(hy3d_models_dir(), "tencent/Hunyuan3D-2mv", "hunyuan3d-dit-v2-mv"))
+        roots.append(os.path.join(os.environ.get("U2NET_HOME", os.path.expanduser("~/.u2net"))))
+        files = [os.path.join(r, n) for r in roots if os.path.isdir(r) for n in os.listdir(r)
+                 if n.endswith((".safetensors", ".onnx"))]
+        budget = (ram_free_gb() - 4) * 1024**3
+        started = time.time()
+        for path in files:
+            try:
+                size = os.path.getsize(path)
+                if size > budget:
+                    break
+                budget -= size
+                with open(path, "rb") as fh:
+                    while fh.read(16 * 1024 * 1024):
+                        pass
+            except OSError:
+                continue
+        log.info("Archivos de modelos precargados en %.0f s", time.time() - started)
+
     def _free_memory(self, keep: str | None = None) -> None:
         """Drop every loaded model except `keep` (they are reloaded from disk when needed): before a big
         load on a PC with little RAM, and after running out of memory."""
         import torch
 
-        for key in ("shape", "mv", "t2i", "paint", "mv_gen", "llm", "depth", "translator", "rembg", "esrgan"):
+        for key in MODEL_KEYS:
             if key == keep or getattr(self, f"_{key}", None) is None:
                 continue
             pipe = getattr(self, f"_{key}")
@@ -683,6 +720,51 @@ class HunyuanBackend:
 
 LIGHT_SHAPE = ("tencent/Hunyuan3D-2mini", "hunyuan3d-dit-v2-mini")
 LIGHT_MARKER = "modo_ligero.txt"  # written in the worker's folder; the app then starts it with the light model
+
+
+MODEL_KEYS = ("shape", "mv", "t2i", "paint", "mv_gen", "llm", "depth", "translator", "rembg", "esrgan")
+RAM_MARGIN_GB = 3.0  # kept free for Windows, the app and the work itself
+
+
+def _size_gb(obj) -> float:
+    """Memory held by a model or pipeline (its torch modules); 0 for anything else."""
+    try:
+        import torch
+    except ImportError:
+        return 0.0
+    if isinstance(obj, torch.nn.Module):
+        modules = [obj]
+    else:
+        parts = getattr(obj, "components", None)
+        values = parts.values() if isinstance(parts, dict) else vars(obj).values() if hasattr(obj, "__dict__") else []
+        modules = [m for m in values if isinstance(m, torch.nn.Module)]
+    seen, total = set(), 0
+    for module in modules:
+        for tensor in [*module.parameters(), *module.buffers()]:
+            if id(tensor) not in seen:
+                seen.add(id(tensor))
+                total += tensor.numel() * tensor.element_size()
+    return total / 1024**3
+
+
+def ram_free_gb() -> float:
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class Status(ctypes.Structure):
+                _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong)] + [
+                    (name, ctypes.c_ulonglong) for name in ("total", "avail", "page_total", "page_avail",
+                                                           "virtual_total", "virtual_avail", "extended")]
+
+            status = Status()
+            status.length = ctypes.sizeof(Status)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+            # what can still be committed, not just idle RAM: os error 1455 is about the commit limit
+            return min(status.avail, status.page_avail) / 1024**3
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_AVPHYS_PAGES") / 1024**3
+    except (AttributeError, OSError, ValueError):
+        return 0.0
 
 
 def _vram_gb() -> float:

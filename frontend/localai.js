@@ -14,8 +14,10 @@ export function initLocalAI(context) {
   $("#btnInstallAI").addEventListener("click", install);
   $("#btnDiag").addEventListener("click", copyDiagnostics);
   $("#btnDiagFailed").addEventListener("click", copyDiagnostics);
+  $("#btnReport").addEventListener("click", copyDiagnostics);
+  $("#btnDiagGithub").addEventListener("click", sendOnGithub);
   $("#btnDiagCopy").addEventListener("click", async () => {
-    const copied = await copyText($("#diagText").value);
+    const copied = await copyText(report());
     $("#diagNote").textContent = copied
       ? t("✔ Copiado. Pégalo en tu mensaje (Ctrl+V o mantén pulsado → Pegar).")
       : t("Selecciona todo el texto de abajo (Ctrl+A) y cópialo (Ctrl+C).");
@@ -49,24 +51,47 @@ async function install() {
   }
 }
 
+// "Reportar error": what happened (typed by the user) + the diagnostics, to copy or send on GitHub
 export async function copyDiagnostics() {
+  $("#diagNote").textContent = t("Preparando el diagnóstico…");
+  $("#diagText").value = "";
+  if (!$("#diagDlg").open) $("#diagDlg").showModal();
   let text;
   try {
     ({ text } = await ctx.api("/api/diagnostics"));
   } catch (err) {
-    return ctx.toast(tr(err.message), true);
+    $("#diagNote").textContent = tr(err.message);
+    return;
   }
-  // always shown too: whatever happens with the clipboard, the text can be selected and copied by hand
   $("#diagText").value = text;
-  $("#diagNote").textContent = t("Copiando…");
-  if (!$("#diagDlg").open) $("#diagDlg").showModal();
-  const copied = await copyText(text);
+  const copied = await copyText(report());
   $("#diagNote").textContent = copied
     ? t("✔ Copiado. Pégalo en tu mensaje (Ctrl+V o mantén pulsado → Pegar).")
     : t("Selecciona todo el texto de abajo (Ctrl+A) y cópialo (Ctrl+C).");
-  $("#diagText").focus();
-  $("#diagText").select();
-  if (copied) ctx.toast(t("Diagnóstico copiado: pégalo en tu mensaje"));
+  $("#diagWhat").focus();
+}
+
+function report() {
+  const what = $("#diagWhat").value.trim();
+  return (what ? `${t("Qué pasó")}: ${what}\n\n` : "") + $("#diagText").value;
+}
+
+export async function openExternal(url) {
+  try {  // the desktop window does not open browser tabs itself: the app asks the PC's browser
+    if ((await ctx.api("/api/open", { method: "POST", json: { url } })).ok) return;
+  } catch {}
+  window.open(url, "_blank", "noopener");
+}
+
+async function sendOnGithub() {
+  const base = ctx.config()?.report_url;
+  if (!base) return;
+  const what = $("#diagWhat").value.trim();
+  const title = `Error: ${what.split("\n")[0].slice(0, 80) || $("#diagText").value.split("\n").find((l) => l.startsWith("Trabajo fallido") || l.startsWith("Error")) || "Forja3D"}`;
+  const body = report().slice(0, 6000);  // links have a length limit; the full text is on the clipboard
+  await copyText(report());
+  await openExternal(`${base}?title=${encodeURIComponent(title.slice(0, 120))}&body=${encodeURIComponent("```\n" + body + "\n```")}`);
+  $("#diagNote").textContent = t("Se abrió GitHub con el reporte escrito: pulsa «Submit new issue». El texto completo también está copiado.");
 }
 
 async function copyText(text) {

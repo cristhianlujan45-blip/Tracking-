@@ -42,6 +42,7 @@
       <button type="button" data-lang="es">ES</button><button type="button" data-lang="en">EN</button>
     </div>
     <button class="provider" id="provider" type="button" title="Motor de IA — clic para cambiar">conectando…</button>
+    <button class="gear" id="btnReport" type="button" title="Reportar un error: copia el diagnóstico para enviarlo">⚑ <span>Reportar error</span></button>
     <button class="gear" id="btnSettings" type="button" title="Ajustes">⚙ <span>Ajustes</span></button>
   </header>
 
@@ -233,7 +234,7 @@
               </ol>
             </div>
             <p id="viewerEmptyMsg"></p>
-            <button type="button" class="secondary" id="btnDiagFailed" hidden>⧉ Copiar diagnóstico para enviarlo</button>
+            <button type="button" class="secondary" id="btnDiagFailed" hidden>⚑ Reportar este error</button>
           </div>
           <div class="viewer-loading" id="viewerLoading" hidden>
             <svg class="enso" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="46" /></svg>
@@ -529,13 +530,16 @@
   <dialog class="settings diag" id="diagDlg">
     <form method="dialog">
       <header>
-        <h2 class="sec"><span class="tag">⧉</span>Diagnóstico</h2>
+        <h2 class="sec"><span class="tag">⚑</span>Reportar error</h2>
         <button class="icon" value="close" title="Cerrar">✕</button>
       </header>
+      <label for="diagWhat">¿Qué pasó? (opcional)</label>
+      <textarea id="diagWhat" rows="3" placeholder="Ej.: al generar el monstruo se quedó en 35 % y no avanzó"></textarea>
       <p class="muted small" id="diagNote"></p>
-      <textarea id="diagText" readonly rows="14" spellcheck="false"></textarea>
+      <textarea id="diagText" readonly rows="12" spellcheck="false"></textarea>
       <div class="dlg-actions">
-        <button type="button" class="primary" id="btnDiagCopy">⧉ Copiar</button>
+        <button type="button" class="primary" id="btnDiagCopy">⧉ Copiar reporte</button>
+        <button type="button" class="secondary" id="btnDiagGithub" title="Abre un reporte en GitHub con todo ya escrito">Enviar en GitHub</button>
         <button class="secondary" value="close">Cerrar</button>
       </div>
     </form>

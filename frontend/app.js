@@ -1,7 +1,7 @@
 import { applyI18n, lang, t, title, tr } from "./i18n.js";
 import { clipLabel, initRig, renderRig } from "./rig.js";
 import { initAgent } from "./agent.js";
-import { initLocalAI } from "./localai.js";
+import { initLocalAI, openExternal } from "./localai.js";
 import { initUpdates } from "./updates.js";
 import { initSettings, openSettings } from "./settings.js";
 import { Viewer } from "./viewer.js";
@@ -597,7 +597,7 @@ async function showModel(job) {
     empty.hidden = !!job && !failed;
     emptyMsg(failed ? t("La generación falló: {e}", { e: tr(job.error) }) : "");
     loading.hidden = !job || failed;
-    if (job && !failed) $("#viewerProgress").textContent = `${tr(job.stage) || t("En cola")} · ${job.progress}%`;
+    if (job && !failed) $("#viewerProgress").textContent = `${tr(job.stage) || t("En cola")} · ${job.progress}% · ${elapsed(job)}`;
     return;
   }
 
@@ -633,6 +633,12 @@ async function showModel(job) {
   } finally {
     loading.hidden = true;
   }
+}
+
+// time since the job was created, e.g. "2:05"
+function elapsed(job) {
+  const s = Math.max(0, Math.round(Date.now() / 1000 - job.created_at));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 async function uploadThumbnail(jobId) {
@@ -1074,7 +1080,7 @@ $("#publishRow").addEventListener("click", (e) => {
   document.body.append(link);
   link.click();  // the kit downloads while the upload page opens
   link.remove();
-  window.open(UPLOAD_PAGES[site], "_blank", "noopener");
+  openExternal(UPLOAD_PAGES[site]);
   toast(t("Preparando el paquete para {s}: sube los archivos y pega la descripción", { s: e.target.textContent }));
 });
 $("#btnFitBed").addEventListener("click", (e) =>

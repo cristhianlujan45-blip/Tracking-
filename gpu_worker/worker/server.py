@@ -135,10 +135,12 @@ def create_app(backend: Backend, token: str | None = None) -> FastAPI:
 
     def run_task(task: Task, job: MeshJob, kind: str) -> None:
         def progress(pct: int, stage: str) -> None:
+            if stage != task.stage:  # how long each stage takes, for the diagnostics
+                log.info("[%s] %5.1f s · %s", task.id[:6], time.time() - started, stage)
             task.progress, task.stage = max(task.progress, min(99, pct)), stage
 
-        task.status, task.stage, task.progress = "running", "Iniciando", 1
         started = time.time()
+        task.status, task.stage, task.progress = "running", "Iniciando", 1
         try:
             fn = backend.texture_mesh if kind == "texture" else backend.image_to_mesh
             task.result = fn(job, progress)

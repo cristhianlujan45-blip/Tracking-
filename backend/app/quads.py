@@ -4,8 +4,8 @@ keeps the model's texture.
 1. Instant Meshes (field-aligned) turns the AI's dense triangle soup into evenly spaced quads that
    follow the shape, with few poles: it bends well when rigged and subdivides cleanly.
 2. UV unwrap made of whole quads: charts grow over the quad mesh while their faces look roughly the
-   same way, each one is flattened with LSCM (angle-preserving), turned to its tightest box and
-   packed in rows. A UV seam never cuts a quad in two, so the OBJ / FBX stays 100 % quads.
+   same way, each one is flattened with LSCM (angle-preserving) and packed by its real outline.
+   A UV seam never cuts a quad in two, so the OBJ / FBX stays 100 % quads.
 3. The original model's colours (texture or vertex colours) are baked into the new UV texture from
    its surface, so the remeshed model looks the same with a fraction of the faces.
 """
@@ -115,7 +115,7 @@ def _face_graph(faces: list[np.ndarray]) -> list[list[int]]:
 
 
 def charts(verts: np.ndarray, faces: list[np.ndarray]) -> np.ndarray:
-    """Chart id per face: region growing while faces stay within CHART_COS of the chart's direction."""
+    """Chart id per face: region growing while faces stay within CHART_COS of the seed face's direction."""
     tris = _triangulate(faces)
     tri_normals = trimesh.Trimesh(verts, tris, process=False).face_normals
     tri_area = trimesh.Trimesh(verts, tris, process=False).area_faces
@@ -131,17 +131,15 @@ def charts(verts: np.ndarray, faces: list[np.ndarray]) -> np.ndarray:
         if chart[seed] >= 0:
             continue
         chart[seed] = count
-        direction = normal[seed] * area[seed]
+        # measured against the seed's direction, not a running mean: a mean drifts and lets a chart
+        # wrap around an arm or a leg, which then folds over itself when flattened
+        direction = normal[seed]
         frontier = list(graph[seed])
         while frontier:
             n = frontier.pop()
-            if chart[n] >= 0:
-                continue
-            mean = direction / max(np.linalg.norm(direction), 1e-12)
-            if normal[n] @ mean < CHART_COS:
+            if chart[n] >= 0 or normal[n] @ direction < CHART_COS:
                 continue
             chart[n] = count
-            direction = direction + normal[n] * area[n]
             frontier.extend(m for m in graph[n] if chart[m] < 0)
         count += 1
     # tiny charts join the neighbour they share most edges with
@@ -227,7 +225,8 @@ def _flatten(verts: np.ndarray, faces: list[np.ndarray], chart_faces: list[int])
     areas = _signed_areas(uv, tris)
     area3d = trimesh.Trimesh(verts[used], tris, process=False).area
     flat = np.abs(areas).sum()
-    if len(chart_faces) > 1 and ((areas <= 0).any() or flat < 1e-12 or not np.isfinite(uv).all()):
+    if len(chart_faces) > 1 and ((areas <= 0).any() or flat < 1e-12 or not np.isfinite(uv).all()
+                                 or _overlaps(uv, tris, flat)):
         centres = np.array([verts[f].mean(0) for f in sub])
         axis = np.linalg.svd(centres - centres.mean(0), full_matrices=False)[2][0]
         side = (centres - centres.mean(0)) @ axis > 0
@@ -240,73 +239,138 @@ def _flatten(verts: np.ndarray, faces: list[np.ndarray], chart_faces: list[int])
     return [(chart_faces, used, uv)]
 
 
-def _tight_rotation(uv: np.ndarray) -> np.ndarray:
-    """Rotate a chart so its bounding box is the smallest (an edge of its convex hull on an axis)."""
-    from scipy.spatial import ConvexHull, QhullError
-
-    try:
-        hull = uv[ConvexHull(uv).vertices]
-    except (QhullError, ValueError):
-        return uv
-    best, best_area = uv, np.inf
-    edges = np.roll(hull, -1, 0) - hull
-    for angle in np.unique(np.round(np.arctan2(edges[:, 1], edges[:, 0]) % (np.pi / 2), 6)):
-        c, s = np.cos(-angle), np.sin(-angle)
-        rot = hull @ np.array([[c, s], [-s, c]])
-        area = np.ptp(rot[:, 0]) * np.ptp(rot[:, 1])
-        if area < best_area:
-            best_area, best = area, uv @ np.array([[c, s], [-s, c]])
-    if np.ptp(best[:, 1]) > np.ptp(best[:, 0]):  # lying down packs better in rows
-        best = best @ np.array([[0, -1], [1, 0]])  # a rotation, never a mirror
-    return best - best.min(0)
+def _overlaps(uv: np.ndarray, tris: np.ndarray, flat: float, res: int = 1024) -> bool:
+    """Whether parts of a flattened chart land on top of each other: the area its triangles cover
+    together falls short of the sum of their areas."""
+    if len(tris) < 8:
+        return False
+    span = max(float(np.ptp(uv, 0).max()), 1e-12)
+    px = (uv - uv.min(0)) / span * (res - 1)
+    img = Image.new("1", (res, res), 0)
+    draw = ImageDraw.Draw(img)
+    for tri in px[tris]:
+        draw.polygon([tuple(p) for p in tri], fill=1)
+    covered = np.count_nonzero(np.asarray(img))
+    expected = flat / span**2 * (res - 1) ** 2
+    return covered < 0.97 * expected
 
 
-def _shelf_pack(sizes: np.ndarray, side: float, gap: float) -> np.ndarray | None:
-    """Positions of rectangles (w, h) in rows inside side × side, tallest first; None if they don't fit."""
-    order = np.argsort(-sizes[:, 1])
-    pos = np.zeros((len(sizes), 2))
-    x = y = row = 0.0
+def _chart_mask(uv: np.ndarray, tris: np.ndarray, scale: float, cell: float, grow: int) -> np.ndarray:
+    """Cells of the packing grid a chart covers at `scale` (texels per unit), grown by `grow` cells."""
+    px = uv * scale / cell + grow
+    shape = (int(np.ceil(px[:, 1].max())) + grow + 1, int(np.ceil(px[:, 0].max())) + grow + 1)
+    img = Image.new("1", (shape[1], shape[0]), 0)
+    draw = ImageDraw.Draw(img)
+    for tri in px[tris]:
+        draw.polygon([tuple(p) for p in tri], fill=1)
+    mask = np.asarray(img, dtype=bool)
+    if grow:
+        mask = ndimage.binary_dilation(mask, iterations=grow)
+    return mask
+
+
+def _pack(pieces: list[tuple[np.ndarray, np.ndarray]], scale: float, size: int, cell: float, grow: int
+          ) -> list[tuple[np.ndarray, int, int, bool]] | None:
+    """Place each chart (largest first) where its real outline fits, lowest row first, upright or
+    turned 90°. Returns (mask, row, col, turned) per chart, or None when they do not all fit."""
+    from scipy.signal import fftconvolve
+
+    grid = int(size / cell)
+    occupied = np.zeros((grid, grid), dtype=np.float32)
+    order = sorted(range(len(pieces)), key=lambda i: -np.ptp(pieces[i][0], 0).prod())
+    placed: list = [None] * len(pieces)
     for i in order:
-        w, h = sizes[i] + gap
-        if x + w > side:
-            x, y, row = 0.0, y + row, 0.0
-        if w > side or y + h > side:
+        uv, tris = pieces[i]
+        best = None
+        for turned in (False, True):
+            coords = uv[:, ::-1] * [1, -1] if turned else uv  # 90° turn (a rotation, never a mirror)
+            coords = coords - coords.min(0)
+            mask = _chart_mask(coords, tris, scale, cell, grow)
+            mh, mw = mask.shape
+            if mh > grid or mw > grid:
+                continue
+            hits = fftconvolve(occupied, mask[::-1, ::-1].astype(np.float32), mode="valid")
+            free = np.argwhere(hits < 0.5)
+            if not len(free):
+                continue
+            row, col = free[np.lexsort((free[:, 1], free[:, 0]))[0]]
+            if best is None or (row + mh, col) < (best[1] + best[0].shape[0], best[2]):
+                best = (mask, int(row), int(col), turned)
+        if best is None:
             return None
-        pos[i] = (x + gap / 2, y + gap / 2)
-        x, row = x + w, max(row, h)
-    return pos
+        mask, row, col, turned = best
+        occupied[row:row + mask.shape[0], col:col + mask.shape[1]] += mask
+        placed[i] = best
+    return placed
+
+
+def _layout(pieces: list[tuple[np.ndarray, np.ndarray]], size: int, padding: int) -> list[np.ndarray]:
+    """UV coordinates (0..1) of every chart, packed by outline at the largest density that fits."""
+    cell = max(2.0, size / 512)
+    grow = int(np.ceil(padding / cell))
+    area = sum(np.abs(_signed_areas(uv, tris)).sum() for uv, tris in pieces)
+    scale = float(np.sqrt(0.72 * size * size / max(area, 1e-12)))
+    placed, best = _pack(pieces, scale, size, cell, grow), None
+    for _ in range(30):  # shrink until everything fits, then grow back while it still does
+        if placed is not None:
+            break
+        scale *= 0.92
+        placed = _pack(pieces, scale, size, cell, grow)
+    if placed is None:
+        raise GeometryError("No se pudo desplegar el modelo en un mapa UV")
+    best = (scale, placed)
+    for _ in range(4):
+        bigger = _pack(pieces, scale * 1.04, size, cell, grow)
+        if bigger is None:
+            break
+        scale *= 1.04
+        best = (scale, bigger)
+    scale, placed = best
+    out = []
+    for (uv, _), (_, row, col, turned) in zip(pieces, placed):
+        coords = uv[:, ::-1] * [1, -1] if turned else uv
+        coords = coords - coords.min(0)
+        px = coords * scale + (np.array([col, row]) + grow) * cell
+        out.append(px / size)
+    return out
+
+
+def _charts_flat(verts: np.ndarray, faces: list[np.ndarray]) -> list[tuple[list[int], np.ndarray, np.ndarray]]:
+    chart = charts(verts, faces)
+    pieces = []
+    for c in range(chart.max() + 1):
+        pieces += _flatten(verts, faces, list(np.nonzero(chart == c)[0]))
+    return pieces
 
 
 def unwrap(verts: np.ndarray, faces: list[np.ndarray], size: int = 2048, padding: int = 4
            ) -> tuple[np.ndarray, list[np.ndarray], tuple[int, int]]:
     """UV coordinates (0..1), the UV index of every face corner, and the texture size to bake."""
-    chart = charts(verts, faces)
-    pieces = []
-    for c in range(chart.max() + 1):
-        pieces += _flatten(verts, faces, list(np.nonzero(chart == c)[0]))
-    pieces = [(chart_faces, used, _tight_rotation(uv)) for chart_faces, used, uv in pieces]
-    sizes = np.array([np.ptp(uv, 0) for _, _, uv in pieces]) + 1e-9
-    # the largest texel density (texels per model unit) at which every chart fits: binary search
-    lo, hi = 0.0, size / max(sizes.max(), np.sqrt((sizes[:, 0] * sizes[:, 1]).sum()))
-    hi *= 1.5
-    gap = 2.0 * padding
-    while _shelf_pack(sizes * hi, size, gap) is not None:
-        lo, hi = hi, hi * 1.5
-    for _ in range(24):
-        mid = (lo + hi) / 2
-        lo, hi = (mid, hi) if _shelf_pack(sizes * mid, size, gap) is not None else (lo, mid)
-    density = lo
-    pos = _shelf_pack(sizes * density, size, gap)
-    if pos is None or density <= 0:
-        raise GeometryError("No se pudo desplegar la malla de quads (UV)")
+    pieces = _charts_flat(verts, faces)
+    local_tris = []
+    for chart_faces, used, _ in pieces:
+        local = {v: i for i, v in enumerate(used)}
+        local_tris.append(_triangulate([np.array([local[v] for v in faces[f]]) for f in chart_faces]))
+    layout = _layout([(uv, tris) for (_, _, uv), tris in zip(pieces, local_tris)], size, padding)
     uv_all, face_uv, offset = [], [None] * len(faces), 0
-    for (chart_faces, used, uv), corner in zip(pieces, pos):
+    for (chart_faces, used, _), uv in zip(pieces, layout):
         local = {v: i for i, v in enumerate(used)}
         for f in chart_faces:
             face_uv[f] = np.array([local[v] for v in faces[f]]) + offset
-        uv_all.append((uv * density + corner) / size)  # scale and shift only: no chart is mirrored
+        uv_all.append(uv)
         offset += len(used)
     return np.vstack(uv_all), face_uv, (size, size)
+
+
+def fast_unwrap(verts: np.ndarray, faces: np.ndarray, size: int = 2048, padding: int = 4
+                ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """UV unwrap of a triangle mesh in xatlas's output format (vertex map, faces, uv), several times
+    faster than xatlas on 100k-face models with a similar share of the texture used."""
+    uv, face_uv, _ = unwrap(np.asarray(verts, dtype=float), list(np.asarray(faces)), size, padding)
+    corner_faces = np.array(face_uv, dtype=np.int64)
+    vmap = np.zeros(len(uv), dtype=np.int64)
+    vmap[corner_faces.ravel()] = np.asarray(faces).ravel()
+    return vmap, corner_faces, uv
 
 
 # ---------------------------------------------------------------- texture bake

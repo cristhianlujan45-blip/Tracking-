@@ -71,6 +71,10 @@ def main() -> None:
     info = backend.info()
     logging.info("Backend %s · GPU: %s (%s GB) · capacidades: %s", backend.name, info["gpu"], info["vram_gb"],
                  ", ".join(sorted(backend.capabilities())))
+    if hasattr(backend, "warm_up"):  # model files into the file cache while nobody is waiting yet
+        import threading
+
+        threading.Thread(target=backend.warm_up, name="warm-up", daemon=True).start()
     uvicorn.run(create_app(backend), host=args.host, port=args.port)
 
 
