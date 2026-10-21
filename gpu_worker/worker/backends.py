@@ -245,6 +245,9 @@ class HunyuanBackend:
         self._on_gpu: str | None = None
         # with 16 GB of RAM the parked models would not fit: drop them and reload from disk instead
         self.low_ram = 0 < total_ram_gb() < 24
+        self.vram_gb = _vram_gb() if device != "cpu" else 0.0
+        # 8 GB cards: big image models run with only the active part on the GPU (CPU offload)
+        self.small_gpu = 0 < self.vram_gb < 10
 
     # ------------------------------------------------------------ meta
 
@@ -311,12 +314,32 @@ class HunyuanBackend:
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
             log.info("Cargando %s …", self.shape_model)
-            self._shape = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-                self.shape_model, subfolder=self.shape_subfolder, use_safetensors=True, device="cpu"
-            )
+            self._shape = self._load_hunyuan(Hunyuan3DDiTFlowMatchingPipeline, self.shape_model, self.shape_subfolder)
             _fast_decoding(self._shape)
         self._activate("shape")
         return self._shape
+
+    def _load_hunyuan(self, cls, repo: str, subfolder: str):
+        """Built straight on the GPU a tensor at a time (little system RAM, see lowmem.py); Hunyuan's own
+        loader (everything in RAM first) when that is not possible."""
+        from .lowmem import load_pipeline
+
+        if self.device != "cpu":
+            self._activate("none")  # the GPU holds only this model while it is built
+            try:
+                folder = os.path.join(hy3d_models_dir(), repo, subfolder)
+                if not os.path.isfile(os.path.join(folder, "model.fp16.safetensors")):
+                    folder = hy3d_local(repo, subfolder)
+                pipe = load_pipeline(cls, folder, repo, subfolder, device=self.device)
+                self._on_gpu = None  # it is already on the GPU: _activate only records it
+                return pipe
+            except Exception as exc:  # noqa: BLE001 - any problem: the regular loader below
+                log.warning("Carga con poca memoria no disponible (%s); se usa la de Hunyuan", exc)
+                gc.collect()
+                import torch
+
+                torch.cuda.empty_cache()
+        return cls.from_pretrained(repo, subfolder=subfolder, use_safetensors=True, device="cpu")
 
     def _load_mv(self):
         if self._mv is None:
@@ -325,9 +348,7 @@ class HunyuanBackend:
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
             log.info("Cargando Hunyuan3D-2mv …")
-            self._mv = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-                "tencent/Hunyuan3D-2mv", subfolder="hunyuan3d-dit-v2-mv", use_safetensors=True, device="cpu"
-            )
+            self._mv = self._load_hunyuan(Hunyuan3DDiTFlowMatchingPipeline, "tencent/Hunyuan3D-2mv", "hunyuan3d-dit-v2-mv")
             _fast_decoding(self._mv)
         self._activate("mv")
         return self._mv
@@ -338,10 +359,20 @@ class HunyuanBackend:
             from diffusers import AutoPipelineForText2Image
 
             log.info("Cargando %s …", self.image_model)
+            if self.low_ram:
+                self._free_memory()
             self._t2i = AutoPipelineForText2Image.from_pretrained(
                 self.image_model, torch_dtype=torch.float16, variant="fp16"
             )
-        self._activate("t2i")
+            if self.small_gpu and hasattr(self._t2i, "enable_model_cpu_offload"):
+                # SDXL-Turbo is ~7 GB in fp16: on an 8 GB card only the part working is on the GPU
+                self._activate("none")
+                self._t2i.enable_model_cpu_offload()
+                self._t2i_offloaded = True
+        if getattr(self, "_t2i_offloaded", False):
+            self._activate("none")  # offloaded pipelines place themselves: just make room
+        else:
+            self._activate("t2i")
         return self._t2i
 
     def _load_mv_gen(self):
@@ -387,7 +418,11 @@ class HunyuanBackend:
 
             log.info("Cargando %s …", self.chat_model)
             self._llm_tokenizer = AutoTokenizer.from_pretrained(self.chat_model)
-            self._llm = AutoModelForCausalLM.from_pretrained(self.chat_model, torch_dtype=torch.float16)
+            if self.device != "cpu":
+                self._activate("none")  # straight to the GPU: no copy of the weights in system RAM
+            self._llm = AutoModelForCausalLM.from_pretrained(
+                self.chat_model, torch_dtype=torch.float16, low_cpu_mem_usage=True,
+                **({"device_map": {"": self.device}} if self.device != "cpu" else {}))
         self._activate("llm")
         return self._llm, self._llm_tokenizer
 
@@ -645,6 +680,17 @@ class HunyuanBackend:
 
 LIGHT_SHAPE = ("tencent/Hunyuan3D-2mini", "hunyuan3d-dit-v2-mini")
 LIGHT_MARKER = "modo_ligero.txt"  # written in the worker's folder; the app then starts it with the light model
+
+
+def _vram_gb() -> float:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_properties(0).total_memory / 1024**3
+    except Exception:  # noqa: BLE001 - unknown means "no special handling"
+        pass
+    return 0.0
 
 
 def total_ram_gb() -> float:

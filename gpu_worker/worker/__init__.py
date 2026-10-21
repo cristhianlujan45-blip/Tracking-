@@ -1,1 +1,1 @@
-VERSION = "5"  # bump when the worker's API or options change: the app restarts older workers
+VERSION = "6"  # bump when the worker's API or options change: the app restarts older workers
