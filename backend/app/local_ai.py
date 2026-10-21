@@ -410,8 +410,28 @@ class LocalAI:
         return target / "python.exe"
 
     async def _step3(self, start, share):  # PyTorch
-        await self._run(self._uv(), "pip", "install", "--python", str(self.python), *TORCH_PKGS,
-                        "--index-url", TORCH_INDEX, start=start)
+        watch = asyncio.ensure_future(self._watch_download(self.root / "cache", 3.2, start, share,
+                                                           "Descargando PyTorch con CUDA"))
+        try:
+            await self._run(self._uv(), "pip", "install", "--python", str(self.python), *TORCH_PKGS,
+                            "--index-url", TORCH_INDEX, start=start)
+        finally:
+            watch.cancel()
+
+    async def _watch_download(self, folder: Path, expected_gb: float, start: int, share: int, label: str,
+                              every_s: float = 3.0, stall_s: float = 300.0) -> None:
+        """uv prints nothing while it downloads a big file: show the GB that reached its cache folder."""
+        base = await asyncio.to_thread(_folder_gb, folder)
+        last_gb, last_change = 0.0, time.monotonic()
+        while True:
+            await asyncio.sleep(every_s)
+            got = max(0.0, await asyncio.to_thread(_folder_gb, folder) - base)
+            if got > last_gb + 0.01:
+                last_gb, last_change = got, time.monotonic()
+            stalled = time.monotonic() - last_change > stall_s
+            self.progress = max(self.progress, start + int(share * min(0.95, got / expected_gb)))
+            self.step = f"{label}: {got:.1f} de ≈{expected_gb:g} GB" + (
+                " (sin avance: revisa tu conexión a internet)" if stalled else "")
 
     async def _step4(self, start, share):  # Hunyuan3D-2 + worker
         vendor = self.root / "vendor"

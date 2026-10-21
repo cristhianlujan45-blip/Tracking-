@@ -37,7 +37,7 @@ async function install() {
     await ctx.api("/api/update/install", { method: "POST" });
   } catch (err) {
     $("#btnUpdate").disabled = false;
-    return ctx.toast(err.message, true);
+    return ctx.toast(tr(err.message), true);
   }
   const poll = async () => {
     let s;

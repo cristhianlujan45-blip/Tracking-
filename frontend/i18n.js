@@ -128,6 +128,7 @@ const EN = {
   "Variante {n}": "Variant {n}", "¿Quedarte con esta variante y borrar las otras {n}?": "Keep this variant and delete the other {n}?",
   "Variante elegida": "Variant kept",
   "Descargando Python 3.11 (python.org)…": "Downloading Python 3.11 (python.org)…",
+  "Espera a que termine la instalación de la IA y actualiza después": "Wait for the AI install to finish, then update",
   "La descarga de Python 3.11 llegó dañada: vuelve a intentarlo": "The Python 3.11 download arrived damaged: try again",
   "Se acabó el saldo de fal.ai (nube). Usa la IA gratis de tu tarjeta gráfica: Ajustes → «Mi GPU · gratis»":
     "Your fal.ai (cloud) balance ran out. Use the free AI on your graphics card: Settings → “My GPU · free”",
@@ -451,6 +452,9 @@ const PATTERNS = [
   [/^Tiempo de espera agotado en (.+)$/, "Timed out waiting for $1"],
   [/^Error (\d+)$/, "Error $1"],
   [/^Variante (\d+)$/, "Variant $1"],
+  [/^Descargando PyTorch con CUDA: ([\d.]+) de ≈([\d.]+) GB \(sin avance: revisa tu conexión a internet\)$/,
+    "Downloading PyTorch with CUDA: $1 of ≈$2 GB (no progress: check your internet connection)"],
+  [/^Descargando PyTorch con CUDA: ([\d.]+) de ≈([\d.]+) GB$/, "Downloading PyTorch with CUDA: $1 of ≈$2 GB"],
 ];
 
 // generated titles: "<name> · reducido" → "<name> · reduced"

@@ -567,6 +567,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
     async def update_install(request: Request):
         """Windows desktop app: download the new installer, run it silently and reopen the app."""
         updater = request.app.state.updater
+        if request.app.state.local_ai.installing:  # quitting would throw away a half-done download
+            raise HTTPException(409, "Espera a que termine la instalación de la IA y actualiza después")
         status = await updater.check()
         if not status.get("can_install") or not getattr(sys, "frozen", False):
             raise HTTPException(400, "Esta versión no se puede actualizar sola: descárgala desde la página de versiones")

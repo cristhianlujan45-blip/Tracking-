@@ -265,3 +265,26 @@ def test_python_from_a_plain_folder_when_windows_refuses_uvs_link(tmp_path, monk
     monkeypatch.setattr(la.LocalAI, "_python_org", python_org)
     asyncio.run(ai._step2(0, 0))
     assert fetched and calls[-1][-1] == str(own)
+
+
+def test_big_downloads_show_how_much_arrived(tmp_path):
+    """uv is silent while it downloads PyTorch: the bar follows the GB reaching its cache."""
+    ai = la.LocalAI(tmp_path, ROOT)
+    cache = ai.root / "cache"
+    cache.mkdir(parents=True)
+
+    async def scenario():
+        watch = asyncio.ensure_future(ai._watch_download(cache, 0.001, 10, 30, "Descargando PyTorch con CUDA",
+                                                         every_s=0.05, stall_s=0.3))
+        await asyncio.sleep(0.1)
+        (cache / "torch.part").write_bytes(b"x" * 600_000)
+        await asyncio.sleep(0.2)
+        moving = ai.step, ai.progress
+        await asyncio.sleep(0.6)
+        stalled = ai.step
+        watch.cancel()
+        return moving, stalled
+
+    (step, progress), stalled = asyncio.run(scenario())
+    assert step.startswith("Descargando PyTorch con CUDA: 0.0 de") and 10 < progress <= 10 + 30 * 0.95
+    assert "sin avance" in stalled
