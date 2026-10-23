@@ -34,6 +34,7 @@ function toggle(open) {
   $("#agentPanel").hidden = !open;
   $("#agentBtn").hidden = open;
   if (open) $("#agentInput").focus();
+  document.dispatchEvent(new CustomEvent("agent-toggle", { detail: { open } }));
 }
 
 function reset() {

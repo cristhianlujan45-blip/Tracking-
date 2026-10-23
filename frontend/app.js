@@ -107,7 +107,11 @@ const state = {
   pollTimer: null,
   target: null,
   exampleCat: "Personaje",
+  sort: "recent",
+  page: 1,
+  recentOffset: 0,
 };
+const PAGE_SIZE = 24;
 const viewer = new Viewer($("#viewer"));
 
 // ================================================================ helpers
@@ -339,6 +343,7 @@ function setMode(mode) {
     el.hidden = !visible;
   });
   $("#concepts").hidden = mode !== "text" || !state.concepts.length;
+  if (mode === "image") renderRecents();
   $("#submit").textContent = t(
     mode === "upload" ? "Importar modelo" : ["scene", "text3d"].includes(mode) ? "Crear modelo 3D" : "Generar modelo 3D");
   showFormError("");
@@ -503,9 +508,18 @@ function matchesFilter(job) {
   return !state.search || title(job.title).toLowerCase().includes(state.search);
 }
 
+const SORTERS = {
+  recent: (a, b) => b.created_at - a.created_at,
+  fav: (a, b) => Number(b.favorite) - Number(a.favorite) || b.created_at - a.created_at,
+  name: (a, b) => title(a.title).localeCompare(title(b.title)),
+};
+
 function renderJobs() {
   const list = $("#jobs");
-  const visible = state.jobs.filter(matchesFilter);
+  const matching = state.jobs.filter(matchesFilter).sort(SORTERS[state.sort] || SORTERS.recent);
+  const visible = matching.slice(0, state.page * PAGE_SIZE);
+  $("#btnMoreJobs").hidden = visible.length >= matching.length;
+  renderRecents();
   $("#jobsEmpty").hidden = visible.length > 0;
   $("#jobsEmpty").textContent = t(state.jobs.length ? "Nada coincide con el filtro." : "Aún no hay modelos.");
   list.replaceChildren(
@@ -534,11 +548,83 @@ function renderJobs() {
 $$("#filters button").forEach((b) =>
   b.addEventListener("click", () => {
     state.filter = b.dataset.f;
+    state.page = 1;
     $$("#filters button").forEach((x) => x.classList.toggle("on", x === b));
     renderJobs();
   }),
 );
-$("#search").addEventListener("input", (e) => ((state.search = e.target.value.trim().toLowerCase()), renderJobs()));
+$("#search").addEventListener("input", (e) => ((state.search = e.target.value.trim().toLowerCase()), (state.page = 1), renderJobs()));
+$("#sortJobs").addEventListener("change", (e) => ((state.sort = e.target.value), (state.page = 1), renderJobs()));
+$("#btnMoreJobs").addEventListener("click", () => (state.page++, renderJobs()));
+
+// ---- recent pictures: try the image mode without hunting for a file (a few at a time, "next batch" rotates)
+function recentPictures() {
+  const seen = new Set();
+  return state.jobs
+    .filter((j) => j.status === "succeeded" && (j.image_url || j.thumbnail_url) && ["image", "text", "multi_image", "scene"].includes(j.mode))
+    .map((j) => ({ ...j, pic: j.image_url || j.thumbnail_url }))
+    .filter((j) => !seen.has(j.pic) && seen.add(j.pic));
+}
+
+function renderRecents() {
+  const box = $("#recentImages");
+  if (!box || state.mode !== "image") return;
+  const pics = recentPictures();
+  box.hidden = !pics.length;
+  if (!pics.length) return;
+  const start = state.recentOffset % pics.length;
+  const batch = Array.from({ length: Math.min(4, pics.length) }, (_, i) => pics[(start + i) % pics.length]);
+  $("#btnRecentsNext").hidden = pics.length <= 4;
+  $("#recentGrid").replaceChildren(
+    ...batch.map((job) => {
+      const b = Object.assign(document.createElement("button"), { type: "button", title: title(job.title) });
+      b.style.backgroundImage = `url("${job.pic}")`;
+      b.onclick = async () => {
+        try {
+          const blob = await (await fetch(job.pic)).blob();
+          const file = new File([blob], `${slug(job.title)}.png`, { type: blob.type || "image/png" });
+          state.imageFile = file;
+          previewInto($("#dropImage"), file);
+        } catch {
+          toast(t("No se pudo cargar la imagen"), true);
+        }
+      };
+      return b;
+    }),
+  );
+}
+$("#btnRecentsNext").addEventListener("click", () => ((state.recentOffset += 4), renderRecents()));
+
+// ---- template: reuse what made a model (description, style, quality, seed) for a new one
+$("#btnTemplate").addEventListener("click", () => {
+  const job = selectedJob();
+  if (!job) return;
+  const p = job.params || {};
+  if (job.mode === "text" || (job.prompt && !job.image_url)) {
+    setMode("text");
+    $("#prompt").value = job.prompt || "";
+  } else {
+    setMode("image");
+    $("#imagePrompt").value = job.prompt || "";
+    $("#recentImages").hidden = false;
+  }
+  if (p.style && $(`#styles .style[data-style="${p.style}"]`)) setStyle(p.style);
+  if (["draft", "standard", "high"].includes(job.quality)) $("#quality").value = job.quality;
+  if (p.seed != null) $("#seed").value = p.seed;
+  toast(t("Plantilla cargada en el formulario"));
+  $("#form").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+// ---- quick generation vs. agent mode (the agent drawer is the same chat as the corner button)
+$$("#createMode button").forEach((b) =>
+  b.addEventListener("click", () => {
+    const open = b.dataset.cm === "agent";
+    if ($("#agentPanel").hidden === open) (open ? $("#agentBtn") : $("#agentClose")).click();
+  }),
+);
+document.addEventListener("agent-toggle", (e) =>
+  $$("#createMode button").forEach((b) => b.classList.toggle("on", (b.dataset.cm === "agent") === e.detail.open)),
+);
 
 async function refreshJobs() {
   try {

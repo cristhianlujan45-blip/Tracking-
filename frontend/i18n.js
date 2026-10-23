@@ -113,6 +113,15 @@ const EN = {
   "{n} animaciones": "{n} animations", "GLB · FBX · .blend": "GLB · FBX · .blend",
 
   // ---------------------------------------------------------------- gallery
+  "✦ Generación rápida": "✦ Quick generation", "Modo agente": "Agent mode", "Nuevo": "New",
+  "Rellena el formulario y genera": "Fill in the form and generate",
+  "Cuéntale al asistente qué quieres y lo hace contigo": "Tell the assistant what you want and it does it with you",
+  "Prueba con una imagen reciente": "Try a recent image", "⇄ Siguiente lote": "⇄ Next batch",
+  "No se pudo cargar la imagen": "The image could not be loaded",
+  "Usar como plantilla: copia la descripción y los ajustes al formulario": "Use as template: copy the description and settings into the form",
+  "Plantilla cargada en el formulario": "Template loaded into the form",
+  "Recientes": "Recent", "Favoritos primero": "Favourites first", "Nombre": "Name", "Ordenar": "Sort", "Cargar más": "Load more",
+  "Esencial": "Essentials", "Combate": "Combat", "Social": "Social", "Baile": "Dance", "Limpiar": "Clear",
   "Mis modelos": "My models", "Todos": "All", "Favoritos": "Favourites", "IA": "AI", "Editados": "Edited", "Rig": "Rig",
   "Personajes con rig": "Rigged characters", "En curso": "Running", "Buscar…": "Search…",
   "Aún no hay modelos.": "No models yet.", "Nada coincide con el filtro.": "Nothing matches the filter.",

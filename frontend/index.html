@@ -61,6 +61,9 @@
     <!-- ============ CREATE ============ -->
     <aside class="panel create">
       <h2 class="sec"><span class="tag">01</span>Crear <em>Nuevo modelo</em></h2>
+      <div class="segmented wide-seg create-mode" id="createMode" role="group" aria-label="Modo de creación">
+        <button type="button" class="on" data-cm="quick" title="Rellena el formulario y genera">✦ Generación rápida</button><button type="button" data-cm="agent" title="Cuéntale al asistente qué quieres y lo hace contigo">Modo agente <i>Nuevo</i></button>
+      </div>
       <div class="tabs" role="tablist">
         <button class="tab active" data-mode="text" role="tab"><span class="ico">✎</span>Texto</button>
         <button class="tab" data-mode="image" role="tab"><span class="ico">▣</span>Imagen</button>
@@ -86,6 +89,10 @@
             <img alt="" hidden />
             <span class="hint"><span class="big">▣</span>Arrastra una imagen o haz clic<br /><small>PNG, JPG o WEBP · silueta clara y fondo limpio</small></span>
           </label>
+          <div class="recents" id="recentImages" hidden>
+            <div class="recents-head"><b>Prueba con una imagen reciente</b><button type="button" class="link" id="btnRecentsNext">⇄ Siguiente lote</button></div>
+            <div class="recents-grid" id="recentGrid"></div>
+          </div>
           <label for="imagePrompt">Descripción (opcional)</label>
           <input id="imagePrompt" type="text" maxlength="500" placeholder="Ayuda a nombrar y guiar el modelo" />
         </section>
@@ -304,10 +311,14 @@
           <div class="segmented small" id="filters">
             <button class="on" data-f="all">Todos</button><button data-f="fav" title="Favoritos">★</button><button data-f="gen">IA</button><button data-f="tools">Editados</button><button data-f="rig" title="Personajes con rig">Rig</button><button data-f="active">En curso</button>
           </div>
+          <select id="sortJobs" title="Ordenar">
+            <option value="recent">Recientes</option><option value="fav">Favoritos primero</option><option value="name">Nombre</option>
+          </select>
           <input id="search" type="search" placeholder="Buscar…" />
         </div>
         <ul id="jobs" class="jobs"></ul>
         <p class="muted" id="jobsEmpty">Aún no hay modelos.</p>
+        <button type="button" class="secondary" id="btnMoreJobs" hidden>Cargar más</button>
       </div>
     </section>
 
@@ -321,6 +332,7 @@
         <div class="tools-head">
           <h2 id="toolTitle"></h2>
           <button class="icon" id="btnFav" title="Favorito">☆</button>
+          <button class="icon" id="btnTemplate" title="Usar como plantilla: copia la descripción y los ajustes al formulario">⎘</button>
           <button class="icon" id="btnRename" title="Renombrar">✎</button>
         </div>
         <div class="meta-list" id="toolMeta"></div>
@@ -364,6 +376,7 @@
           <div class="anim-grid" id="animList"></div>
           <div id="libBox">
             <label>Biblioteca mocap <b id="libCount"></b></label>
+            <div class="chips packs" id="libPacks"></div>
             <div class="row lib-filter">
               <input id="libSearch" type="search" placeholder="Buscar movimiento…" />
               <select id="libCat"><option value="">Todas</option></select>

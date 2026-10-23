@@ -684,3 +684,16 @@ input[type="color"] { width: 100%; height: 38px; padding: 2px; background: rgba(
   width: 100%; min-height: 220px; margin: 8px 0 12px; padding: 8px 10px; resize: vertical;
   font: 11px/1.45 var(--mono); color: var(--text); background: var(--ink-2); border: 1px solid var(--line-2);
 }
+
+/* Meshy-style creation: quick/agent switch, recent-image picker, gallery paging, animation packs */
+.create-mode { margin-bottom: 10px; }
+.create-mode i { font-style: normal; font-size: 9px; margin-left: 4px; padding: 1px 5px; border-radius: 6px; background: var(--cyan); color: #06121a; vertical-align: middle; }
+.recents { margin: 10px 0 4px; padding: 8px; border: 1px solid var(--line-2); background: rgba(8, 10, 23, .45); }
+.recents-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+.recents-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 6px; }
+.recents-grid button { aspect-ratio: 1; border: 1px solid var(--line-2); background: #0b0e1d center / cover no-repeat; cursor: pointer; padding: 0; transition: transform .15s, border-color .15s; }
+.recents-grid button:hover { transform: translateY(-2px); border-color: var(--sakura); }
+#sortJobs { background: rgba(8, 10, 23, .6); color: var(--text); border: 1px solid var(--line-2); padding: 4px 6px; font-size: 12px; }
+#btnMoreJobs { align-self: center; flex: 0 0 auto; white-space: nowrap; }
+.packs { margin: 4px 0 8px; }
+.packs .chip.clear { opacity: .7; }

@@ -45,6 +45,7 @@ export async function initRig(context) {
       return [head, ...rows];
     }),
   );
+  renderPacks();
   $("#libSearch").addEventListener("input", filterLibrary);
   $("#libCat").addEventListener("change", filterLibrary);
   $("#libList").addEventListener("change", countLibrary);
@@ -103,6 +104,34 @@ function filterLibrary() {
     if (show) visible.add(l.dataset.cat);
   });
   $$("#libList h4").forEach((h) => (h.hidden = !visible.has(h.dataset.cat)));
+}
+
+// One-click packs (like Meshy's animation sets): tick every library clip whose name matches the pack.
+const PACK_SIZE = 8;
+const PACKS = [
+  ["Esencial", /walk|camin|run\b|corr|jump|salt|idle|reposo|stand/],
+  ["Combate", /punch|golpe|kick|patad|fight|pele|sword|espada|attack|ataq|block|bloque/],
+  ["Social", /wave|salud|talk|habl|clap|aplau|laugh|ri[ae]/],
+  ["Baile", /danc|bail/],
+];
+
+function renderPacks() {
+  const chip = (label, onclick, cls = "chip") =>
+    Object.assign(document.createElement("button"), { type: "button", className: cls, textContent: label, onclick });
+  $("#libPacks").replaceChildren(
+    ...PACKS.map(([name, re]) =>
+      chip(t(name), () => {
+        // the library has hundreds of clips: a pack adds the first few matches, not every one
+        $$("#libList label").filter((l) => re.test(l.dataset.search || "")).slice(0, PACK_SIZE)
+          .forEach((l) => (l.querySelector("input").checked = true));
+        countLibrary();
+      }),
+    ),
+    chip(t("Limpiar"), () => {
+      $$("#libList input").forEach((i) => (i.checked = false));
+      countLibrary();
+    }, "chip clear"),
+  );
 }
 
 function countLibrary() {
