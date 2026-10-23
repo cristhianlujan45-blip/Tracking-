@@ -34,6 +34,10 @@ class GenerationRequest:
     # position in a set of shape variants of the same input (0 = the default way of building it):
     # providers may build each one differently, not only with another seed
     variant: int = 0
+    # production options applied to the finished model (Meshy-style): polygon budget, topology, PBR maps
+    target_faces: int | None = None
+    topology: str = "triangle"  # "triangle" | "quad"
+    pbr: bool = False
 
 
 @dataclass

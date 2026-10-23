@@ -654,3 +654,15 @@ def test_portable_blender_download_is_checked_and_unpacked(tmp_path, monkeypatch
     portable.client = httpx.AsyncClient(transport=transport)
     asyncio.run(run())
     assert portable.status()["state"] == "ready" and portable.path().endswith("blender.exe")
+
+
+def test_production_options_are_stored_and_applied(client):
+    """Target faces and PBR run after generation; the job keeps what was asked for."""
+    body = {"prompt": "a robot", "quality": "draft", "target_faces": 3000, "pbr": True}
+    job = client.post("/api/jobs/text", json=body).json()[0]
+    assert job["params"]["target_faces"] == 3000 and job["params"]["pbr"] is True
+    assert job["params"]["topology"] == "triangle"
+    done = wait_done(client, job["id"])
+    assert done["status"] == "succeeded", done.get("error")
+    assert client.post("/api/jobs/text", json={**body, "target_faces": 10}).status_code == 422
+    assert client.post("/api/jobs/text", json={**body, "topology": "hexa"}).status_code == 422

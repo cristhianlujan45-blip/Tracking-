@@ -44,6 +44,8 @@ RESOURCES = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
 FRONTEND_DIR = RESOURCES / "frontend"
 BLENDER_ADDON = RESOURCES / "integrations" / "blender" / "forja3d_blender.py"
 MCP_SERVER = RESOURCES / "integrations" / "mcp" / "forja3d_mcp.py"
+UNITY_PACKAGE = RESOURCES / "integrations" / "unity" / "com.forja3d.bridge"
+CLI_SCRIPT = RESOURCES / "integrations" / "cli" / "forja3d.py"
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 MIME_BY_EXT = {ext: mime for mime, ext in IMAGE_TYPES.items()}
 GENERATIVE_MODES = ("text", "image", "multi_image")
@@ -91,6 +93,10 @@ class GenerationOptions(BaseModel):
     seed: int | None = Field(None, ge=0, le=2**31 - 1)
     variants: int = Field(1, ge=1, le=4)
     engine: str | None = Field(None, max_length=40)
+    # production options (Meshy-style): polygon budget, topology and PBR maps on the finished model
+    target_faces: int | None = Field(None, ge=500, le=300_000)
+    topology: Literal["triangle", "quad"] = "triangle"
+    pbr: bool = False
 
 
 class TextJobIn(GenerationOptions):
@@ -386,6 +392,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                     inputs.append(name)
             params = {
                 "style": opts.style, "symmetry": opts.symmetry, "pose": opts.pose, "seed": seed, "engine": opts.engine,
+                "target_faces": opts.target_faces, "topology": opts.topology, "pbr": opts.pbr,
                 "inputs": inputs, **(extra or {}),
             }
             if variant:
@@ -401,6 +408,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                 mode=mode, prompt=prompt, quality=opts.quality, images=images,
                 style=opts.style, symmetry=opts.symmetry, pose=opts.pose, seed=seed, engine=opts.engine,
                 roles=(extra or {}).get("roles"), variant=variant,
+                target_faces=opts.target_faces, topology=opts.topology, pbr=opts.pbr,
             )
             state.runner.submit(job_id, pipelines.generation(state.provider, req, preview=bool(group)))
             jobs.append(to_out(job))
@@ -486,6 +494,33 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         source = MCP_SERVER.read_text(encoding="utf-8")
         base = str(request.base_url).rstrip("/").replace('"', "")
         return source.replace('DEFAULT_URL = "http://127.0.0.1:8000"', f'DEFAULT_URL = "{base}"', 1)
+
+    @app.get("/api/integrations/unity")
+    async def unity_package(request: Request):
+        """The Unity package (Window > Forja3D), zipped and preconfigured with this app's address."""
+        if not UNITY_PACKAGE.is_dir():
+            raise HTTPException(404, "Plugin de Unity no disponible")
+        base = str(request.base_url).rstrip("/").replace('"', "")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(UNITY_PACKAGE.rglob("*")):
+                if path.is_file():
+                    data = path.read_bytes()
+                    if path.suffix == ".cs":
+                        data = data.replace(b'DefaultServer = "http://127.0.0.1:8000"', f'DefaultServer = "{base}"'.encode(), 1)
+                    zf.writestr(f"com.forja3d.bridge/{path.relative_to(UNITY_PACKAGE).as_posix()}", data)
+        return Response(buf.getvalue(), media_type="application/zip",
+                        headers={"Content-Disposition": 'attachment; filename="com.forja3d.bridge.zip"'})
+
+    @app.get("/api/integrations/cli")
+    async def cli_script(request: Request):
+        """The command line (one Python file, standard library only), preconfigured with this app's address."""
+        if not CLI_SCRIPT.is_file():
+            raise HTTPException(404, "CLI no disponible")
+        base = str(request.base_url).rstrip("/").replace('"', "")
+        source = CLI_SCRIPT.read_text(encoding="utf-8").replace('DEFAULT_URL = "http://127.0.0.1:8000"', f'DEFAULT_URL = "{base}"', 1)
+        return Response(source, media_type="text/x-python",
+                        headers={"Content-Disposition": 'attachment; filename="forja3d.py"'})
 
     @app.get("/api/integrations/mcp")
     async def mcp_server(request: Request):
@@ -772,6 +807,9 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         variants: int = Form(1, ge=1, le=4),
         engine: str | None = Form(None, max_length=40),
         roles: list[str] | None = Form(None),
+        target_faces: int | None = Form(None, ge=500, le=300_000),
+        topology: Literal["triangle", "quad"] = Form("triangle"),
+        pbr: bool = Form(False),
     ):
         inputs: list[InputImage] = []
         extra = {}
@@ -794,7 +832,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             inputs, extra["roles"] = [inputs[i] for i in order], [roles[i] for i in order]
         mode = "multi_image" if len(inputs) > 1 else "image"
         require(request, mode, "Multi-imagen a 3D" if mode == "multi_image" else "Imagen a 3D")
-        opts = GenerationOptions(quality=quality, style=style, seed=seed, variants=variants, engine=engine or None)
+        opts = GenerationOptions(quality=quality, style=style, seed=seed, variants=variants, engine=engine or None,
+                                 target_faces=target_faces, topology=topology, pbr=pbr)
         return create_generation_jobs(request, mode, (prompt or "").strip() or None, opts, inputs, extra)
 
     @app.post("/api/jobs/upload", response_model=JobOut, status_code=201)
@@ -1419,7 +1458,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             if args.get("concept_id"):
                 jobs = await create_image_job(request, images=None, concept_id=args["concept_id"], prompt=args["prompt"],
                                               quality=args["quality"], style=args["style"], seed=None, variants=1,
-                                              engine=None)
+                                              engine=None, roles=None, target_faces=None, topology="triangle",
+                                              pbr=False)
             else:
                 require(request, "text", "Texto a 3D")
                 body = TextJobIn(prompt=args["prompt"], quality=args["quality"], style=args["style"],

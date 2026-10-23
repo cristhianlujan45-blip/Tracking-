@@ -59,6 +59,19 @@ La nube (fal.ai: Hunyuan3D 3, TRELLIS 2, Tripo, Meshy) es opcional y se paga por
 - **Diagnóstico** en Ajustes → Mi GPU: copia el estado de la app, la GPU y los últimos errores para enviarlo.
 - **Plan B** en GPUs pequeñas: si la tarjeta se queda sin memoria, la IA reintenta con Hunyuan3D-2mini y lo recuerda.
 
+**Línea de comandos (CLI)**
+- `integrations/cli/forja3d.py` (solo biblioteca estándar de Python; también en `/api/integrations/cli`): `text`, `image`, `rig`, `animations`, `export`, `slicer`, `list`…
+  Ej.: `python forja3d.py text "una guerrera samurái" --pose a-pose --faces 30000 --pbr --wait --export glb`.
+
+**Unity**
+- Paquete `integrations/unity/com.forja3d.bridge` (descarga preconfigurada en `/api/integrations/unity`): *Window → Forja3D* lista tus modelos, genera desde texto e importa FBX (esqueleto Humanoid) o GLB (con glTFast). Sin probar dentro de Unity todavía.
+
+**Bambu Studio y Creality Print**
+- No tienen API de complementos: Forja3D los abre directamente con el 3MF listo (*Impresión 3D → Abrir en tu laminador*, o `forja3d.py slicer ID --slicer bambu|creality`).
+
+**Producción al generar (como Meshy)**
+- *Producción* en el formulario y `target_faces`, `topology` (`triangle`/`quad`) y `pbr` en la API: presupuesto de polígonos, quads limpios (con Instant Meshes) y mapas PBR sobre el modelo terminado.
+
 **Claude Code / Cursor (MCP)**
 - Servidor **MCP** para manejar Forja3D desde Claude Code, Cursor o Claude Desktop (como el de Meshy): crear conceptos y modelos desde texto o imagen, esperar el resultado, buscar animaciones, riggear y animar personajes, revisar la imprimibilidad y **exportar el archivo directamente a tu proyecto** (GLB, FBX, .blend, STL, 3MF…).
 - Un solo archivo (`integrations/mcp/forja3d_mcp.py`) que se ejecuta con [uv](https://docs.astral.sh/uv/) sin instalar nada más. En la app: **Exportar → ✦ Claude Code / Cursor (MCP) → ⧉ Copiar comando**, y pégalo en tu terminal:
@@ -126,6 +139,8 @@ gpu_worker/            servidor de IA local en tu GPU (Hunyuan3D-2, SD-Turbo, De
 scripts/windows/       instalar.bat / iniciar.bat (worker de GPU)
 integrations/blender/  complemento de Blender
 integrations/mcp/      servidor MCP para Claude Code, Cursor y Claude Desktop
+integrations/cli/      línea de comandos (un archivo Python, sin dependencias): `forja3d.py text "…" --wait --export glb`
+integrations/unity/    paquete de Unity (Window → Forja3D): lista modelos, genera e importa FBX/GLB
 frontend/              HTML + JS sin build; three.js y fuentes incluidos (funciona sin internet)
   index.html, app.js   estudio: crear, galería, herramientas, flujo 01–04
   i18n.js              español / inglés

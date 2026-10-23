@@ -1,0 +1,9 @@
+{
+  "name": "Forja3D.Editor",
+  "rootNamespace": "Forja3D",
+  "references": [],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "autoReferenced": true
+}

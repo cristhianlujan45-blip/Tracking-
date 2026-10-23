@@ -196,6 +196,25 @@
             </div>
           </div>
 
+          <details class="advanced" data-for="text image multi">
+            <summary>Producción (como Meshy)</summary>
+            <label for="topology">Topología</label>
+            <select id="topology">
+              <option value="triangle">Triángulos (por defecto)</option>
+              <option value="quad">Quads limpios (animación)</option>
+            </select>
+            <label for="targetFaces">Caras objetivo (opcional)</label>
+            <select id="targetFaces">
+              <option value="">Sin límite</option>
+              <option value="3000">3 000 · móvil / low-poly</option>
+              <option value="10000">10 000 · juegos</option>
+              <option value="30000">30 000 · personajes</option>
+              <option value="100000">100 000 · alta calidad</option>
+            </select>
+            <label class="check"><input type="checkbox" id="genPbr" /> Mapas PBR (normal, rugosidad, oclusión)</label>
+            <p class="muted small">Se aplican al modelo terminado. «Quads» necesita Instant Meshes; si no está, se deja el modelo como salió.</p>
+          </details>
+
           <details class="advanced" data-for="text">
             <summary>Opciones avanzadas</summary>
             <label class="check"><input type="checkbox" id="symmetry" /> Forzar simetría</label>
@@ -516,6 +535,9 @@
           <p class="muted small" id="exportHint"></p>
           <a class="primary wide" id="btnExport" download>⬇ Descargar</a>
           <a class="link" id="btnBlender" href="/api/integrations/blender" download>◆ Complemento para Blender (importar con un clic)</a>
+          <a class="link" id="btnUnity" href="/api/integrations/unity" download title="Paquete de Unity: Window → Forja3D lista tus modelos e importa FBX o GLB">◈ Plugin de Unity (importar con un clic)</a>
+          <a class="link" id="btnCli" href="/api/integrations/cli" download title="Un solo archivo Python, sin instalar nada: forja3d.py text «una guerrera» --wait --export glb">⌨ Línea de comandos (CLI)</a>
+          <p class="muted small">Bambu Studio y Creality Print: usa «Abrir en tu laminador» en Impresión 3D.</p>
           <div class="mcp-row" title="Maneja Forja3D desde tu asistente de código: crear, riggear, revisar la impresión y exportar">
             <a class="link" id="btnMcp" href="/api/integrations/mcp" download>✦ Claude Code / Cursor (MCP)</a>
             <button class="link" id="btnMcpCopy" type="button">⧉ Copiar comando</button>

@@ -1,0 +1,9 @@
+{
+  "name": "com.forja3d.bridge",
+  "displayName": "Forja3D Bridge",
+  "version": "1.0.0",
+  "unity": "2021.3",
+  "description": "Genera modelos 3D con Forja3D e impórtalos a Unity con un clic (FBX con esqueleto Humanoid o GLB).",
+  "keywords": ["forja3d", "3d", "ai", "importer"],
+  "dependencies": {}
+}

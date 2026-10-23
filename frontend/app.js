@@ -363,6 +363,9 @@ function generationOptions() {
     symmetry: $("#symmetry").checked,
     pose: $("#pose").value,
     ...(seed ? { seed: Number(seed) } : {}),
+    topology: $("#topology").value,
+    pbr: $("#genPbr").checked,
+    ...($("#targetFaces").value ? { target_faces: Number($("#targetFaces").value) } : {}),
     ...($("#engineRow").hidden || !$("#engine").value ? {} : { engine: $("#engine").value }),
   };
 }
@@ -374,6 +377,9 @@ function imageForm(opts, prompt) {
   body.append("variants", opts.variants);
   if (opts.seed !== undefined) body.append("seed", opts.seed);
   if (opts.engine) body.append("engine", opts.engine);
+  body.append("topology", opts.topology);
+  body.append("pbr", opts.pbr);
+  if (opts.target_faces) body.append("target_faces", opts.target_faces);
   if (prompt) body.append("prompt", prompt);
   return body;
 }

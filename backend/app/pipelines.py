@@ -9,7 +9,7 @@ from functools import partial
 from pathlib import Path
 from typing import Callable
 
-from . import creations, geometry, projection, publishing
+from . import creations, geometry, projection, publishing, quads, textures
 from .jobs import Work
 from .providers import GenerationRequest, GenerationResult, InputImage, Provider
 from .providers.base import ProgressCallback
@@ -50,6 +50,7 @@ def generation(provider: Provider, req: GenerationRequest, preview: bool = False
         if req.style in ("lowpoly", "voxel", "sculpture"):
             await on_progress(96, "Aplicando estilo")
             result.model_glb = await asyncio.to_thread(geometry.apply_style, result.model_glb, req.style)
+        await finish(result, req, on_progress)
         if preview:
             try:
                 views = await asyncio.to_thread(publishing.render_views, result.model_glb, 320, ("tres_cuartos",))
@@ -59,6 +60,29 @@ def generation(provider: Provider, req: GenerationRequest, preview: bool = False
         return result
 
     return work
+
+
+async def finish(result: GenerationResult, req: GenerationRequest, on_progress: ProgressCallback) -> None:
+    """Production options of the request: polygon budget / quad topology, then PBR maps. A step that cannot
+    run keeps the model as it is (an unrefined model beats no model)."""
+    if req.topology == "quad" or req.target_faces:
+        await on_progress(97, "Ajustando la topología")
+        target = req.target_faces or 10_000
+        try:
+            if req.topology == "quad":
+                glb, files, _ = await asyncio.to_thread(quads.quad_remesh, result.model_glb, target, name="quads")
+                result.model_glb = glb
+                result.extra_files.update(files)
+            else:
+                result.model_glb = await asyncio.to_thread(geometry.remesh, result.model_glb, "decimate", target)
+        except Exception:  # noqa: BLE001 - e.g. Instant Meshes missing: logged for the diagnostics
+            log.exception("No se pudo ajustar la topología; se deja el modelo como está")
+    if req.pbr:
+        await on_progress(98, "Creando mapas PBR")
+        try:
+            result.model_glb, _ = await textures.enhance(result.model_glb, "2k", 2, True, None, "CPU")
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudieron crear los mapas PBR; se deja el modelo como está")
 
 
 def local(glb_path: Path, label: str, fn: Callable[..., bytes], **kwargs) -> Work:

@@ -12,6 +12,8 @@ datas = [
     (str(ROOT / "frontend"), "frontend"),
     (str(ROOT / "integrations" / "blender" / "forja3d_blender.py"), "integrations/blender"),
     (str(ROOT / "integrations" / "mcp" / "forja3d_mcp.py"), "integrations/mcp"),
+    (str(ROOT / "integrations" / "cli" / "forja3d.py"), "integrations/cli"),
+    (str(ROOT / "integrations" / "unity" / "com.forja3d.bridge"), "integrations/unity/com.forja3d.bridge"),
     # run by Blender as a script, so it must exist as a real .py file
     (str(ROOT / "backend" / "app" / "blender_convert.py"), "app"),
     (str(ROOT / "backend" / "app" / "rigging" / "mocap" / "cmu.zip"), "app/rigging/mocap"),
